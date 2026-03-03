@@ -79,7 +79,11 @@ export async function registerRoutes(
 
   app.post("/api/clients", requireAuth, async (req, res) => {
     try {
-      const client = await storage.createClient(req.body);
+      const body = { ...req.body };
+      if (body.terminationDate && typeof body.terminationDate === "string") {
+        body.terminationDate = new Date(body.terminationDate);
+      }
+      const client = await storage.createClient(body);
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
@@ -110,7 +114,11 @@ export async function registerRoutes(
 
   app.put("/api/clients/:id", requireAuth, async (req, res) => {
     try {
-      const updated = await storage.updateClient(parseInt(req.params.id), req.body);
+      const body = { ...req.body };
+      if (body.terminationDate && typeof body.terminationDate === "string") {
+        body.terminationDate = new Date(body.terminationDate);
+      }
+      const updated = await storage.updateClient(parseInt(req.params.id), body);
       if (!updated) return res.status(404).json({ message: "Client not found" });
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -148,7 +156,14 @@ export async function registerRoutes(
       if (activeCount >= 6) {
         return res.status(400).json({ message: "Maximum of 6 active plans reached" });
       }
-      const plan = await storage.createPlan({ ...req.body, clientId });
+      const body = { ...req.body, clientId };
+      if (body.effectiveDate && typeof body.effectiveDate === "string") {
+        body.effectiveDate = new Date(body.effectiveDate);
+      }
+      if (body.terminationDate && typeof body.terminationDate === "string") {
+        body.terminationDate = new Date(body.terminationDate);
+      }
+      const plan = await storage.createPlan(body);
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
@@ -165,7 +180,14 @@ export async function registerRoutes(
 
   app.put("/api/plans/:planId", requireAuth, async (req, res) => {
     try {
-      const updated = await storage.updatePlan(parseInt(req.params.planId), req.body);
+      const body = { ...req.body };
+      if (body.effectiveDate && typeof body.effectiveDate === "string") {
+        body.effectiveDate = new Date(body.effectiveDate);
+      }
+      if (body.terminationDate && typeof body.terminationDate === "string") {
+        body.terminationDate = new Date(body.terminationDate);
+      }
+      const updated = await storage.updatePlan(parseInt(req.params.planId), body);
       if (!updated) return res.status(404).json({ message: "Plan not found" });
       await storage.createAuditLog({
         userId: (req.user as any).id,
