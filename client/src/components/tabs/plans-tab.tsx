@@ -162,6 +162,20 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 <div><p className="text-xs text-[#94A3B8]">Restorative</p><p className="text-sm font-medium">{plan.restorativePercent}%</p></div>
               </>
             )}
+            {plan.planBasis === "DOLLAR_BASED" && plan.dollarTier1Percent != null && (
+              <div className="col-span-2 md:col-span-4">
+                <p className="text-xs text-[#94A3B8] mb-1">Coverage Tiers</p>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">{plan.dollarTier1Percent}% of the first {formatCurrency(plan.dollarTier1Limit)}</p>
+                  {plan.dollarTier2Percent != null && plan.dollarTier2Limit && (
+                    <p className="text-sm font-medium">{plan.dollarTier2Percent}% of the next {formatCurrency(plan.dollarTier2Limit)}</p>
+                  )}
+                  {plan.dollarTier3Percent != null && (
+                    <p className="text-sm font-medium">{plan.dollarTier3Percent}% of the balance</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {plan.rateCards?.length > 0 && (
@@ -235,6 +249,11 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     restorativePercent: plan?.restorativePercent ?? 50,
     annualLimit: plan?.annualLimit || "1000.00",
     deductible: plan?.deductible || "",
+    dollarTier1Percent: plan?.dollarTier1Percent ?? "",
+    dollarTier1Limit: plan?.dollarTier1Limit ?? "",
+    dollarTier2Percent: plan?.dollarTier2Percent ?? "",
+    dollarTier2Limit: plan?.dollarTier2Limit ?? "",
+    dollarTier3Percent: plan?.dollarTier3Percent ?? "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -265,17 +284,27 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
       const d = new Date(form.effectiveDate + "T00:00:00");
       if (d.getDate() !== 1) errs.effectiveDate = "Effective date must be the first day of a month";
     }
+    if (form.planBasis === "DOLLAR_BASED") {
+      if (!form.dollarTier1Percent && form.dollarTier1Percent !== 0) errs.dollarTier1Percent = "Tier 1 percentage is required";
+      if (!form.dollarTier1Limit) errs.dollarTier1Limit = "Tier 1 dollar amount is required";
+    }
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
     const effectiveDate = new Date(form.effectiveDate + "T00:00:00");
+    const isDollar = form.planBasis === "DOLLAR_BASED";
     mutation.mutate({
       planName: form.planName,
       effectiveDate,
       planBasis: form.planBasis,
-      preventivePercent: form.planBasis === "PROCEDURE_BASED" ? Number(form.preventivePercent) : null,
-      correctivePercent: form.planBasis === "PROCEDURE_BASED" ? Number(form.correctivePercent) : null,
-      restorativePercent: form.planBasis === "PROCEDURE_BASED" ? Number(form.restorativePercent) : null,
+      preventivePercent: !isDollar ? Number(form.preventivePercent) : null,
+      correctivePercent: !isDollar ? Number(form.correctivePercent) : null,
+      restorativePercent: !isDollar ? Number(form.restorativePercent) : null,
+      dollarTier1Percent: isDollar && form.dollarTier1Percent !== "" ? Number(form.dollarTier1Percent) : null,
+      dollarTier1Limit: isDollar && form.dollarTier1Limit ? String(form.dollarTier1Limit) : null,
+      dollarTier2Percent: isDollar && form.dollarTier2Percent !== "" ? Number(form.dollarTier2Percent) : null,
+      dollarTier2Limit: isDollar && form.dollarTier2Limit ? String(form.dollarTier2Limit) : null,
+      dollarTier3Percent: isDollar && form.dollarTier3Percent !== "" ? Number(form.dollarTier3Percent) : null,
       annualLimit: form.annualLimit || "1000.00",
       deductible: form.deductible || null,
       planYear: effectiveDate.getFullYear(),
@@ -326,6 +355,89 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                 <Input type="number" min={0} max={100} value={form.restorativePercent} onChange={e => setForm(f => ({ ...f, restorativePercent: Number(e.target.value) }))} data-testid="input-restorative" />
               </div>
               <p className="text-xs text-[#94A3B8] col-span-3">Deductible is waived for Preventive tier</p>
+            </div>
+          )}
+          {form.planBasis === "DOLLAR_BASED" && (
+            <div className="space-y-3 p-3 bg-[#F0F4F8] rounded-md border">
+              <p className="text-xs font-semibold text-[#1A5276]">Dollar-Based Coverage Tiers</p>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Tier 1 — Percentage <span className="text-[#EF4444]">*</span></Label>
+                  <div className="relative">
+                    <Input
+                      type="number" min={0} max={100}
+                      value={form.dollarTier1Percent}
+                      onChange={e => setForm(f => ({ ...f, dollarTier1Percent: e.target.value }))}
+                      placeholder="100"
+                      data-testid="input-dollar-tier1-percent"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                  </div>
+                </div>
+                <span className="text-xs text-[#94A3B8] pb-3">of the first</span>
+                <div className="flex-1">
+                  <Label className="text-xs">Amount ($) <span className="text-[#EF4444]">*</span></Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                    <Input
+                      className="pl-6"
+                      value={form.dollarTier1Limit}
+                      onChange={e => setForm(f => ({ ...f, dollarTier1Limit: e.target.value }))}
+                      placeholder="300"
+                      data-testid="input-dollar-tier1-limit"
+                    />
+                  </div>
+                </div>
+              </div>
+              {errors.dollarTier1Percent && <p className="text-xs text-[#EF4444]">{errors.dollarTier1Percent}</p>}
+              {errors.dollarTier1Limit && <p className="text-xs text-[#EF4444]">{errors.dollarTier1Limit}</p>}
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Tier 2 — Percentage</Label>
+                  <div className="relative">
+                    <Input
+                      type="number" min={0} max={100}
+                      value={form.dollarTier2Percent}
+                      onChange={e => setForm(f => ({ ...f, dollarTier2Percent: e.target.value }))}
+                      placeholder="70"
+                      data-testid="input-dollar-tier2-percent"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                  </div>
+                </div>
+                <span className="text-xs text-[#94A3B8] pb-3">of the next</span>
+                <div className="flex-1">
+                  <Label className="text-xs">Amount ($)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                    <Input
+                      className="pl-6"
+                      value={form.dollarTier2Limit}
+                      onChange={e => setForm(f => ({ ...f, dollarTier2Limit: e.target.value }))}
+                      placeholder="500"
+                      data-testid="input-dollar-tier2-limit"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Tier 3 — Percentage</Label>
+                  <div className="relative">
+                    <Input
+                      type="number" min={0} max={100}
+                      value={form.dollarTier3Percent}
+                      onChange={e => setForm(f => ({ ...f, dollarTier3Percent: e.target.value }))}
+                      placeholder="50"
+                      data-testid="input-dollar-tier3-percent"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                  </div>
+                </div>
+                <span className="text-xs text-[#94A3B8] pb-3">of the balance</span>
+                <div className="flex-1" />
+              </div>
+              <p className="text-xs text-[#94A3B8] italic">Example: 100% of the first $300, 70% of the next $500, 50% of the balance</p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
