@@ -15,6 +15,7 @@ export async function seedDatabase() {
   });
 
   const client1 = await storage.createClient({
+    clientCode: "S-001",
     clientName: "Acme Manufacturing Corp",
     streetAddress: "1200 Industrial Blvd",
     suiteUnit: "Suite 300",
@@ -45,6 +46,7 @@ export async function seedDatabase() {
   });
 
   const client2 = await storage.createClient({
+    clientCode: "S-002",
     clientName: "Bright Horizons Schools",
     streetAddress: "890 Education Way",
     city: "Columbus",
@@ -69,6 +71,7 @@ export async function seedDatabase() {
   });
 
   const client3 = await storage.createClient({
+    clientCode: "S-003",
     clientName: "Delta Construction Group",
     streetAddress: "456 Builder Lane",
     suiteUnit: "Floor 5",
@@ -99,6 +102,7 @@ export async function seedDatabase() {
   });
 
   const client4 = await storage.createClient({
+    clientCode: "S-004",
     clientName: "Evergreen Healthcare",
     streetAddress: "777 Medical Center Dr",
     city: "Portland",

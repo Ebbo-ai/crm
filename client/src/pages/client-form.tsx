@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { US_STATES, formatPhone } from "@/lib/constants";
@@ -39,7 +40,7 @@ export default function ClientFormPage() {
   });
 
   const [form, setForm] = useState({
-    clientName: "", streetAddress: "", suiteUnit: "", city: "", state: "", zipCode: "",
+    clientCode: "", clientName: "", streetAddress: "", suiteUnit: "", city: "", state: "", zipCode: "",
     industryType: "", numberOfEmployees: 1, isActive: true, terminationDate: "",
     planType: "DENTAL", networkActive: false, dentalNetworkName: "Dentemax",
     decisionMakerName: "", decisionMakerTitle: "", decisionMakerPhone: "", decisionMakerEmail: "",
@@ -48,11 +49,18 @@ export default function ClientFormPage() {
     bankingType: "CLIENT_BANK", fundingType: "REQUIRES_APPROVAL",
   });
 
+  const [sameAsPrimary, setSameAsPrimary] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [codeChecking, setCodeChecking] = useState(false);
 
   useEffect(() => {
     if (existingClient && isEdit) {
+      const isSame = existingClient.adminContactName === existingClient.decisionMakerName
+        && existingClient.adminContactPhone === existingClient.decisionMakerPhone
+        && existingClient.adminContactEmail === existingClient.decisionMakerEmail;
+      setSameAsPrimary(isSame);
       setForm({
+        clientCode: (existingClient.clientCode || "").replace(/^S-/, ""),
         clientName: existingClient.clientName || "",
         streetAddress: existingClient.streetAddress || "",
         suiteUnit: existingClient.suiteUnit || "",
@@ -85,6 +93,18 @@ export default function ClientFormPage() {
     }
   }, [existingClient, isEdit]);
 
+  useEffect(() => {
+    if (sameAsPrimary) {
+      setForm(prev => ({
+        ...prev,
+        adminContactName: prev.decisionMakerName,
+        adminContactTitle: prev.decisionMakerTitle,
+        adminContactPhone: prev.decisionMakerPhone,
+        adminContactEmail: prev.decisionMakerEmail,
+      }));
+    }
+  }, [sameAsPrimary, form.decisionMakerName, form.decisionMakerTitle, form.decisionMakerPhone, form.decisionMakerEmail]);
+
   const mutation = useMutation({
     mutationFn: async (data: any) => {
       if (isEdit) {
@@ -107,6 +127,8 @@ export default function ClientFormPage() {
 
   const validate = () => {
     const errs: Record<string, string> = {};
+    if (!form.clientCode.trim()) errs.clientCode = "Client ID is required";
+    else if (!/^\d{3}$/.test(form.clientCode)) errs.clientCode = "Enter a 3-digit number (e.g., 001)";
     if (!form.clientName.trim()) errs.clientName = "Client name is required";
     if (!form.streetAddress.trim()) errs.streetAddress = "Street address is required";
     if (!form.city.trim()) errs.city = "City is required";
@@ -140,10 +162,28 @@ export default function ClientFormPage() {
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    const data: any = { ...form, numberOfEmployees: Number(form.numberOfEmployees) };
+
+    const fullCode = `S-${form.clientCode}`;
+    try {
+      setCodeChecking(true);
+      const res = await fetch(`/api/clients/check-code/${fullCode}`, { credentials: "include" });
+      const check = await res.json();
+      if (check.exists && (!isEdit || check.clientId !== parseInt(params.id!))) {
+        setErrors(prev => ({ ...prev, clientCode: `Client ID ${fullCode} is already in use` }));
+        setCodeChecking(false);
+        return;
+      }
+    } catch {
+      toast({ title: "Error", description: "Could not verify Client ID", variant: "destructive" });
+      setCodeChecking(false);
+      return;
+    }
+    setCodeChecking(false);
+
+    const data: any = { ...form, clientCode: fullCode, numberOfEmployees: Number(form.numberOfEmployees) };
     if (!data.isActive && data.terminationDate) {
       data.terminationDate = new Date(data.terminationDate + "T00:00:00");
     } else {
@@ -193,7 +233,27 @@ export default function ClientFormPage() {
             <h2 className="text-lg font-semibold text-[#1A5276]">Client Information</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
+            <div>
+              <RequiredLabel htmlFor="clientCode">Client ID</RequiredLabel>
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-semibold text-[#1A5276] bg-[#F0F4F8] px-3 py-2 rounded-l-md border border-r-0 border-input">S-</span>
+                <Input
+                  id="clientCode"
+                  value={form.clientCode}
+                  onChange={e => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 3);
+                    updateField("clientCode", val);
+                  }}
+                  placeholder="001"
+                  maxLength={3}
+                  className="rounded-l-none"
+                  data-testid="input-client-code"
+                />
+              </div>
+              <p className="text-xs text-[#94A3B8] mt-1">Format: S-XXX (enter 3 digits)</p>
+              <FieldError field="clientCode" />
+            </div>
+            <div>
               <RequiredLabel htmlFor="clientName">Client Name</RequiredLabel>
               <Input id="clientName" value={form.clientName} onChange={e => updateField("clientName", e.target.value)} data-testid="input-client-name" />
               <FieldError field="clientName" />
@@ -302,27 +362,50 @@ export default function ClientFormPage() {
 
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Administrative Support Contact</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#1A5276]">Administrative Support Contact</h2>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="sameAsPrimary"
+                  checked={sameAsPrimary}
+                  onCheckedChange={(checked) => {
+                    const val = !!checked;
+                    setSameAsPrimary(val);
+                    if (!val) {
+                      setForm(prev => ({
+                        ...prev,
+                        adminContactName: "",
+                        adminContactTitle: "",
+                        adminContactPhone: "",
+                        adminContactEmail: "",
+                      }));
+                    }
+                  }}
+                  data-testid="checkbox-same-as-primary"
+                />
+                <Label htmlFor="sameAsPrimary" className="text-sm text-[#2C3E50] cursor-pointer">Same as Primary Contact</Label>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <RequiredLabel htmlFor="acName">Full Name</RequiredLabel>
-              <Input id="acName" value={form.adminContactName} onChange={e => updateField("adminContactName", e.target.value)} data-testid="input-ac-name" />
+              <Input id="acName" value={form.adminContactName} onChange={e => updateField("adminContactName", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-name" />
               <FieldError field="adminContactName" />
             </div>
             <div>
               <RequiredLabel htmlFor="acTitle">Title</RequiredLabel>
-              <Input id="acTitle" value={form.adminContactTitle} onChange={e => updateField("adminContactTitle", e.target.value)} data-testid="input-ac-title" />
+              <Input id="acTitle" value={form.adminContactTitle} onChange={e => updateField("adminContactTitle", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-title" />
               <FieldError field="adminContactTitle" />
             </div>
             <div>
               <RequiredLabel htmlFor="acPhone">Phone</RequiredLabel>
-              <Input id="acPhone" value={form.adminContactPhone} onChange={e => updateField("adminContactPhone", e.target.value)} onBlur={e => updateField("adminContactPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" data-testid="input-ac-phone" />
+              <Input id="acPhone" value={form.adminContactPhone} onChange={e => updateField("adminContactPhone", e.target.value)} onBlur={e => updateField("adminContactPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-phone" />
               <FieldError field="adminContactPhone" />
             </div>
             <div>
               <RequiredLabel htmlFor="acEmail">Email</RequiredLabel>
-              <Input id="acEmail" type="email" value={form.adminContactEmail} onChange={e => updateField("adminContactEmail", e.target.value)} data-testid="input-ac-email" />
+              <Input id="acEmail" type="email" value={form.adminContactEmail} onChange={e => updateField("adminContactEmail", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-email" />
               <FieldError field="adminContactEmail" />
             </div>
           </CardContent>

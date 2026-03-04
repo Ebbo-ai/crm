@@ -25,6 +25,7 @@ export const users = pgTable("users", {
 
 export const clients = pgTable("clients", {
   id: serial("id").primaryKey(),
+  clientCode: text("client_code").notNull().unique(),
   clientName: text("client_name").notNull().unique(),
   streetAddress: text("street_address").notNull(),
   suiteUnit: text("suite_unit"),

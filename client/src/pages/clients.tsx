@@ -105,6 +105,7 @@ export default function ClientsPage() {
                         </div>
                       )}
                       <h3 className="font-semibold text-[#2C3E50] truncate" data-testid={`text-client-name-${client.id}`}>
+                        {client.clientCode && <span className="text-[#2E86C1] mr-1.5">{client.clientCode}</span>}
                         {client.clientName}
                       </h3>
                     </div>

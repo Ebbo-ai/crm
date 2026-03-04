@@ -77,6 +77,16 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/clients/check-code/:code", requireAuth, async (req, res) => {
+    try {
+      const code = req.params.code.toUpperCase();
+      const existing = await storage.getClientByCode(code);
+      res.json({ exists: !!existing, clientId: existing?.id || null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/clients", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
@@ -95,6 +105,10 @@ export async function registerRoutes(
       res.status(201).json(client);
     } catch (err: any) {
       if (err.message?.includes("unique") || err.code === "23505") {
+        const detail = err.detail || "";
+        if (detail.includes("client_code")) {
+          return res.status(400).json({ message: "This Client ID is already in use" });
+        }
         return res.status(400).json({ message: "A client with this name already exists" });
       }
       res.status(500).json({ message: err.message });
