@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Users, UserCheck, UserX, AlertCircle, CalendarClock, Clock, CheckCircle2 } from "lucide-react";
-import { format } from "date-fns";
+import { Users, UserCheck, UserX, AlertCircle, CalendarClock, Clock, CheckCircle2, Bell } from "lucide-react";
+import { format, formatDistanceToNow, isPast, isToday } from "date-fns";
 
 function StatCard({ label, value, icon: Icon, color, alert }: { label: string; value: number | string; icon: any; color: string; alert?: boolean }) {
   return (
@@ -25,11 +25,27 @@ function StatCard({ label, value, icon: Icon, color, alert }: { label: string; v
   );
 }
 
+function followUpStatus(followUpAt: string | null): "overdue" | "today" | "upcoming" | "none" {
+  if (!followUpAt) return "none";
+  const d = new Date(followUpAt);
+  if (isPast(d)) return "overdue";
+  if (isToday(d)) return "today";
+  return "upcoming";
+}
+
 export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useQuery<any>({ queryKey: ["/api/dashboard/stats"] });
   const { data: issueClients, isLoading: issueClientsLoading } = useQuery<any[]>({ queryKey: ["/api/dashboard/issues"] });
   const { data: expiringPlans } = useQuery<any[]>({ queryKey: ["/api/dashboard/expiring-plans"] });
   const { data: activity } = useQuery<any[]>({ queryKey: ["/api/dashboard/activity"] });
+  const { data: activeIssues } = useQuery<any[]>({
+    queryKey: ["/api/issues", "ACTIVE"],
+    queryFn: () => fetch("/api/issues?status=ACTIVE", { credentials: "include" }).then(r => r.json()),
+  });
+
+  const overdueFollowUps = (activeIssues ?? []).filter(i => followUpStatus(i.followUpAt) === "overdue");
+  const todayFollowUps  = (activeIssues ?? []).filter(i => followUpStatus(i.followUpAt) === "today");
+  const alertFollowUps  = [...overdueFollowUps, ...todayFollowUps];
 
   return (
     <div data-testid="dashboard-page">
@@ -37,6 +53,49 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-[#1A5276]" data-testid="text-page-title">Dashboard</h1>
         <p className="text-sm text-[#94A3B8] mt-1">Overview of your benefits management operations</p>
       </div>
+
+      {alertFollowUps.length > 0 && (
+        <div className="mb-5 p-4 rounded-lg border border-red-200 bg-red-50 flex items-start gap-3" data-testid="dashboard-followup-alert">
+          <Bell className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-700">
+              {alertFollowUps.length} issue follow-up{alertFollowUps.length !== 1 ? "s" : ""} require attention
+            </p>
+            <div className="mt-1.5 space-y-1">
+              {alertFollowUps.map(i => {
+                const status = followUpStatus(i.followUpAt);
+                return (
+                  <Link key={i.id} href="/issues">
+                    <div className="flex items-center gap-2 text-xs hover:underline cursor-pointer">
+                      <span className={`font-medium ${status === "overdue" ? "text-red-700" : "text-amber-700"}`}>
+                        {i.clientName}
+                      </span>
+                      <span className="text-[#94A3B8]">—</span>
+                      <span className={status === "overdue" ? "text-red-600" : "text-amber-700"}>
+                        {i.title}
+                      </span>
+                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                        status === "overdue"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}>
+                        {status === "overdue"
+                          ? `Overdue ${formatDistanceToNow(new Date(i.followUpAt), { addSuffix: true })}`
+                          : "Due today"}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+            <Link href="/issues">
+              <span className="text-xs text-red-600 hover:underline font-medium mt-1.5 inline-block">
+                View all issues →
+              </span>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {statsLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
@@ -57,7 +116,14 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-5">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Clients Needing Attention</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#1A5276]">Clients Needing Attention</h2>
+              {issueClients && issueClients.length > 0 && (
+                <Link href="/issues">
+                  <span className="text-xs text-[#2E86C1] hover:underline">View all issues →</span>
+                </Link>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="px-5 pb-5">
             {issueClientsLoading ? (
@@ -65,7 +131,7 @@ export default function DashboardPage() {
             ) : !issueClients?.length ? (
               <div className="text-center py-8">
                 <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
-                <p className="text-sm text-[#94A3B8]">All clear -- no active issues</p>
+                <p className="text-sm text-[#94A3B8]">All clear — no active issues</p>
               </div>
             ) : (
               <div className="space-y-2">

@@ -1,17 +1,9 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
-
-const navItems = [
-  { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { title: "Clients", path: "/clients", icon: Users },
-];
-
-const adminItems = [
-  { title: "Settings", path: "/settings/users", icon: Settings },
-];
 
 export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const [location] = useLocation();
@@ -20,6 +12,21 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [showSearch, setShowSearch] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  const { data: activeIssuesData } = useQuery<any[]>({
+    queryKey: ["/api/issues", "ACTIVE"],
+    queryFn: () => fetch("/api/issues?status=ACTIVE", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+
+  const { data: followUpData } = useQuery<{ count: number }>({
+    queryKey: ["/api/issues/followups-due-count"],
+    queryFn: () => fetch("/api/issues/followups-due-count", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+
+  const activeIssueCount = activeIssuesData?.length ?? 0;
+  const overdueFollowUpCount = followUpData?.count ?? 0;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -123,7 +130,11 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
       )}
 
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {navItems.map((item) => (
+        {[
+          { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard, badge: null },
+          { title: "Clients", path: "/clients", icon: Users, badge: null },
+          { title: "Issues", path: "/issues", icon: AlertCircle, badge: activeIssueCount > 0 ? activeIssueCount : null, badgeAlert: overdueFollowUpCount > 0 },
+        ].map((item) => (
           <Link key={item.path} href={item.path}>
             <div
               className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
@@ -134,7 +145,21 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               data-testid={`nav-${item.title.toLowerCase()}`}
             >
               <item.icon className="w-4.5 h-4.5 flex-shrink-0" />
-              {!collapsed && <span>{item.title}</span>}
+              {!collapsed && (
+                <span className="flex-1">{item.title}</span>
+              )}
+              {!collapsed && item.badge !== null && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none ${
+                  item.badgeAlert
+                    ? "bg-[#EF4444] text-white animate-pulse"
+                    : "bg-white/20 text-white"
+                }`}>
+                  {item.badge}
+                </span>
+              )}
+              {collapsed && item.badge !== null && (
+                <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${item.badgeAlert ? "bg-[#EF4444]" : "bg-white/60"}`} />
+              )}
             </div>
           </Link>
         ))}
@@ -142,21 +167,19 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
         {user?.role === "ADMIN" && (
           <>
             <div className={`my-2 border-t border-white/10 ${collapsed ? "mx-2" : "mx-3"}`} />
-            {adminItems.map((item) => (
-              <Link key={item.path} href={item.path}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
-                    isActive(item.path)
-                      ? "bg-white/15 text-white"
-                      : "text-white/70 hover:bg-white/10 hover:text-white"
-                  } ${collapsed ? "justify-center" : ""}`}
-                  data-testid={`nav-${item.title.toLowerCase()}`}
-                >
-                  <item.icon className="w-4.5 h-4.5 flex-shrink-0" />
-                  {!collapsed && <span>{item.title}</span>}
-                </div>
-              </Link>
-            ))}
+            <Link href="/settings/users">
+              <div
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                  isActive("/settings/users")
+                    ? "bg-white/15 text-white"
+                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                } ${collapsed ? "justify-center" : ""}`}
+                data-testid="nav-settings"
+              >
+                <Settings className="w-4.5 h-4.5 flex-shrink-0" />
+                {!collapsed && <span>Settings</span>}
+              </div>
+            </Link>
           </>
         )}
       </nav>

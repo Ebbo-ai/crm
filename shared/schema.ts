@@ -117,6 +117,7 @@ export const issues = pgTable("issues", {
   resolutionNotes: text("resolution_notes"),
   createdBy: text("created_by").notNull(),
   resolvedAt: timestamp("resolved_at"),
+  followUpAt: timestamp("follow_up_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

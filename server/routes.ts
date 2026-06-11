@@ -348,6 +348,67 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/issues", requireAuth, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const issueList = await storage.getAllIssues(status);
+      res.json(issueList);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/issues/followups-due-count", requireAuth, async (req, res) => {
+    try {
+      const cnt = await storage.getOverdueFollowUpCount();
+      res.json({ count: cnt });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/issues/:issueId/resolve", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.updateIssue(parseInt(req.params.issueId), {
+        status: "RESOLVED",
+        resolutionNotes: req.body.resolutionNotes || null,
+        resolvedAt: new Date(),
+        followUpAt: null,
+      });
+      if (!updated) return res.status(404).json({ message: "Issue not found" });
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "resolved",
+        entity: "issue",
+        entityId: updated.id,
+        details: `Resolved issue "${updated.title}"`,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/issues/:issueId/followup", requireAuth, async (req, res) => {
+    try {
+      const followUpAt = req.body.followUpAt ? new Date(req.body.followUpAt) : null;
+      const updated = await storage.updateIssue(parseInt(req.params.issueId), { followUpAt });
+      if (!updated) return res.status(404).json({ message: "Issue not found" });
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "scheduled follow-up",
+        entity: "issue",
+        entityId: updated.id,
+        details: `Set follow-up for issue "${updated.title}" to ${followUpAt?.toISOString()}`,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/clients/:id/issues", requireAuth, async (req, res) => {
     try {
       const issueList = await storage.getIssues(parseInt(req.params.id));

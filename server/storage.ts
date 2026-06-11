@@ -40,11 +40,13 @@ export interface IStorage {
   deleteDocument(id: number): Promise<void>;
 
   getIssues(clientId: number): Promise<Issue[]>;
+  getAllIssues(status?: string): Promise<(Issue & { clientName: string; clientCode: string })[]>;
   getIssue(id: number): Promise<Issue | undefined>;
   createIssue(issue: InsertIssue): Promise<Issue>;
-  updateIssue(id: number, data: Partial<InsertIssue & { resolvedAt: Date }>): Promise<Issue | undefined>;
+  updateIssue(id: number, data: Partial<InsertIssue & { resolvedAt: Date; followUpAt: Date | null }>): Promise<Issue | undefined>;
   getActiveIssueCount(clientId: number): Promise<number>;
   getTotalActiveIssueCount(): Promise<number>;
+  getOverdueFollowUpCount(): Promise<number>;
 
   getPprUploads(clientId: number): Promise<PprUpload[]>;
   getPprUpload(id: number): Promise<PprUpload | undefined>;
@@ -195,6 +197,16 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(issues).where(eq(issues.clientId, clientId)).orderBy(desc(issues.createdAt));
   }
 
+  async getAllIssues(status?: string): Promise<(Issue & { clientName: string; clientCode: string })[]> {
+    const allIssues = status
+      ? await db.select().from(issues).where(eq(issues.status, status as any)).orderBy(desc(issues.createdAt))
+      : await db.select().from(issues).orderBy(desc(issues.createdAt));
+    return Promise.all(allIssues.map(async (issue) => {
+      const client = await this.getClient(issue.clientId);
+      return { ...issue, clientName: client?.clientName ?? "Unknown", clientCode: client?.clientCode ?? "" };
+    }));
+  }
+
   async getIssue(id: number): Promise<Issue | undefined> {
     const [issue] = await db.select().from(issues).where(eq(issues.id, id));
     return issue;
@@ -205,7 +217,7 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateIssue(id: number, data: Partial<InsertIssue & { resolvedAt: Date }>): Promise<Issue | undefined> {
+  async updateIssue(id: number, data: Partial<InsertIssue & { resolvedAt: Date; followUpAt: Date | null }>): Promise<Issue | undefined> {
     const [updated] = await db.update(issues).set({ ...data, updatedAt: new Date() }).where(eq(issues.id, id)).returning();
     return updated;
   }
@@ -218,6 +230,12 @@ export class DatabaseStorage implements IStorage {
   async getTotalActiveIssueCount(): Promise<number> {
     const [result] = await db.select({ count: count() }).from(issues).where(eq(issues.status, "ACTIVE"));
     return result?.count ?? 0;
+  }
+
+  async getOverdueFollowUpCount(): Promise<number> {
+    const now = new Date();
+    const allActive = await db.select().from(issues).where(eq(issues.status, "ACTIVE"));
+    return allActive.filter(i => i.followUpAt && new Date(i.followUpAt) <= now).length;
   }
 
   async getPprUploads(clientId: number): Promise<PprUpload[]> {
