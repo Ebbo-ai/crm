@@ -106,6 +106,7 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
       )}
 
       <PlanFormDialog
+        key={editingPlan?.id ?? 'new'}
         open={showPlanForm}
         onClose={() => setShowPlanForm(false)}
         clientId={clientId}
