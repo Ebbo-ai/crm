@@ -134,6 +134,20 @@ export const pprUploads = pgTable("ppr_uploads", {
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
 });
 
+export const pprMetrics = pgTable("ppr_metrics", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  reportMonth: integer("report_month").notNull(),
+  reportYear: integer("report_year").notNull(),
+  planName: text("plan_name"),
+  monthlyLossRatio: decimal("monthly_loss_ratio", { precision: 10, scale: 4 }),
+  ytdLossRatio: decimal("ytd_loss_ratio", { precision: 10, scale: 4 }),
+  ytdSurplusDeficit: decimal("ytd_surplus_deficit", { precision: 12, scale: 2 }),
+  sourceFile: text("source_file"),
+  importedAt: timestamp("imported_at").notNull().defaultNow(),
+  importedBy: text("imported_by").notNull(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id"),
@@ -152,6 +166,7 @@ export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: tru
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
 export const insertPprUploadSchema = createInsertSchema(pprUploads).omit({ id: true, uploadedAt: true });
+export const insertPprMetricsSchema = createInsertSchema(pprMetrics).omit({ id: true, importedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 
 export type User = typeof users.$inferSelect;
@@ -168,5 +183,7 @@ export type Issue = typeof issues.$inferSelect;
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 export type PprUpload = typeof pprUploads.$inferSelect;
 export type InsertPprUpload = z.infer<typeof insertPprUploadSchema>;
+export type PprMetrics = typeof pprMetrics.$inferSelect;
+export type InsertPprMetrics = z.infer<typeof insertPprMetricsSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

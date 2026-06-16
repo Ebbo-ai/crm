@@ -10,8 +10,33 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText } from "lucide-react";
+import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { format } from "date-fns";
+
+function LossRatioBadge({ value }: { value: string | null }) {
+  if (value == null) return <span className="text-[#94A3B8]">—</span>;
+  const pct = parseFloat(value);
+  const color = pct >= 100 ? "text-[#EF4444]" : pct >= 85 ? "text-[#F5A623]" : "text-[#22C55E]";
+  const Icon = pct >= 100 ? TrendingUp : pct >= 85 ? Minus : TrendingDown;
+  return (
+    <span className={`inline-flex items-center gap-1 font-semibold ${color}`}>
+      <Icon className="w-3.5 h-3.5" />
+      {pct.toFixed(1)}%
+    </span>
+  );
+}
+
+function SurplusBadge({ value }: { value: string | null }) {
+  if (value == null) return <span className="text-[#94A3B8]">—</span>;
+  const amt = parseFloat(value);
+  const color = amt >= 0 ? "text-[#22C55E]" : "text-[#EF4444]";
+  const sign = amt >= 0 ? "+" : "";
+  return (
+    <span className={`font-semibold ${color}`}>
+      {sign}${Math.abs(amt).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    </span>
+  );
+}
 
 export default function PprTab({ clientId }: { clientId: number }) {
   const { toast } = useToast();
@@ -20,6 +45,10 @@ export default function PprTab({ clientId }: { clientId: number }) {
 
   const { data: pprs = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/clients", String(clientId), "ppr"],
+  });
+
+  const { data: metrics = [] } = useQuery<any[]>({
+    queryKey: ["/api/clients", String(clientId), "ppr-metrics"],
   });
 
   const deleteMutation = useMutation({
@@ -34,8 +63,79 @@ export default function PprTab({ clientId }: { clientId: number }) {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  // Latest metrics entry
+  const latest = metrics[0] ?? null;
+
   return (
     <div data-testid="ppr-tab">
+
+      {/* Key Metrics Panel */}
+      {latest && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-[#1A5276] mb-3 uppercase tracking-wide">
+            Latest Performance — {MONTHS[(latest.reportMonth ?? 1) - 1]} {latest.reportYear}
+            {latest.planName && <span className="ml-2 font-normal text-[#94A3B8] normal-case tracking-normal">({latest.planName})</span>}
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Card className="border-0 shadow-sm" data-testid="metric-monthly-lr">
+              <CardContent className="p-4">
+                <p className="text-xs text-[#94A3B8] font-medium mb-1">Monthly Loss Ratio</p>
+                <div className="text-xl"><LossRatioBadge value={latest.monthlyLossRatio} /></div>
+                <p className="text-[10px] text-[#94A3B8] mt-1">Current month vs. budget</p>
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-sm" data-testid="metric-ytd-lr">
+              <CardContent className="p-4">
+                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Loss Ratio</p>
+                <div className="text-xl"><LossRatioBadge value={latest.ytdLossRatio} /></div>
+                <p className="text-[10px] text-[#94A3B8] mt-1">Plan-year average</p>
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-sm" data-testid="metric-surplus">
+              <CardContent className="p-4">
+                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Surplus / Deficit</p>
+                <div className="text-xl"><SurplusBadge value={latest.ytdSurplusDeficit} /></div>
+                <p className="text-[10px] text-[#94A3B8] mt-1">Cumulative to date</p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* History Table */}
+      {metrics.length > 1 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-[#1A5276] mb-3">Monthly History</h3>
+          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-[#1A5276] text-white">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium">Period</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium hidden sm:table-cell">Plan</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium">Monthly LR</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium">YTD LR</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium">Surplus / Deficit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.map((m: any, i: number) => (
+                  <tr key={m.id} className={`border-b ${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]/40"}`} data-testid={`ppr-metric-row-${m.id}`}>
+                    <td className="px-4 py-2.5 font-medium text-[#2C3E50] text-sm">
+                      {MONTHS[(m.reportMonth ?? 1) - 1]} {m.reportYear}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-[#94A3B8] hidden sm:table-cell">{m.planName ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.monthlyLossRatio} /></td>
+                    <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.ytdLossRatio} /></td>
+                    <td className="px-4 py-2.5 text-right"><SurplusBadge value={m.ytdSurplusDeficit} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* File Uploads Section */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-[#1A5276]">Performance Reports (PPR)</h2>
         <Button onClick={() => setShowUpload(true)} className="bg-[#1A5276] text-white gap-2" data-testid="button-upload-ppr">

@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count } from "drizzle-orm";
 import {
-  users, clients, plans, rateCards, documents, issues, pprUploads, auditLogs,
+  users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
   type User, type InsertUser,
   type Client, type InsertClient,
   type Plan, type InsertPlan,
@@ -9,6 +9,7 @@ import {
   type Document, type InsertDocument,
   type Issue, type InsertIssue,
   type PprUpload, type InsertPprUpload,
+  type PprMetrics, type InsertPprMetrics,
   type AuditLog, type InsertAuditLog,
 } from "@shared/schema";
 
@@ -52,6 +53,10 @@ export interface IStorage {
   getPprUpload(id: number): Promise<PprUpload | undefined>;
   createPprUpload(ppr: InsertPprUpload): Promise<PprUpload>;
   deletePprUpload(id: number): Promise<void>;
+
+  getPprMetrics(clientId: number): Promise<PprMetrics[]>;
+  upsertPprMetrics(metrics: InsertPprMetrics): Promise<PprMetrics>;
+  getPprMetricsSummary(): Promise<any[]>;
 
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getRecentAuditLogs(limit: number): Promise<AuditLog[]>;
@@ -254,6 +259,50 @@ export class DatabaseStorage implements IStorage {
 
   async deletePprUpload(id: number): Promise<void> {
     await db.delete(pprUploads).where(eq(pprUploads.id, id));
+  }
+
+  async getPprMetrics(clientId: number): Promise<PprMetrics[]> {
+    return db.select().from(pprMetrics)
+      .where(eq(pprMetrics.clientId, clientId))
+      .orderBy(desc(pprMetrics.reportYear), desc(pprMetrics.reportMonth));
+  }
+
+  async upsertPprMetrics(metrics: InsertPprMetrics): Promise<PprMetrics> {
+    const existing = await db.select().from(pprMetrics).where(
+      and(
+        eq(pprMetrics.clientId, metrics.clientId),
+        eq(pprMetrics.reportMonth, metrics.reportMonth),
+        eq(pprMetrics.reportYear, metrics.reportYear),
+        metrics.planName ? eq(pprMetrics.planName, metrics.planName) : sql`plan_name IS NULL`,
+      )
+    );
+    if (existing.length > 0) {
+      const [updated] = await db.update(pprMetrics)
+        .set({ ...metrics, importedAt: new Date() })
+        .where(eq(pprMetrics.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(pprMetrics).values(metrics).returning();
+    return created;
+  }
+
+  async getPprMetricsSummary(): Promise<any[]> {
+    const allMetrics = await db.select().from(pprMetrics).orderBy(desc(pprMetrics.reportYear), desc(pprMetrics.reportMonth));
+    const latestByClient: Record<number, any> = {};
+    for (const m of allMetrics) {
+      if (!latestByClient[m.clientId]) {
+        latestByClient[m.clientId] = m;
+      }
+    }
+    const result = [];
+    for (const [clientId, metric] of Object.entries(latestByClient)) {
+      const client = await this.getClient(Number(clientId));
+      if (client) {
+        result.push({ ...metric, clientName: client.clientName, clientCode: client.clientCode });
+      }
+    }
+    return result.sort((a, b) => Number(b.ytdLossRatio ?? 0) - Number(a.ytdLossRatio ?? 0));
   }
 
   async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
