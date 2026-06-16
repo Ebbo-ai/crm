@@ -189,7 +189,7 @@ export default function DashboardPage() {
   const { data: issueClients, isLoading: issueClientsLoading } = useQuery<any[]>({ queryKey: ["/api/dashboard/issues"] });
   const { data: expiringPlans } = useQuery<any[]>({ queryKey: ["/api/dashboard/expiring-plans"] });
   const { data: activity } = useQuery<any[]>({ queryKey: ["/api/dashboard/activity"] });
-  const { data: pprSummary = [] } = useQuery<any[]>({ queryKey: ["/api/ppr-metrics/summary"] });
+  const { data: pprSummary = [] } = useQuery<any[]>({ queryKey: ["/api/ppr-metrics/summary"], staleTime: 0 });
   const { data: activeIssues } = useQuery<any[]>({
     queryKey: ["/api/issues", "ACTIVE"],
     queryFn: () => fetch("/api/issues?status=ACTIVE", { credentials: "include" }).then(r => r.json()),
