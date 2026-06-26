@@ -2,10 +2,12 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
+import { matchEmailToClients, processEmail, queryClientCommunications } from "./claude";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 
@@ -763,6 +765,338 @@ export async function registerRoutes(
       if (!updated) return res.status(404).json({ message: "User not found" });
       const { password, ...safeUser } = updated;
       res.json(safeUser);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Email attachment upload (for email webhook + manual) ───────────────────
+  const emailAttachDir = path.join(uploadDir, "email-attachments");
+  fs.mkdirSync(emailAttachDir, { recursive: true });
+
+  const emailAttachStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(emailAttachDir, String(Date.now()));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+      cb(null, safeName);
+    },
+  });
+  const emailUpload = multer({ storage: emailAttachStorage, limits: { fileSize: 25 * 1024 * 1024 } });
+
+  // Helper: extract text from attachment buffer by mime type
+  async function extractAttachmentText(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
+    try {
+      if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
+        const pdfParse = (await import("pdf-parse")).default;
+        const parsed = await pdfParse(buffer);
+        return parsed.text.slice(0, 8000);
+      }
+      if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filename.endsWith(".docx")) {
+        const mammoth = await import("mammoth");
+        const result = await mammoth.extractRawText({ buffer });
+        return result.value.slice(0, 8000);
+      }
+      if (mimeType?.startsWith("text/")) {
+        return buffer.toString("utf8").slice(0, 8000);
+      }
+    } catch {}
+    return "";
+  }
+
+  // ─── Mailgun inbound email webhook ─────────────────────────────────────────
+  app.post("/api/email/inbound", emailUpload.any(), async (req, res) => {
+    try {
+      // Verify Mailgun webhook signature if key is configured
+      const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
+      if (signingKey) {
+        const { timestamp, token, signature } = req.body;
+        if (timestamp && token && signature) {
+          const hmac = crypto.createHmac("sha256", signingKey);
+          hmac.update(timestamp + token);
+          const computed = hmac.digest("hex");
+          if (computed !== signature) {
+            return res.status(403).json({ message: "Invalid Mailgun signature" });
+          }
+        }
+      }
+
+      const sender: string = req.body.sender || req.body.from || "";
+      const subject: string = req.body.subject || "(no subject)";
+      const bodyText: string = req.body["body-plain"] || req.body["stripped-text"] || req.body.text || "";
+      const bodyHtml: string = req.body["body-html"] || req.body["stripped-html"] || "";
+      const receivedAt = new Date();
+
+      // Parse sender name and email
+      const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
+      const senderName = senderMatch[1]?.trim() || null;
+      const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
+      const senderDomain = senderEmail.split("@")[1] || null;
+      const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
+      const isInternal = senderDomain === internalDomain;
+
+      // Build combined text for Claude
+      const files = (req.files as Express.Multer.File[]) || [];
+      const attachmentTexts: string[] = [];
+      const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
+
+      for (const file of files) {
+        const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
+        attachmentTexts.push(text);
+        attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
+      }
+
+      const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
+
+      // Match to clients and process with Claude in parallel
+      const allClients = await storage.getClients();
+      const [matches, processed] = await Promise.all([
+        matchEmailToClients(fullText, allClients.map(c => ({
+          id: c.id, clientCode: c.clientCode, clientName: c.clientName,
+          brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
+          adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
+        }))),
+        processEmail(fullText, attachmentTexts),
+      ]);
+
+      const actionItemsJson = JSON.stringify(processed.actionItems);
+      const comm = await storage.createCommunication({
+        subject, senderEmail, senderName, senderDomain,
+        bodyText: bodyText.slice(0, 50000),
+        bodyHtml: bodyHtml.slice(0, 50000),
+        claudeSummary: processed.summary,
+        claudeActionItems: actionItemsJson,
+        isInternal,
+        isUnmatched: matches.length === 0,
+        source: "email",
+        rawPayload: JSON.stringify(req.body).slice(0, 10000),
+      });
+
+      // Save attachments
+      for (const att of attachmentMeta) {
+        await storage.createCommunicationAttachment({
+          communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
+          sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
+        });
+      }
+
+      // Assign to matched clients and create tasks
+      if (matches.length > 0) {
+        await storage.assignCommunicationToClients(comm.id, matches);
+        for (const item of processed.actionItems) {
+          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          for (const m of matches) {
+            await storage.createCommunicationTask({
+              communicationId: comm.id, clientId: m.clientId,
+              description: item.description,
+              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+            });
+          }
+        }
+      } else {
+        // Still create tasks even for unmatched emails
+        for (const item of processed.actionItems) {
+          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          await storage.createCommunicationTask({
+            communicationId: comm.id, clientId: null,
+            description: item.description,
+            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+          });
+        }
+      }
+
+      res.json({ ok: true, communicationId: comm.id, matchedClients: matches.length, tasksCreated: processed.actionItems.length });
+    } catch (err: any) {
+      console.error("Email inbound error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Manual communication (paste/type) ─────────────────────────────────────
+  app.post("/api/communications/manual", requireAuth, emailUpload.array("attachments", 10), async (req, res) => {
+    try {
+      const { subject, senderEmail, senderName, bodyText, clientIds } = req.body;
+      if (!senderEmail || !bodyText) return res.status(400).json({ message: "senderEmail and bodyText are required" });
+
+      const domain = senderEmail.split("@")[1]?.toLowerCase() || null;
+      const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
+      const isInternal = domain === internalDomain;
+
+      const files = (req.files as Express.Multer.File[]) || [];
+      const attachmentTexts: string[] = [];
+      const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string }[] = [];
+      for (const file of files) {
+        const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
+        attachmentTexts.push(text);
+        attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path });
+      }
+
+      const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject || "(manual entry)"}\n\n${bodyText}`;
+      const processed = await processEmail(fullText, attachmentTexts);
+
+      const parsedClientIds: number[] = clientIds
+        ? (Array.isArray(clientIds) ? clientIds : [clientIds]).map(Number).filter(Boolean)
+        : [];
+
+      const comm = await storage.createCommunication({
+        subject: subject || "(manual entry)", senderEmail: senderEmail.toLowerCase(),
+        senderName: senderName || null, senderDomain: domain,
+        bodyText: bodyText.slice(0, 50000), bodyHtml: null,
+        claudeSummary: processed.summary, claudeActionItems: JSON.stringify(processed.actionItems),
+        isInternal, isUnmatched: parsedClientIds.length === 0, source: "manual",
+      });
+
+      for (const att of attachmentMeta) {
+        await storage.createCommunicationAttachment({
+          communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
+          sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: null,
+        });
+      }
+
+      if (parsedClientIds.length > 0) {
+        await storage.assignCommunicationToClients(comm.id, parsedClientIds.map(id => ({ clientId: id, confidence: "manual" })));
+        for (const item of processed.actionItems) {
+          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          for (const cid of parsedClientIds) {
+            await storage.createCommunicationTask({
+              communicationId: comm.id, clientId: cid, description: item.description,
+              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+            });
+          }
+        }
+      }
+
+      res.status(201).json({ ...comm, actionItems: processed.actionItems });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── List communications (inbox) ────────────────────────────────────────────
+  app.get("/api/communications", requireAuth, async (req, res) => {
+    try {
+      const { senderDomain, senderName, clientId, unmatched, isInternal } = req.query;
+      const comms = await storage.getAllCommunications({
+        senderDomain: senderDomain as string | undefined,
+        senderName: senderName as string | undefined,
+        clientId: clientId ? parseInt(clientId as string) : undefined,
+        unmatched: unmatched === "true",
+        isInternal: isInternal === "true" ? true : isInternal === "false" ? false : undefined,
+      });
+      res.json(comms);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/communications/senders", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getDistinctSenders());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/communications/unread-count", requireAuth, async (req, res) => {
+    try {
+      res.json({ count: await storage.getUnreadCommunicationsCount() });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/communications/:id", requireAuth, async (req, res) => {
+    try {
+      const comm = await storage.getCommunication(parseInt(req.params.id));
+      if (!comm) return res.status(404).json({ message: "Not found" });
+      res.json(comm);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/communications/:id/assign", requireAuth, async (req, res) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) return res.status(400).json({ message: "clientId required" });
+      await storage.updateClientAssignment(parseInt(req.params.id), parseInt(clientId));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Client communications ──────────────────────────────────────────────────
+  app.get("/api/clients/:id/communications", requireAuth, async (req, res) => {
+    try {
+      const comms = await storage.getClientCommunications(parseInt(req.params.id));
+      res.json(comms);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/clients/:id/communications/ask", requireAuth, async (req, res) => {
+    try {
+      const { question } = req.body;
+      if (!question) return res.status(400).json({ message: "question required" });
+      const comms = await storage.getClientCommunications(parseInt(req.params.id));
+      const answer = await queryClientCommunications(question, comms);
+      res.json({ answer });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Global AI query across all communications ──────────────────────────────
+  app.post("/api/communications/ask", requireAuth, async (req, res) => {
+    try {
+      const { question, senderDomain, senderName, clientId } = req.body;
+      if (!question) return res.status(400).json({ message: "question required" });
+      const comms = await storage.getAllCommunications({ senderDomain, senderName, clientId });
+      const answer = await queryClientCommunications(question, comms);
+      res.json({ answer });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Tasks ──────────────────────────────────────────────────────────────────
+  app.get("/api/communication-tasks", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getOpenTasks());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/clients/:id/communication-tasks", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getClientTasks(parseInt(req.params.id)));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/communication-tasks/:id/complete", requireAuth, async (req, res) => {
+    try {
+      await storage.completeCommunicationTask(parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Attachment download ─────────────────────────────────────────────────────
+  app.get("/api/communication-attachments/:id/download", requireAuth, async (req, res) => {
+    try {
+      const att = await storage.getCommunicationAttachment(parseInt(req.params.id));
+      if (!att) return res.status(404).json({ message: "Attachment not found" });
+      if (!fs.existsSync(att.storagePath)) return res.status(404).json({ message: "File not found on disk" });
+      res.download(att.storagePath, att.filename);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

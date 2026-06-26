@@ -11,6 +11,7 @@ import PlansTab from "@/components/tabs/plans-tab";
 import DocumentsTab from "@/components/tabs/documents-tab";
 import IssuesTab from "@/components/tabs/issues-tab";
 import PprTab from "@/components/tabs/ppr-tab";
+import CommunicationsTab from "@/components/tabs/communications-tab";
 
 export default function ClientDetailPage() {
   const params = useParams<{ id: string }>();
@@ -72,6 +73,7 @@ export default function ClientDetailPage() {
             Issues {client.activeIssueCount > 0 && `(${client.activeIssueCount})`}
           </TabsTrigger>
           <TabsTrigger value="ppr" data-testid="tab-ppr" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">PPR</TabsTrigger>
+          <TabsTrigger value="communications" data-testid="tab-communications" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">Communications</TabsTrigger>
           <TabsTrigger value="banking" data-testid="tab-banking" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">Banking</TabsTrigger>
         </TabsList>
 
@@ -190,6 +192,10 @@ export default function ClientDetailPage() {
 
         <TabsContent value="ppr">
           <PprTab clientId={clientId} />
+        </TabsContent>
+
+        <TabsContent value="communications">
+          <CommunicationsTab clientId={clientId} />
         </TabsContent>
 
         <TabsContent value="banking">

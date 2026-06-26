@@ -1,7 +1,8 @@
 import { db } from "./db";
-import { eq, and, ilike, sql, desc, asc, count } from "drizzle-orm";
+import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
 import {
   users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
+  communications, communicationClients, communicationAttachments, communicationTasks,
   type User, type InsertUser,
   type Client, type InsertClient,
   type Plan, type InsertPlan,
@@ -11,6 +12,9 @@ import {
   type PprUpload, type InsertPprUpload,
   type PprMetrics, type InsertPprMetrics,
   type AuditLog, type InsertAuditLog,
+  type Communication, type InsertCommunication,
+  type CommunicationAttachment, type InsertCommunicationAttachment,
+  type CommunicationTask, type InsertCommunicationTask,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -70,6 +74,24 @@ export interface IStorage {
   }>;
   getClientsWithActiveIssues(): Promise<any[]>;
   getExpiringPlans(): Promise<any[]>;
+
+  createCommunication(comm: InsertCommunication): Promise<Communication>;
+  updateCommunication(id: number, data: Partial<Communication>): Promise<Communication | undefined>;
+  getCommunication(id: number): Promise<Communication | undefined>;
+  getClientCommunications(clientId: number): Promise<(Communication & { attachments: CommunicationAttachment[]; tasks: CommunicationTask[] })[]>;
+  getAllCommunications(filters?: { senderDomain?: string; senderName?: string; clientId?: number; unmatched?: boolean; isInternal?: boolean }): Promise<(Communication & { clientNames: string[]; attachments: CommunicationAttachment[]; tasks: CommunicationTask[] })[]>;
+  assignCommunicationToClients(commId: number, assignments: { clientId: number; confidence: string }[]): Promise<void>;
+  updateClientAssignment(commId: number, clientId: number): Promise<void>;
+  getDistinctSenders(): Promise<{ senderEmail: string; senderName: string | null; senderDomain: string | null }[]>;
+
+  createCommunicationAttachment(att: InsertCommunicationAttachment): Promise<CommunicationAttachment>;
+  getCommunicationAttachment(id: number): Promise<CommunicationAttachment | undefined>;
+
+  createCommunicationTask(task: InsertCommunicationTask): Promise<CommunicationTask>;
+  getOpenTasks(): Promise<(CommunicationTask & { clientName: string | null; communicationSubject: string | null })[]>;
+  completeCommunicationTask(id: number): Promise<void>;
+  getClientTasks(clientId: number): Promise<CommunicationTask[]>;
+  getUnreadCommunicationsCount(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -380,6 +402,125 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return result.sort((a, b) => a.daysUntilExpiration - b.daysUntilExpiration);
+  }
+
+  async createCommunication(comm: InsertCommunication): Promise<Communication> {
+    const [created] = await db.insert(communications).values(comm).returning();
+    return created;
+  }
+
+  async updateCommunication(id: number, data: Partial<Communication>): Promise<Communication | undefined> {
+    const [updated] = await db.update(communications).set(data).where(eq(communications.id, id)).returning();
+    return updated;
+  }
+
+  async getCommunication(id: number): Promise<Communication | undefined> {
+    const [comm] = await db.select().from(communications).where(eq(communications.id, id));
+    return comm;
+  }
+
+  private async enrichComm(comm: Communication) {
+    const attachments = await db.select().from(communicationAttachments).where(eq(communicationAttachments.communicationId, comm.id)).orderBy(asc(communicationAttachments.uploadedAt));
+    const tasks = await db.select().from(communicationTasks).where(eq(communicationTasks.communicationId, comm.id)).orderBy(asc(communicationTasks.dueDate));
+    return { ...comm, attachments, tasks };
+  }
+
+  async getClientCommunications(clientId: number) {
+    const links = await db.select().from(communicationClients).where(eq(communicationClients.clientId, clientId));
+    if (!links.length) return [];
+    const commIds = links.map(l => l.communicationId);
+    const comms = await db.select().from(communications).where(inArray(communications.id, commIds)).orderBy(desc(communications.receivedAt));
+    return Promise.all(comms.map(c => this.enrichComm(c)));
+  }
+
+  async getAllCommunications(filters?: { senderDomain?: string; senderName?: string; clientId?: number; unmatched?: boolean; isInternal?: boolean }) {
+    let comms: Communication[];
+
+    if (filters?.clientId) {
+      const links = await db.select().from(communicationClients).where(eq(communicationClients.clientId, filters.clientId));
+      if (!links.length) return [];
+      comms = await db.select().from(communications).where(inArray(communications.id, links.map(l => l.communicationId))).orderBy(desc(communications.receivedAt));
+    } else if (filters?.unmatched) {
+      comms = await db.select().from(communications).where(eq(communications.isUnmatched, true)).orderBy(desc(communications.receivedAt));
+    } else {
+      const conditions = [];
+      if (filters?.senderDomain) conditions.push(eq(communications.senderDomain, filters.senderDomain));
+      if (filters?.senderName) conditions.push(ilike(communications.senderName, `%${filters.senderName}%`));
+      if (filters?.isInternal !== undefined) conditions.push(eq(communications.isInternal, filters.isInternal));
+      comms = conditions.length
+        ? await db.select().from(communications).where(and(...conditions)).orderBy(desc(communications.receivedAt))
+        : await db.select().from(communications).orderBy(desc(communications.receivedAt));
+    }
+
+    return Promise.all(comms.map(async c => {
+      const links = await db.select().from(communicationClients).where(eq(communicationClients.communicationId, c.id));
+      const clientNames = await Promise.all(links.map(async l => {
+        const client = await this.getClient(l.clientId);
+        return client?.clientName ?? "Unknown";
+      }));
+      const enriched = await this.enrichComm(c);
+      return { ...enriched, clientNames };
+    }));
+  }
+
+  async assignCommunicationToClients(commId: number, assignments: { clientId: number; confidence: string }[]) {
+    for (const a of assignments) {
+      await db.insert(communicationClients).values({ communicationId: commId, clientId: a.clientId, matchConfidence: a.confidence }).onConflictDoNothing();
+    }
+    if (assignments.length > 0) {
+      await db.update(communications).set({ isUnmatched: false }).where(eq(communications.id, commId));
+    }
+  }
+
+  async updateClientAssignment(commId: number, clientId: number) {
+    await db.insert(communicationClients).values({ communicationId: commId, clientId, matchConfidence: "manual" }).onConflictDoNothing();
+    await db.update(communications).set({ isUnmatched: false }).where(eq(communications.id, commId));
+  }
+
+  async getDistinctSenders() {
+    const rows = await db.selectDistinctOn([communications.senderEmail], {
+      senderEmail: communications.senderEmail,
+      senderName: communications.senderName,
+      senderDomain: communications.senderDomain,
+    }).from(communications).orderBy(communications.senderEmail);
+    return rows;
+  }
+
+  async createCommunicationAttachment(att: InsertCommunicationAttachment): Promise<CommunicationAttachment> {
+    const [created] = await db.insert(communicationAttachments).values(att).returning();
+    return created;
+  }
+
+  async getCommunicationAttachment(id: number): Promise<CommunicationAttachment | undefined> {
+    const [att] = await db.select().from(communicationAttachments).where(eq(communicationAttachments.id, id));
+    return att;
+  }
+
+  async createCommunicationTask(task: InsertCommunicationTask): Promise<CommunicationTask> {
+    const [created] = await db.insert(communicationTasks).values(task).returning();
+    return created;
+  }
+
+  async getOpenTasks() {
+    const tasks = await db.select().from(communicationTasks).where(eq(communicationTasks.isCompleted, false)).orderBy(asc(communicationTasks.dueDate));
+    return Promise.all(tasks.map(async t => {
+      const client = t.clientId ? await this.getClient(t.clientId) : null;
+      const comm = await this.getCommunication(t.communicationId);
+      return { ...t, clientName: client?.clientName ?? null, communicationSubject: comm?.subject ?? null };
+    }));
+  }
+
+  async completeCommunicationTask(id: number) {
+    await db.update(communicationTasks).set({ isCompleted: true, completedAt: new Date() }).where(eq(communicationTasks.id, id));
+  }
+
+  async getClientTasks(clientId: number): Promise<CommunicationTask[]> {
+    return db.select().from(communicationTasks).where(eq(communicationTasks.clientId, clientId)).orderBy(asc(communicationTasks.dueDate));
+  }
+
+  async getUnreadCommunicationsCount(): Promise<number> {
+    const [result] = await db.select({ count: count() }).from(communications).where(eq(communications.isUnmatched, true));
+    return result?.count ?? 0;
   }
 }
 

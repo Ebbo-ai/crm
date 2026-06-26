@@ -148,6 +148,52 @@ export const pprMetrics = pgTable("ppr_metrics", {
   importedBy: text("imported_by").notNull(),
 });
 
+export const communications = pgTable("communications", {
+  id: serial("id").primaryKey(),
+  subject: text("subject"),
+  senderEmail: text("sender_email").notNull(),
+  senderName: text("sender_name"),
+  senderDomain: text("sender_domain"),
+  bodyText: text("body_text"),
+  bodyHtml: text("body_html"),
+  claudeSummary: text("claude_summary"),
+  claudeActionItems: text("claude_action_items"),
+  receivedAt: timestamp("received_at").notNull().defaultNow(),
+  isInternal: boolean("is_internal").notNull().default(false),
+  isUnmatched: boolean("is_unmatched").notNull().default(false),
+  source: text("source").notNull().default("email"),
+  rawPayload: text("raw_payload"),
+});
+
+export const communicationClients = pgTable("communication_clients", {
+  id: serial("id").primaryKey(),
+  communicationId: integer("communication_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  matchConfidence: text("match_confidence").notNull().default("high"),
+});
+
+export const communicationAttachments = pgTable("communication_attachments", {
+  id: serial("id").primaryKey(),
+  communicationId: integer("communication_id").notNull(),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  storagePath: text("storage_path").notNull(),
+  claudeAnalysis: text("claude_analysis"),
+  uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+});
+
+export const communicationTasks = pgTable("communication_tasks", {
+  id: serial("id").primaryKey(),
+  communicationId: integer("communication_id").notNull(),
+  clientId: integer("client_id"),
+  description: text("description").notNull(),
+  dueDate: timestamp("due_date"),
+  isCompleted: boolean("is_completed").notNull().default(false),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id"),
@@ -158,6 +204,11 @@ export const auditLogs = pgTable("audit_logs", {
   details: text("details"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const insertCommunicationSchema = createInsertSchema(communications).omit({ id: true, receivedAt: true });
+export const insertCommunicationClientSchema = createInsertSchema(communicationClients).omit({ id: true });
+export const insertCommunicationAttachmentSchema = createInsertSchema(communicationAttachments).omit({ id: true, uploadedAt: true });
+export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).omit({ id: true, createdAt: true, completedAt: true });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
@@ -187,3 +238,12 @@ export type PprMetrics = typeof pprMetrics.$inferSelect;
 export type InsertPprMetrics = z.infer<typeof insertPprMetricsSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+export type Communication = typeof communications.$inferSelect;
+export type InsertCommunication = z.infer<typeof insertCommunicationSchema>;
+export type CommunicationClient = typeof communicationClients.$inferSelect;
+export type InsertCommunicationClient = z.infer<typeof insertCommunicationClientSchema>;
+export type CommunicationAttachment = typeof communicationAttachments.$inferSelect;
+export type InsertCommunicationAttachment = z.infer<typeof insertCommunicationAttachmentSchema>;
+export type CommunicationTask = typeof communicationTasks.$inferSelect;
+export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSchema>;
