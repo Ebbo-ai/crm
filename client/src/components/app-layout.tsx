@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { AppSidebar } from "./app-sidebar";
-import { Menu } from "lucide-react";
+import { QuickLogModal, useQuickLog } from "./quick-log-modal";
+import { Menu, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const { open, defaultClientId, openQuickLog, closeQuickLog } = useQuickLog();
 
   useEffect(() => {
     const check = () => {
@@ -40,12 +42,27 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           >
             <Menu className="w-5 h-5" />
           </Button>
+
+          <div className="flex-1" />
+
+          <Button
+            onClick={() => openQuickLog()}
+            size="sm"
+            className="bg-[#1A5276] hover:bg-[#154360] text-white gap-2 h-8 px-3 text-xs"
+            data-testid="button-quick-log-header"
+          >
+            <Zap className="w-3.5 h-3.5 text-[#F5A623]" />
+            Quick Log
+            <span className="hidden sm:inline text-[10px] opacity-60 font-mono ml-0.5">Ctrl+Shift+E</span>
+          </Button>
         </header>
 
         <main className="p-4 lg:p-6 min-h-[calc(100vh-3.5rem)]">
           {children}
         </main>
       </div>
+
+      <QuickLogModal open={open} onClose={closeQuickLog} defaultClientId={defaultClientId} />
     </div>
   );
 }
