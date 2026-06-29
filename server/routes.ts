@@ -808,111 +808,119 @@ export async function registerRoutes(
   }
 
   // ─── Mailgun inbound email webhook ─────────────────────────────────────────
-  app.post("/api/email/inbound", emailUpload.any(), async (req, res) => {
-    try {
-      // Verify Mailgun webhook signature if key is configured
-      const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
-      if (signingKey) {
-        const { timestamp, token, signature } = req.body;
-        if (timestamp && token && signature) {
-          const hmac = crypto.createHmac("sha256", signingKey);
-          hmac.update(timestamp + token);
-          const computed = hmac.digest("hex");
-          if (computed !== signature) {
-            return res.status(403).json({ message: "Invalid Mailgun signature" });
-          }
+  app.post("/api/email/inbound", emailUpload.any(), (req, res) => {
+    // Verify Mailgun webhook signature if key is configured
+    const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
+    if (signingKey) {
+      const { timestamp, token, signature } = req.body;
+      if (timestamp && token && signature) {
+        const hmac = crypto.createHmac("sha256", signingKey);
+        hmac.update(timestamp + token);
+        const computed = hmac.digest("hex");
+        if (computed !== signature) {
+          console.error("Mailgun webhook: invalid signature");
+          return res.status(403).json({ message: "Invalid Mailgun signature" });
         }
       }
+    }
 
-      const sender: string = req.body.sender || req.body.from || "";
-      const subject: string = req.body.subject || "(no subject)";
-      const bodyText: string = req.body["body-plain"] || req.body["stripped-text"] || req.body.text || "";
-      const bodyHtml: string = req.body["body-html"] || req.body["stripped-html"] || "";
-      const receivedAt = new Date();
+    // Respond immediately so Mailgun doesn't time out — process async in background
+    res.status(200).json({ ok: true });
 
-      // Parse sender name and email
-      const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
-      const senderName = senderMatch[1]?.trim() || null;
-      const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
-      const senderDomain = senderEmail.split("@")[1] || null;
-      const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
-      const isInternal = senderDomain === internalDomain;
+    // Capture everything from req before it becomes unavailable
+    const body = req.body;
+    const files = (req.files as Express.Multer.File[]) || [];
 
-      // Build combined text for Claude
-      const files = (req.files as Express.Multer.File[]) || [];
-      const attachmentTexts: string[] = [];
-      const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
+    setImmediate(async () => {
+      try {
+        const sender: string = body.sender || body.from || "";
+        const subject: string = body.subject || "(no subject)";
+        const bodyText: string = body["body-plain"] || body["stripped-text"] || body.text || "";
+        const bodyHtml: string = body["body-html"] || body["stripped-html"] || "";
 
-      for (const file of files) {
-        const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
-        attachmentTexts.push(text);
-        attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
-      }
+        // Parse sender name and email
+        const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
+        const senderName = senderMatch[1]?.trim() || null;
+        const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
+        const senderDomain = senderEmail.split("@")[1] || null;
+        const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
+        const isInternal = senderDomain === internalDomain;
 
-      const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
+        console.log(`[email-inbound] Processing email from ${senderEmail}, subject: "${subject}"`);
 
-      // Match to clients and process with Claude in parallel
-      const allClients = await storage.getClients();
-      const [matches, processed] = await Promise.all([
-        matchEmailToClients(fullText, allClients.map(c => ({
-          id: c.id, clientCode: c.clientCode, clientName: c.clientName,
-          brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
-          adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
-        }))),
-        processEmail(fullText, attachmentTexts),
-      ]);
+        // Extract text from any attachments
+        const attachmentTexts: string[] = [];
+        const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
 
-      const actionItemsJson = JSON.stringify(processed.actionItems);
-      const comm = await storage.createCommunication({
-        subject, senderEmail, senderName, senderDomain,
-        bodyText: bodyText.slice(0, 50000),
-        bodyHtml: bodyHtml.slice(0, 50000),
-        claudeSummary: processed.summary,
-        claudeActionItems: actionItemsJson,
-        isInternal,
-        isUnmatched: matches.length === 0,
-        source: "email",
-        rawPayload: JSON.stringify(req.body).slice(0, 10000),
-      });
+        for (const file of files) {
+          const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
+          attachmentTexts.push(text);
+          attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
+        }
 
-      // Save attachments
-      for (const att of attachmentMeta) {
-        await storage.createCommunicationAttachment({
-          communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
-          sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
+        const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
+
+        // Match to clients and process with Claude in parallel
+        const allClients = await storage.getClients();
+        const [matches, processed] = await Promise.all([
+          matchEmailToClients(fullText, allClients.map(c => ({
+            id: c.id, clientCode: c.clientCode, clientName: c.clientName,
+            brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
+            adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
+          }))),
+          processEmail(fullText, attachmentTexts),
+        ]);
+
+        const actionItemsJson = JSON.stringify(processed.actionItems);
+        const comm = await storage.createCommunication({
+          subject, senderEmail, senderName, senderDomain,
+          bodyText: bodyText.slice(0, 50000),
+          bodyHtml: bodyHtml.slice(0, 50000),
+          claudeSummary: processed.summary,
+          claudeActionItems: actionItemsJson,
+          isInternal,
+          isUnmatched: matches.length === 0,
+          source: "email",
+          rawPayload: JSON.stringify(body).slice(0, 10000),
         });
-      }
 
-      // Assign to matched clients and create tasks
-      if (matches.length > 0) {
-        await storage.assignCommunicationToClients(comm.id, matches);
-        for (const item of processed.actionItems) {
-          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          for (const m of matches) {
+        // Save attachments
+        for (const att of attachmentMeta) {
+          await storage.createCommunicationAttachment({
+            communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
+            sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
+          });
+        }
+
+        // Assign to matched clients and create tasks
+        if (matches.length > 0) {
+          await storage.assignCommunicationToClients(comm.id, matches);
+          for (const item of processed.actionItems) {
+            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+            for (const m of matches) {
+              await storage.createCommunicationTask({
+                communicationId: comm.id, clientId: m.clientId,
+                description: item.description,
+                dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+              });
+            }
+          }
+        } else {
+          for (const item of processed.actionItems) {
+            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
             await storage.createCommunicationTask({
-              communicationId: comm.id, clientId: m.clientId,
+              communicationId: comm.id, clientId: null,
               description: item.description,
               dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
             });
           }
         }
-      } else {
-        // Still create tasks even for unmatched emails
-        for (const item of processed.actionItems) {
-          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          await storage.createCommunicationTask({
-            communicationId: comm.id, clientId: null,
-            description: item.description,
-            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-          });
-        }
-      }
 
-      res.json({ ok: true, communicationId: comm.id, matchedClients: matches.length, tasksCreated: processed.actionItems.length });
-    } catch (err: any) {
-      console.error("Email inbound error:", err);
-      res.status(500).json({ message: err.message });
-    }
+        console.log(`[email-inbound] Saved communication #${comm.id} — matched ${matches.length} clients, ${processed.actionItems.length} tasks`);
+      } catch (err: any) {
+        console.error("[email-inbound] Background processing error:", err?.message || err);
+      }
+    });
   });
 
   // ─── Manual communication (paste/type) ─────────────────────────────────────
