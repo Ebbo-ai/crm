@@ -827,9 +827,17 @@ export async function registerRoutes(
     // Respond immediately so Mailgun doesn't time out — process async in background
     res.status(200).json({ ok: true });
 
-    // Capture everything from req before it becomes unavailable
+    // Capture everything from req synchronously before going async
     const body = req.body;
     const files = (req.files as Express.Multer.File[]) || [];
+
+    // Helper: race any promise against a timeout
+    function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+      return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+      ]);
+    }
 
     setImmediate(async () => {
       try {
@@ -846,45 +854,35 @@ export async function registerRoutes(
         const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
         const isInternal = senderDomain === internalDomain;
 
-        console.log(`[email-inbound] Processing email from ${senderEmail}, subject: "${subject}"`);
+        console.log(`[email-inbound] Received from ${senderEmail || "(unknown)"}, subject: "${subject}"`);
 
-        // Extract text from any attachments
-        const attachmentTexts: string[] = [];
-        const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
-
-        for (const file of files) {
-          const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
-          attachmentTexts.push(text);
-          attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
-        }
-
-        const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
-
-        // Match to clients and process with Claude in parallel
-        const allClients = await storage.getClients();
-        const [matches, processed] = await Promise.all([
-          matchEmailToClients(fullText, allClients.map(c => ({
-            id: c.id, clientCode: c.clientCode, clientName: c.clientName,
-            brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
-            adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
-          }))),
-          processEmail(fullText, attachmentTexts),
-        ]);
-
-        const actionItemsJson = JSON.stringify(processed.actionItems);
+        // ── STEP 1: Save the raw email immediately so it's never lost ──────────
         const comm = await storage.createCommunication({
-          subject, senderEmail, senderName, senderDomain,
+          subject,
+          senderEmail: senderEmail || "unknown@unknown.com",
+          senderName,
+          senderDomain,
           bodyText: bodyText.slice(0, 50000),
           bodyHtml: bodyHtml.slice(0, 50000),
-          claudeSummary: processed.summary,
-          claudeActionItems: actionItemsJson,
+          claudeSummary: "Processing…",
+          claudeActionItems: "[]",
           isInternal,
-          isUnmatched: matches.length === 0,
+          isUnmatched: true,
           source: "email",
           rawPayload: JSON.stringify(body).slice(0, 10000),
         });
+        console.log(`[email-inbound] Saved communication #${comm.id} — enriching with AI…`);
 
-        // Save attachments
+        // ── STEP 2: Extract attachment text ────────────────────────────────────
+        const attachmentTexts: string[] = [];
+        const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
+        for (const file of files) {
+          try {
+            const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
+            attachmentTexts.push(text);
+            attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
+          } catch { /* skip unreadable attachments */ }
+        }
         for (const att of attachmentMeta) {
           await storage.createCommunicationAttachment({
             communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
@@ -892,7 +890,35 @@ export async function registerRoutes(
           });
         }
 
-        // Assign to matched clients and create tasks
+        // ── STEP 3: Claude enrichment (with 30s timeout so it can't hang) ──────
+        const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
+        const allClients = await storage.getClients();
+
+        const [matches, processed] = await Promise.all([
+          withTimeout(
+            matchEmailToClients(fullText, allClients.map(c => ({
+              id: c.id, clientCode: c.clientCode, clientName: c.clientName,
+              brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
+              adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
+            }))),
+            30000,
+            [] as { clientId: number; confidence: "high" | "medium" | "low" }[]
+          ),
+          withTimeout(
+            processEmail(fullText, attachmentTexts),
+            30000,
+            { summary: "AI processing timed out.", actionItems: [] }
+          ),
+        ]);
+
+        // ── STEP 4: Update record with Claude results ──────────────────────────
+        await storage.updateCommunication(comm.id, {
+          claudeSummary: processed.summary,
+          claudeActionItems: JSON.stringify(processed.actionItems),
+          isUnmatched: matches.length === 0,
+        });
+
+        // ── STEP 5: Assign to clients and create tasks ─────────────────────────
         if (matches.length > 0) {
           await storage.assignCommunicationToClients(comm.id, matches);
           for (const item of processed.actionItems) {
@@ -916,9 +942,9 @@ export async function registerRoutes(
           }
         }
 
-        console.log(`[email-inbound] Saved communication #${comm.id} — matched ${matches.length} clients, ${processed.actionItems.length} tasks`);
+        console.log(`[email-inbound] Enriched #${comm.id} — matched ${matches.length} clients, ${processed.actionItems.length} tasks`);
       } catch (err: any) {
-        console.error("[email-inbound] Background processing error:", err?.message || err);
+        console.error("[email-inbound] Error:", err?.message || err);
       }
     });
   });
