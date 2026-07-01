@@ -102,4 +102,16 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // Graceful shutdown: finish in-flight requests before exiting
+  const shutdown = () => {
+    log("Shutting down gracefully…", "server");
+    httpServer.close(() => {
+      log("All connections closed — exiting", "server");
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 10_000);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 })();
