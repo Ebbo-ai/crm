@@ -40,6 +40,7 @@ export interface IStorage {
   upsertRateCards(planId: number, cards: InsertRateCard[]): Promise<RateCard[]>;
 
   getDocuments(clientId: number, category?: string): Promise<Document[]>;
+  getPlanDocuments(planId: number): Promise<Document[]>;
   getDocument(id: number): Promise<Document | undefined>;
   createDocument(doc: InsertDocument): Promise<Document>;
   deleteDocument(id: number): Promise<void>;
@@ -204,6 +205,12 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(documents.category, category as any));
     }
     return db.select().from(documents).where(and(...conditions)).orderBy(desc(documents.uploadedAt));
+  }
+
+  async getPlanDocuments(planId: number): Promise<Document[]> {
+    return db.select().from(documents)
+      .where(eq(documents.planId, planId))
+      .orderBy(desc(documents.uploadedAt));
   }
 
   async getDocument(id: number): Promise<Document | undefined> {

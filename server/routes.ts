@@ -281,6 +281,55 @@ export async function registerRoutes(
     }
   });
 
+  app.put("/api/plans/:planId/renewal", requireAuth, async (req, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const body: any = { ...req.body };
+      if (body.renewalCompletedDate && typeof body.renewalCompletedDate === "string") {
+        body.renewalCompletedDate = new Date(body.renewalCompletedDate);
+      }
+      const updated = await storage.updatePlan(planId, body);
+      if (!updated) return res.status(404).json({ message: "Plan not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/plans/:planId/documents", requireAuth, async (req, res) => {
+    try {
+      const docs = await storage.getPlanDocuments(parseInt(req.params.planId));
+      res.json(docs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/plans/:planId/documents", requireAuth, (req, res, next) => {
+    (req as any).uploadSubDir = "documents";
+    next();
+  }, upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "File is required" });
+      const plan = await storage.getPlan(parseInt(req.params.planId));
+      if (!plan) return res.status(404).json({ message: "Plan not found" });
+      const doc = await storage.createDocument({
+        clientId: plan.clientId,
+        planId: plan.id,
+        documentName: req.body.documentName,
+        category: "RENEWAL_PROPOSAL",
+        filePath: req.file.path,
+        fileName: req.file.originalname,
+        version: req.body.version || null,
+        notes: req.body.notes || null,
+        uploadedBy: (req.user as any).fullName,
+      });
+      res.status(201).json(doc);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/clients/:id/documents", requireAuth, async (req, res) => {
     try {
       const category = req.query.category as string | undefined;
