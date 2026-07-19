@@ -6,11 +6,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Plus } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { format } from "date-fns";
+
+const ISSUE_TYPES = [
+  { value: "FUNDING",     label: "Funding" },
+  { value: "CLAIMS",      label: "Claims" },
+  { value: "CALL_CENTER", label: "Call Center" },
+  { value: "REPORTING",   label: "Reporting" },
+  { value: "OTHER",       label: "Other" },
+];
+
+const ISSUE_TYPE_COLORS: Record<string, string> = {
+  FUNDING:     "bg-blue-100 text-blue-700",
+  CLAIMS:      "bg-purple-100 text-purple-700",
+  CALL_CENTER: "bg-amber-100 text-amber-700",
+  REPORTING:   "bg-teal-100 text-teal-700",
+  OTHER:       "bg-gray-100 text-gray-600",
+};
+
+function IssueTypeBadge({ type }: { type: string | null }) {
+  if (!type) return null;
+  const label = ISSUE_TYPES.find(t => t.value === type)?.label ?? type;
+  const color = ISSUE_TYPE_COLORS[type] ?? "bg-gray-100 text-gray-600";
+  return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${color}`}>{label}</span>;
+}
 
 export default function IssuesTab({ clientId }: { clientId: number }) {
   const { toast } = useToast();
@@ -29,7 +53,12 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
   return (
     <div data-testid="issues-tab">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-[#1A5276]">Issues</h2>
+        <h2 className="text-lg font-semibold text-[#1A5276]">
+          Issues
+          {activeIssues.length > 0 && (
+            <span className="ml-2 text-sm font-bold text-white bg-[#EF4444] rounded-full px-2 py-0.5">{activeIssues.length}</span>
+          )}
+        </h2>
         <Button onClick={() => setShowCreate(true)} className="bg-[#EF4444] text-white gap-2" data-testid="button-report-issue">
           <Plus className="w-4 h-4" /> Report Issue
         </Button>
@@ -51,9 +80,12 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
                   <div className="pulse-dot mt-1.5 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
-                        {issue.title}
-                      </h3>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
+                          {issue.title}
+                        </h3>
+                        <IssueTypeBadge type={issue.issueType} />
+                      </div>
                       <Button size="sm" variant="outline" onClick={() => setResolveId(issue.id)} className="text-[#22C55E] border-[#22C55E] flex-shrink-0" data-testid={`button-resolve-${issue.id}`}>
                         Resolve
                       </Button>
@@ -91,9 +123,12 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
                     <div className="flex items-start gap-3">
                       <CheckCircle2 className="w-4 h-4 text-[#22C55E] mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
-                          {issue.title}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
+                            {issue.title}
+                          </h3>
+                          <IssueTypeBadge type={issue.issueType} />
+                        </div>
                         <p className="text-xs text-[#94A3B8] mt-1">
                           Created {format(new Date(issue.createdAt), "MMM d, yyyy")} | Resolved {issue.resolvedAt ? format(new Date(issue.resolvedAt), "MMM d, yyyy") : ""}
                         </p>
@@ -128,10 +163,11 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
   const { toast } = useToast();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState<string>("");
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/clients/${clientId}/issues`, { title, description });
+      const res = await apiRequest("POST", `/api/clients/${clientId}/issues`, { title, description, issueType: issueType || null });
       return res.json();
     },
     onSuccess: () => {
@@ -139,10 +175,12 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId)] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues", "ACTIVE"] });
       toast({ title: "Issue reported successfully" });
       onClose();
       setTitle("");
       setDescription("");
+      setIssueType("");
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -154,6 +192,19 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
           <DialogTitle className="text-[#1A5276]">Report Issue</DialogTitle>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); if (title && description) mutation.mutate(); }} className="space-y-4">
+          <div>
+            <Label className="text-sm font-medium">Issue Type</Label>
+            <Select value={issueType} onValueChange={setIssueType}>
+              <SelectTrigger data-testid="select-issue-type">
+                <SelectValue placeholder="Select type (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {ISSUE_TYPES.map(t => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label className="text-sm font-medium">Issue Title <span className="text-[#EF4444]">*</span></Label>
             <Input value={title} onChange={e => setTitle(e.target.value)} data-testid="input-issue-title" />
@@ -188,6 +239,7 @@ function ResolveIssueDialog({ open, onClose, issueId, clientId }: { open: boolea
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId)] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues", "ACTIVE"] });
       toast({ title: "Issue resolved" });
       onClose();
       setNotes("");

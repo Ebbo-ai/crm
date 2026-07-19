@@ -120,6 +120,7 @@ export const issues = pgTable("issues", {
   clientId: integer("client_id").notNull(),
   title: text("title").notNull(),
   description: text("description").notNull(),
+  issueType: text("issue_type"),
   status: issueStatusEnum("status").notNull().default("ACTIVE"),
   resolutionNotes: text("resolution_notes"),
   createdBy: text("created_by").notNull(),

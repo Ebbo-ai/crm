@@ -475,6 +475,7 @@ export async function registerRoutes(
         clientId: parseInt(req.params.id),
         title: req.body.title,
         description: req.body.description,
+        issueType: req.body.issueType || null,
         status: "ACTIVE",
         createdBy: (req.user as any).fullName,
       });
@@ -767,6 +768,26 @@ export async function registerRoutes(
     try {
       const logs = await storage.getRecentAuditLogs(15);
       res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/dashboard/renewals", requireAuth, async (req, res) => {
+    try {
+      const renewals = await storage.getDashboardRenewals();
+      res.json(renewals);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/search", requireAuth, async (req, res) => {
+    try {
+      const q = req.query.q as string;
+      if (!q || q.trim().length < 2) return res.json([]);
+      const results = await storage.globalSearch(q.trim());
+      res.json(results);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

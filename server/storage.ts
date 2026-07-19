@@ -75,6 +75,8 @@ export interface IStorage {
   }>;
   getClientsWithActiveIssues(): Promise<any[]>;
   getExpiringPlans(): Promise<any[]>;
+  getDashboardRenewals(): Promise<any[]>;
+  globalSearch(q: string): Promise<any[]>;
 
   createCommunication(comm: InsertCommunication): Promise<Communication>;
   updateCommunication(id: number, data: Partial<Communication>): Promise<Communication | undefined>;
@@ -409,6 +411,68 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return result.sort((a, b) => a.daysUntilExpiration - b.daysUntilExpiration);
+  }
+
+  async getDashboardRenewals(): Promise<any[]> {
+    const activeClients = await db.select().from(clients).where(eq(clients.isActive, true));
+    const today = new Date();
+    const result: any[] = [];
+    for (const client of activeClients) {
+      const clientPlans = await db.select().from(plans).where(and(eq(plans.clientId, client.id), eq(plans.isArchived, false)));
+      for (const plan of clientPlans) {
+        const renewalDate = new Date(plan.effectiveDate);
+        renewalDate.setFullYear(renewalDate.getFullYear() + 1);
+        const dueDate = new Date(renewalDate);
+        dueDate.setMonth(dueDate.getMonth() - (plan.renewalDueMonthsBefore || 3));
+        const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        let status: string = "ok";
+        if (plan.isRenewalComplete) {
+          if (plan.renewalCompletedDate) {
+            const daysSince = Math.ceil((today.getTime() - new Date(plan.renewalCompletedDate).getTime()) / (1000 * 60 * 60 * 24));
+            if (daysSince <= 30) { status = "completed"; } else { continue; }
+          } else { continue; }
+        } else if (daysUntilDue < 0) {
+          status = "overdue";
+        } else if (daysUntilDue <= 60) {
+          status = "due-soon";
+        } else {
+          continue;
+        }
+        result.push({
+          ...plan,
+          clientName: client.clientName,
+          clientCode: client.clientCode,
+          clientId: client.id,
+          renewalDate,
+          dueDate,
+          daysUntilDue,
+          status,
+        });
+      }
+    }
+    const order: Record<string, number> = { overdue: 0, "due-soon": 1, completed: 2 };
+    return result.sort((a, b) => {
+      if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+      return a.daysUntilDue - b.daysUntilDue;
+    });
+  }
+
+  async globalSearch(q: string): Promise<any[]> {
+    const term = `%${q}%`;
+    const found = await db.select().from(clients).where(
+      or(
+        ilike(clients.clientName, term),
+        ilike(clients.brokerFirmName, term),
+        ilike(clients.brokerContactName, term),
+        ilike(clients.adminContactName, term),
+        ilike(clients.decisionMakerName, term),
+        ilike(clients.clientCode, term),
+      )
+    ).orderBy(asc(clients.clientName)).limit(10);
+    return Promise.all(found.map(async c => {
+      const count = await this.getActiveIssueCount(c.id);
+      return { ...c, activeIssueCount: count };
+    }));
   }
 
   async createCommunication(comm: InsertCommunication): Promise<Communication> {
