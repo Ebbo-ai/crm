@@ -412,7 +412,7 @@ export default function DashboardPage() {
   });
 
   const renewalsDueCount = renewals.filter(r => r.status === "overdue" || r.status === "due-soon").length;
-  const displayRenewals = renewals.slice(0, 10);
+  const displayRenewals = renewals;
 
   return (
     <TooltipProvider>
@@ -472,7 +472,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-[#94A3B8]">No upcoming renewals</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                   {displayRenewals.map((r: any) => (
                     <Link key={r.id} href={`/clients/${r.clientId}`}>
                       <div
@@ -571,6 +571,7 @@ export default function DashboardPage() {
                               <IssueTypeBadge type={issue.issueType} />
                             </div>
                             <p className="text-xs text-[#94A3B8] truncate">{issue.title}</p>
+                            <p className="text-[10px] text-[#94A3B8]">Logged {format(new Date(issue.createdAt), "MMM d, yyyy")}</p>
                           </div>
                           <div className="flex flex-col items-end gap-1 flex-shrink-0">
                             {isResolved ? (

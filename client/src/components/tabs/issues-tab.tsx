@@ -40,6 +40,7 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
   const { toast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [resolveId, setResolveId] = useState<number | null>(null);
+  const [editTypeId, setEditTypeId] = useState<number | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
@@ -84,11 +85,18 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
                         <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
                           {issue.title}
                         </h3>
-                        <IssueTypeBadge type={issue.issueType} />
+                        <button onClick={() => setEditTypeId(issue.id)} className="flex-shrink-0" data-testid={`button-edit-type-${issue.id}`}>
+                          <IssueTypeBadge type={issue.issueType} />
+                        </button>
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => setResolveId(issue.id)} className="text-[#22C55E] border-[#22C55E] flex-shrink-0" data-testid={`button-resolve-${issue.id}`}>
-                        Resolve
-                      </Button>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <Button size="sm" variant="ghost" onClick={() => setEditTypeId(issue.id)} className="text-[#94A3B8] text-xs h-7 px-2" data-testid={`button-edit-type-btn-${issue.id}`}>
+                          Edit Type
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setResolveId(issue.id)} className="text-[#22C55E] border-[#22C55E]" data-testid={`button-resolve-${issue.id}`}>
+                          Resolve
+                        </Button>
+                      </div>
                     </div>
                     <p className="text-xs text-[#94A3B8] mt-1">
                       Created by {issue.createdBy} on {format(new Date(issue.createdAt), "MMM d, yyyy")}
@@ -155,6 +163,7 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
 
       <CreateIssueDialog open={showCreate} onClose={() => setShowCreate(false)} clientId={clientId} />
       <ResolveIssueDialog open={resolveId !== null} onClose={() => setResolveId(null)} issueId={resolveId} clientId={clientId} />
+      <EditIssueTypeDialog open={editTypeId !== null} onClose={() => setEditTypeId(null)} issueId={editTypeId} clientId={clientId} />
     </div>
   );
 }
@@ -220,6 +229,58 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
           </div>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditIssueTypeDialog({ open, onClose, issueId, clientId }: { open: boolean; onClose: () => void; issueId: number | null; clientId: number }) {
+  const { toast } = useToast();
+  const [issueType, setIssueType] = useState<string>("");
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/issues/${issueId}`, { issueType: issueType || null });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "issues"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/issues"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues", "ACTIVE"] });
+      toast({ title: "Issue type updated" });
+      onClose();
+      setIssueType("");
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setIssueType(""); } }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-[#1A5276]">Edit Issue Type</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div>
+            <Label className="text-sm font-medium">Issue Type</Label>
+            <Select value={issueType} onValueChange={setIssueType}>
+              <SelectTrigger data-testid="select-edit-issue-type">
+                <SelectValue placeholder="Select type (or clear)" />
+              </SelectTrigger>
+              <SelectContent>
+                {ISSUE_TYPES.map(t => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-issue-type">
+              {mutation.isPending ? "Saving..." : "Save"}
+            </Button>
+            <Button variant="outline" onClick={() => { onClose(); setIssueType(""); }}>Cancel</Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
