@@ -173,16 +173,22 @@ function BatchImportDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
 function GlobalSearchBar() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const [, setLocation] = useLocation();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
   const { data: results = [], isFetching } = useQuery<any[]>({
-    queryKey: ["/api/search", query],
-    queryFn: () => query.length >= 2
-      ? fetch(`/api/search?q=${encodeURIComponent(query)}`, { credentials: "include" }).then(r => r.json())
+    queryKey: ["/api/search", debouncedQuery],
+    queryFn: () => debouncedQuery.length >= 2
+      ? fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" }).then(r => r.json())
       : Promise.resolve([]),
-    enabled: query.length >= 2,
+    enabled: debouncedQuery.length >= 2,
     staleTime: 30000,
   });
 
@@ -259,11 +265,12 @@ function RenewalStatusBadge({ status, daysUntilDue }: { status: string; daysUnti
       {Math.abs(daysUntilDue)}d overdue
     </span>
   );
-  return (
+  if (status === "due-soon") return (
     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${daysUntilDue <= 14 ? "bg-orange-100 text-orange-700" : "bg-amber-100 text-amber-700"}`}>
       Due in {daysUntilDue}d
     </span>
   );
+  return <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">On track</span>;
 }
 
 export default function DashboardPage() {
@@ -273,9 +280,9 @@ export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useQuery<any>({ queryKey: ["/api/dashboard/stats"] });
   const { data: renewals = [], isLoading: renewalsLoading } = useQuery<any[]>({ queryKey: ["/api/dashboard/renewals"] });
   const { data: pprSummary = [] } = useQuery<any[]>({ queryKey: ["/api/ppr-metrics/summary"], staleTime: 0 });
-  const { data: activeIssues = [], isLoading: issuesLoading } = useQuery<any[]>({
-    queryKey: ["/api/issues", "ACTIVE"],
-    queryFn: () => fetch("/api/issues?status=ACTIVE", { credentials: "include" }).then(r => r.json()),
+  const { data: allIssues = [], isLoading: issuesLoading } = useQuery<any[]>({
+    queryKey: ["/api/issues"],
+    queryFn: () => fetch("/api/issues", { credentials: "include" }).then(r => r.json()),
   });
 
   const atRisk = pprSummary.filter((m: any) => parseFloat(m.ytdLossRatio ?? "0") >= 90);
@@ -284,7 +291,21 @@ export default function DashboardPage() {
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const firstName = user?.fullName?.split(" ")[0] ?? "";
 
-  const issuesSorted = [...activeIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const dashboardIssues = allIssues.filter(i =>
+    i.status === "ACTIVE" ||
+    (i.status === "RESOLVED" && i.resolvedAt && new Date(i.resolvedAt) >= thirtyDaysAgo)
+  );
+  const activeOnly = allIssues.filter(i => i.status === "ACTIVE");
+  const issuesSorted = [...dashboardIssues].sort((a, b) => {
+    if (a.status !== b.status) return a.status === "ACTIVE" ? -1 : 1;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  const renewalsDueCount = renewals.filter(r => r.status === "overdue" || r.status === "due-soon").length;
+  const urgentRenewals = renewals.filter(r => r.status === "overdue" || r.status === "due-soon" || r.status === "completed");
 
   return (
     <TooltipProvider>
@@ -319,8 +340,8 @@ export default function DashboardPage() {
             <StatCard label="Total Clients"   value={stats?.totalClients ?? 0}      icon={Users}        color="bg-[#1A5276]" />
             <StatCard label="Active Clients"  value={stats?.activeClients ?? 0}     icon={UserCheck}    color="bg-[#22C55E]" />
             <StatCard label="Terminated"      value={stats?.terminatedClients ?? 0} icon={UserX}        color="bg-[#94A3B8]" />
-            <StatCard label="Active Issues"   value={stats?.activeIssues ?? 0}      icon={AlertCircle}  color="bg-[#EF4444]" alert={(stats?.activeIssues ?? 0) > 0} />
-            <StatCard label="Renewals Due"    value={renewals.filter(r => r.status !== "completed").length} icon={CalendarClock} color="bg-[#F5A623]" alert={renewals.some(r => r.status === "overdue")} />
+            <StatCard label="Active Issues"   value={activeOnly.length}             icon={AlertCircle}  color="bg-[#EF4444]" alert={activeOnly.length > 0} />
+            <StatCard label="Renewals Due"    value={renewalsDueCount}              icon={CalendarClock} color="bg-[#F5A623]" alert={renewals.some(r => r.status === "overdue")} />
           </div>
         )}
 
@@ -332,20 +353,20 @@ export default function DashboardPage() {
             <CardHeader className="pb-2 pt-5 px-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-[#1A5276]">Renewals</h2>
-                <span className="text-xs text-[#94A3B8]">{renewals.length} total</span>
+                <span className="text-xs text-[#94A3B8]">{renewalsDueCount} due within 30d</span>
               </div>
             </CardHeader>
             <CardContent className="px-5 pb-5 flex-1">
               {renewalsLoading ? (
                 <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-14" />)}</div>
-              ) : renewals.length === 0 ? (
+              ) : urgentRenewals.length === 0 ? (
                 <div className="text-center py-10">
                   <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
                   <p className="text-sm text-[#94A3B8]">No upcoming renewals</p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {renewals.map((r: any) => (
+                  {urgentRenewals.map((r: any) => (
                     <Link key={r.id} href={`/clients/${r.clientId}`}>
                       <div
                         className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#F0F4F8] border-l-2 ${
@@ -357,7 +378,7 @@ export default function DashboardPage() {
                           <p className="text-sm font-semibold text-[#2C3E50] truncate">{r.clientName}</p>
                           <p className="text-xs text-[#94A3B8] truncate">{r.planName}</p>
                           <p className="text-xs text-[#94A3B8] mt-0.5">
-                            Renews {format(new Date(r.renewalDate), "MMM d, yyyy")}
+                            Due {format(new Date(r.dueDate), "MMM d")} · Anniversary {format(new Date(r.renewalDate), "MMM d, yyyy")}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-1">
@@ -368,7 +389,16 @@ export default function DashboardPage() {
                           {r.status !== "completed" && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="text-[10px] text-[#94A3B8] cursor-default">Process Renewal</span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled
+                                  className="h-6 text-[10px] px-2 py-0 opacity-50"
+                                  data-testid={`button-process-renewal-${r.id}`}
+                                  onClick={e => e.preventDefault()}
+                                >
+                                  Process Renewal
+                                </Button>
                               </TooltipTrigger>
                               <TooltipContent><p>Coming Soon</p></TooltipContent>
                             </Tooltip>
@@ -386,8 +416,13 @@ export default function DashboardPage() {
           <Card className="border-0 shadow-sm flex flex-col">
             <CardHeader className="pb-2 pt-5 px-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-[#1A5276]">Active Issues</h2>
-                {activeIssues.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-[#1A5276]">Issues</h2>
+                  {activeOnly.length > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">{activeOnly.length} active</span>
+                  )}
+                </div>
+                {dashboardIssues.length > 0 && (
                   <Link href="/issues">
                     <span className="text-xs text-[#2E86C1] hover:underline cursor-pointer">View all →</span>
                   </Link>
@@ -405,12 +440,14 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {issuesSorted.slice(0, 8).map((issue: any) => {
+                    const isResolved = issue.status === "RESOLVED";
                     const ageD = differenceInDays(new Date(), new Date(issue.createdAt));
-                    const isOld = ageD > 7;
+                    const isOld = !isResolved && ageD > 7;
+                    const borderColor = isResolved ? "border-l-[#22C55E]" : isOld ? "border-l-[#EF4444]" : "border-l-[#F5A623]";
                     return (
                       <Link key={issue.id} href={`/clients/${issue.clientId}`}>
                         <div
-                          className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#F0F4F8] border-l-2 ${isOld ? "border-l-[#EF4444]" : "border-l-[#F5A623]"}`}
+                          className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#F0F4F8] border-l-2 ${borderColor}`}
                           data-testid={`dashboard-issue-${issue.id}`}
                         >
                           <div className="flex-1 min-w-0">
@@ -421,9 +458,13 @@ export default function DashboardPage() {
                             <p className="text-xs text-[#94A3B8] truncate">{issue.title}</p>
                           </div>
                           <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${isOld ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                              {ageD === 0 ? "Today" : ageD === 1 ? "1d" : `${ageD}d`}
-                            </span>
+                            {isResolved ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">Resolved</span>
+                            ) : (
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${isOld ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                                {ageD === 0 ? "Today" : ageD === 1 ? "1d" : `${ageD}d`}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </Link>
@@ -432,7 +473,7 @@ export default function DashboardPage() {
                   {issuesSorted.length > 8 && (
                     <Link href="/issues">
                       <p className="text-xs text-center text-[#2E86C1] hover:underline pt-1 cursor-pointer">
-                        +{issuesSorted.length - 8} more issues →
+                        +{issuesSorted.length - 8} more →
                       </p>
                     </Link>
                   )}
