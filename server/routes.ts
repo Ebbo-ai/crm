@@ -748,8 +748,8 @@ export async function registerRoutes(
 
   app.get("/api/dashboard/issues", requireAuth, async (req, res) => {
     try {
-      const clientsWithIssues = await storage.getClientsWithActiveIssues();
-      res.json(clientsWithIssues);
+      const dashIssues = await storage.getDashboardIssues();
+      res.json(dashIssues);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

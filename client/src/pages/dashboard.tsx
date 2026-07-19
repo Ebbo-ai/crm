@@ -6,13 +6,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import {
   Users, UserCheck, UserX, AlertCircle, CalendarClock, Search, CheckCircle2,
   Upload, FileText, TrendingUp, TrendingDown, Minus, BarChart2, RefreshCw,
-  ChevronRight, Info
+  ChevronRight, Info, Plus, Building2, User
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { MONTHS } from "@/lib/constants";
@@ -225,36 +226,141 @@ function GlobalSearchBar() {
       {showDropdown && (
         <div className="absolute top-full mt-2 left-0 right-0 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
           {results.length === 0 && !isFetching ? (
-            <div className="px-5 py-4 text-sm text-[#94A3B8]">No clients found for "{query}"</div>
-          ) : (
-            <div>
-              {results.map((client: any) => (
-                <button
-                  key={client.id}
-                  className="w-full text-left px-5 py-3 hover:bg-[#F0F4F8] flex items-center gap-3 transition-colors border-b last:border-0 border-gray-100"
-                  onMouseDown={() => { setQuery(""); setLocation(`/clients/${client.id}`); }}
-                  data-testid={`search-result-${client.id}`}
-                >
-                  <div className="w-9 h-9 rounded-lg bg-[#1A5276] flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-xs font-bold">{client.clientCode?.slice(0, 2)}</span>
+            <div className="px-5 py-4 text-sm text-[#94A3B8]">No results for "{query}"</div>
+          ) : (() => {
+            const groups: Record<string, any[]> = { client: [], broker: [], contact: [], plan: [] };
+            results.forEach((r: any) => (groups[r.matchedOn] ??= []).push(r));
+            const SECTIONS = [
+              { key: "client",  label: "Clients",         Icon: Users },
+              { key: "broker",  label: "Broker Matches",  Icon: Building2 },
+              { key: "contact", label: "Contact Matches", Icon: User },
+              { key: "plan",    label: "Plan Type",       Icon: FileText },
+            ];
+            return (
+              <div>
+                {SECTIONS.filter(s => (groups[s.key] ?? []).length > 0).map(({ key, label, Icon }) => (
+                  <div key={key}>
+                    <div className="px-4 py-1.5 text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider bg-[#F8FAFC] flex items-center gap-1.5 border-b border-gray-100">
+                      <Icon className="w-3 h-3" />{label}
+                    </div>
+                    {groups[key].map((client: any) => (
+                      <button
+                        key={client.id}
+                        className="w-full text-left px-5 py-3 hover:bg-[#F0F4F8] flex items-center gap-3 transition-colors border-b last:border-0 border-gray-100"
+                        onMouseDown={() => { setQuery(""); setLocation(`/clients/${client.id}`); }}
+                        data-testid={`search-result-${client.id}`}
+                      >
+                        <div className="w-9 h-9 rounded-lg bg-[#1A5276] flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs font-bold">{client.clientCode?.slice(0, 2)}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-[#2C3E50] truncate">{client.clientName}</p>
+                          <p className="text-xs text-[#94A3B8]">{client.clientCode} · {client.planType?.replace(/_/g, " ")}</p>
+                        </div>
+                        {client.activeIssueCount > 0 && (
+                          <span className="text-xs font-bold text-white bg-[#EF4444] rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">
+                            {client.activeIssueCount}
+                          </span>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-[#94A3B8] flex-shrink-0" />
+                      </button>
+                    ))}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[#2C3E50] truncate">{client.clientName}</p>
-                    <p className="text-xs text-[#94A3B8]">{client.clientCode} · {client.planType?.replace(/_/g, " ")}</p>
-                  </div>
-                  {client.activeIssueCount > 0 && (
-                    <span className="text-xs font-bold text-white bg-[#EF4444] rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">
-                      {client.activeIssueCount}
-                    </span>
-                  )}
-                  <ChevronRight className="w-4 h-4 text-[#94A3B8] flex-shrink-0" />
-                </button>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
+  );
+}
+
+function DashboardCreateIssueDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [clientId, setClientId] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState("");
+
+  const { data: allClients = [] } = useQuery<any[]>({ queryKey: ["/api/clients"], enabled: open });
+
+  const activeClients = allClients.filter((c: any) => c.isActive);
+
+  const mutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/clients/${clientId}/issues`, { title, description, issueType: issueType || null }),
+    onSuccess: () => {
+      toast({ title: "Issue created" });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/issues"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
+      setClientId(""); setTitle(""); setDescription(""); setIssueType("");
+      onClose();
+    },
+    onError: () => toast({ title: "Failed to create issue", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>New Issue</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div>
+            <label className="text-xs font-semibold text-[#2C3E50] mb-1 block">Client *</label>
+            <Select value={clientId} onValueChange={setClientId}>
+              <SelectTrigger data-testid="select-issue-client"><SelectValue placeholder="Select client..." /></SelectTrigger>
+              <SelectContent>{activeClients.map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{c.clientName}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#2C3E50] mb-1 block">Issue Type</label>
+            <Select value={issueType} onValueChange={setIssueType}>
+              <SelectTrigger data-testid="select-issue-type-dash"><SelectValue placeholder="Select type..." /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="FUNDING">Funding</SelectItem>
+                <SelectItem value="CLAIMS">Claims</SelectItem>
+                <SelectItem value="CALL_CENTER">Call Center</SelectItem>
+                <SelectItem value="REPORTING">Reporting</SelectItem>
+                <SelectItem value="OTHER">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#2C3E50] mb-1 block">Title *</label>
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full border rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[#2E86C1]"
+              placeholder="Brief summary of the issue"
+              data-testid="input-dash-issue-title"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-[#2C3E50] mb-1 block">Description</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              rows={3}
+              className="w-full border rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-[#2E86C1] resize-none"
+              placeholder="Additional details..."
+              data-testid="input-dash-issue-description"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={() => mutation.mutate()}
+              disabled={!clientId || !title.trim() || mutation.isPending}
+              className="bg-[#1A5276] text-white"
+              data-testid="button-dash-create-issue"
+            >
+              {mutation.isPending ? "Creating..." : "Create Issue"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -275,14 +381,15 @@ function RenewalStatusBadge({ status, daysUntilDue }: { status: string; daysUnti
 
 export default function DashboardPage() {
   const [showImport, setShowImport] = useState(false);
+  const [showDashCreate, setShowDashCreate] = useState(false);
   const { user } = useAuth();
 
   const { data: stats, isLoading: statsLoading } = useQuery<any>({ queryKey: ["/api/dashboard/stats"] });
   const { data: renewals = [], isLoading: renewalsLoading } = useQuery<any[]>({ queryKey: ["/api/dashboard/renewals"] });
   const { data: pprSummary = [] } = useQuery<any[]>({ queryKey: ["/api/ppr-metrics/summary"], staleTime: 0 });
   const { data: allIssues = [], isLoading: issuesLoading } = useQuery<any[]>({
-    queryKey: ["/api/issues"],
-    queryFn: () => fetch("/api/issues", { credentials: "include" }).then(r => r.json()),
+    queryKey: ["/api/dashboard/issues"],
+    queryFn: () => fetch("/api/dashboard/issues", { credentials: "include" }).then(r => r.json()),
   });
 
   const atRisk = pprSummary.filter((m: any) => parseFloat(m.ytdLossRatio ?? "0") >= 90);
@@ -305,7 +412,7 @@ export default function DashboardPage() {
   });
 
   const renewalsDueCount = renewals.filter(r => r.status === "overdue" || r.status === "due-soon").length;
-  const urgentRenewals = renewals.filter(r => r.status === "overdue" || r.status === "due-soon" || r.status === "completed");
+  const displayRenewals = renewals.slice(0, 10);
 
   return (
     <TooltipProvider>
@@ -359,14 +466,14 @@ export default function DashboardPage() {
             <CardContent className="px-5 pb-5 flex-1">
               {renewalsLoading ? (
                 <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-14" />)}</div>
-              ) : urgentRenewals.length === 0 ? (
+              ) : displayRenewals.length === 0 ? (
                 <div className="text-center py-10">
                   <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
                   <p className="text-sm text-[#94A3B8]">No upcoming renewals</p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {urgentRenewals.map((r: any) => (
+                  {displayRenewals.map((r: any) => (
                     <Link key={r.id} href={`/clients/${r.clientId}`}>
                       <div
                         className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#F0F4F8] border-l-2 ${
@@ -383,8 +490,11 @@ export default function DashboardPage() {
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           <RenewalStatusBadge status={r.status} daysUntilDue={r.daysUntilDue} />
-                          {r.status === "completed" && r.renewalCompletedBy && (
-                            <p className="text-[10px] text-[#94A3B8]">by {r.renewalCompletedBy}</p>
+                          {r.status === "completed" && (
+                            <p className="text-[10px] text-[#94A3B8]">
+                              {r.renewalCompletedDate ? format(new Date(r.renewalCompletedDate), "MMM d, yyyy") : ""}
+                              {r.renewalCompletedBy ? ` · ${r.renewalCompletedBy}` : ""}
+                            </p>
                           )}
                           {r.status !== "completed" && (
                             <Tooltip>
@@ -422,11 +532,16 @@ export default function DashboardPage() {
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">{activeOnly.length} active</span>
                   )}
                 </div>
-                {dashboardIssues.length > 0 && (
-                  <Link href="/issues">
-                    <span className="text-xs text-[#2E86C1] hover:underline cursor-pointer">View all →</span>
-                  </Link>
-                )}
+                <div className="flex items-center gap-2">
+                  {dashboardIssues.length > 0 && (
+                    <Link href="/issues">
+                      <span className="text-xs text-[#2E86C1] hover:underline cursor-pointer">View all →</span>
+                    </Link>
+                  )}
+                  <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => setShowDashCreate(true)} data-testid="button-new-issue-dash">
+                    <Plus className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="px-5 pb-5 flex-1">
@@ -516,9 +631,21 @@ export default function DashboardPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-[#2C3E50] truncate">{m.clientName}</p>
                           <p className="text-xs text-[#94A3B8] truncate">{m.planName ?? "—"}</p>
+                          {m.reportMonth && m.reportYear && (
+                            <p className="text-[10px] text-[#94A3B8]">{MONTHS[(m.reportMonth ?? 1) - 1]} {m.reportYear}</p>
+                          )}
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
-                          <LossRatioCell value={m.ytdLossRatio} />
+                          {m.monthlyLossRatio && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-[#94A3B8]">Mo:</span>
+                              <LossRatioCell value={m.monthlyLossRatio} />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-[#94A3B8]">YTD:</span>
+                            <LossRatioCell value={m.ytdLossRatio} />
+                          </div>
                           <SurplusCell value={m.ytdSurplusDeficit} />
                         </div>
                       </div>
@@ -584,6 +711,7 @@ export default function DashboardPage() {
         )}
 
         <BatchImportDialog open={showImport} onClose={() => setShowImport(false)} />
+        <DashboardCreateIssueDialog open={showDashCreate} onClose={() => setShowDashCreate(false)} />
       </div>
     </TooltipProvider>
   );

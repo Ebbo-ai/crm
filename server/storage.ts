@@ -74,6 +74,7 @@ export interface IStorage {
     expiringPlans: number;
   }>;
   getClientsWithActiveIssues(): Promise<any[]>;
+  getDashboardIssues(): Promise<any[]>;
   getExpiringPlans(): Promise<any[]>;
   getDashboardRenewals(): Promise<any[]>;
   globalSearch(q: string): Promise<any[]>;
@@ -466,8 +467,39 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  async getDashboardIssues(): Promise<any[]> {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const all = await db.select({
+      id: issues.id,
+      clientId: issues.clientId,
+      title: issues.title,
+      description: issues.description,
+      status: issues.status,
+      issueType: issues.issueType,
+      createdAt: issues.createdAt,
+      resolvedAt: issues.resolvedAt,
+      resolutionNotes: issues.resolutionNotes,
+      clientName: clients.clientName,
+      clientCode: clients.clientCode,
+    })
+    .from(issues)
+    .leftJoin(clients, eq(issues.clientId, clients.id))
+    .where(
+      or(
+        eq(issues.status, "ACTIVE"),
+        and(
+          eq(issues.status, "RESOLVED"),
+          gte(issues.resolvedAt, thirtyDaysAgo)
+        )
+      )
+    )
+    .orderBy(asc(issues.createdAt));
+    return all;
+  }
+
   async globalSearch(q: string): Promise<any[]> {
     const term = `%${q}%`;
+    const qLower = q.toLowerCase();
     const found = await db.select().from(clients).where(
       or(
         ilike(clients.clientName, term),
@@ -481,7 +513,18 @@ export class DatabaseStorage implements IStorage {
     ).orderBy(asc(clients.clientName)).limit(15);
     return Promise.all(found.map(async c => {
       const count = await this.getActiveIssueCount(c.id);
-      return { ...c, activeIssueCount: count };
+      const nameMatch = c.clientName?.toLowerCase().includes(qLower) || c.clientCode?.toLowerCase().includes(qLower);
+      let matchedOn = "client";
+      if (!nameMatch) {
+        if (c.brokerFirmName?.toLowerCase().includes(qLower) || c.brokerContactName?.toLowerCase().includes(qLower)) {
+          matchedOn = "broker";
+        } else if (c.adminContactName?.toLowerCase().includes(qLower) || c.decisionMakerName?.toLowerCase().includes(qLower)) {
+          matchedOn = "contact";
+        } else if (c.planType?.toLowerCase().includes(qLower)) {
+          matchedOn = "plan";
+        }
+      }
+      return { ...c, activeIssueCount: count, matchedOn };
     }));
   }
 
