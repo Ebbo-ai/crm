@@ -437,9 +437,10 @@ export class DatabaseStorage implements IStorage {
         let status: string;
         if (plan.isRenewalComplete && plan.renewalCompletedDate) {
           const daysSince = Math.ceil((todayMidnight.getTime() - new Date(plan.renewalCompletedDate).getTime()) / (1000 * 60 * 60 * 24));
-          status = daysSince <= 30 ? "completed" : "ok";
+          if (daysSince > 30) continue;
+          status = "completed";
         } else if (plan.isRenewalComplete) {
-          status = "ok";
+          continue;
         } else if (daysUntilDue < 0) {
           status = "overdue";
         } else if (daysUntilDue <= 30) {
@@ -510,7 +511,7 @@ export class DatabaseStorage implements IStorage {
         ilike(clients.clientCode, term),
         ilike(clients.planType, term),
       )
-    ).orderBy(asc(clients.clientName)).limit(15);
+    ).orderBy(asc(clients.clientName)).limit(50);
     return Promise.all(found.map(async c => {
       const count = await this.getActiveIssueCount(c.id);
       const nameMatch = c.clientName?.toLowerCase().includes(qLower) || c.clientCode?.toLowerCase().includes(qLower);

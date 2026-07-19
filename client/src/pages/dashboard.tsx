@@ -411,7 +411,8 @@ export default function DashboardPage() {
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
-  const renewalsDueCount = renewals.filter(r => r.status === "overdue" || r.status === "due-soon").length;
+  const overdueCount = renewals.filter(r => r.status === "overdue").length;
+  const renewalsDueCount = renewals.filter(r => r.status === "due-soon").length;
   const displayRenewals = renewals;
 
   return (
@@ -448,7 +449,7 @@ export default function DashboardPage() {
             <StatCard label="Active Clients"  value={stats?.activeClients ?? 0}     icon={UserCheck}    color="bg-[#22C55E]" />
             <StatCard label="Terminated"      value={stats?.terminatedClients ?? 0} icon={UserX}        color="bg-[#94A3B8]" />
             <StatCard label="Active Issues"   value={activeOnly.length}             icon={AlertCircle}  color="bg-[#EF4444]" alert={activeOnly.length > 0} />
-            <StatCard label="Renewals Due"    value={renewalsDueCount}              icon={CalendarClock} color="bg-[#F5A623]" alert={renewals.some(r => r.status === "overdue")} />
+            <StatCard label="Renewals Due"    value={renewalsDueCount + overdueCount} icon={CalendarClock} color="bg-[#F5A623]" alert={overdueCount > 0} />
           </div>
         )}
 
@@ -460,7 +461,10 @@ export default function DashboardPage() {
             <CardHeader className="pb-2 pt-5 px-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-[#1A5276]">Renewals</h2>
-                <span className="text-xs text-[#94A3B8]">{renewalsDueCount} due within 30d</span>
+                <div className="flex items-center gap-1.5">
+                  {overdueCount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">{overdueCount} overdue</span>}
+                  <span className="text-xs text-[#94A3B8]">{renewalsDueCount} due ≤30d</span>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="px-5 pb-5 flex-1">

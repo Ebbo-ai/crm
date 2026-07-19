@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -163,7 +163,7 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
 
       <CreateIssueDialog open={showCreate} onClose={() => setShowCreate(false)} clientId={clientId} />
       <ResolveIssueDialog open={resolveId !== null} onClose={() => setResolveId(null)} issueId={resolveId} clientId={clientId} />
-      <EditIssueTypeDialog open={editTypeId !== null} onClose={() => setEditTypeId(null)} issueId={editTypeId} clientId={clientId} />
+      <EditIssueTypeDialog open={editTypeId !== null} onClose={() => setEditTypeId(null)} issueId={editTypeId} clientId={clientId} currentType={issues.find(i => i.id === editTypeId)?.issueType ?? null} />
     </div>
   );
 }
@@ -234,9 +234,13 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
   );
 }
 
-function EditIssueTypeDialog({ open, onClose, issueId, clientId }: { open: boolean; onClose: () => void; issueId: number | null; clientId: number }) {
+function EditIssueTypeDialog({ open, onClose, issueId, clientId, currentType }: { open: boolean; onClose: () => void; issueId: number | null; clientId: number; currentType: string | null }) {
   const { toast } = useToast();
-  const [issueType, setIssueType] = useState<string>("");
+  const [issueType, setIssueType] = useState<string>(currentType ?? "");
+
+  useEffect(() => {
+    if (open) setIssueType(currentType ?? "");
+  }, [open, currentType]);
 
   const mutation = useMutation({
     mutationFn: async () => {
