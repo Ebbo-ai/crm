@@ -694,21 +694,40 @@ export async function registerRoutes(
 
       if (!entries.length) return res.status(400).json({ message: "No valid files found" });
 
-      const results: { file: string; status: "imported"|"skipped"|"error"; clientName?: string; clientCode?: string; fileType?: string; reportMonth?: number; reportYear?: number; error?: string }[] = [];
+      type BatchRow = { file: string; status: "imported"|"skipped"|"error"; clientName?: string; clientCode?: string; fileType?: string; reportMonth?: number; reportYear?: number; error?: string };
+      const results: BatchRow[] = [];
+      const unrecognized: { file: string; reason: string }[] = [];
+      // byClient: map clientCode → { clientCode, clientName, files[] }
+      const byClientMap = new Map<string, { clientCode: string; clientName: string; files: { file: string; fileType: string; reportMonth: number; reportYear: number }[] }>();
 
       for (const { name, buffer } of entries) {
         try {
           // Determine client code
           const rawCode = parseClientCode(name);
-          if (!rawCode) { results.push({ file: name, status: "skipped", error: "Cannot parse client code from filename" }); continue; }
+          if (!rawCode) {
+            const reason = "Cannot parse client code from filename";
+            results.push({ file: name, status: "skipped", error: reason });
+            unrecognized.push({ file: name, reason });
+            continue;
+          }
           const client = await storage.getClientByCode(rawCode);
-          if (!client) { results.push({ file: name, status: "skipped", clientCode: rawCode, error: `Client ${rawCode} not found` }); continue; }
+          if (!client) {
+            const reason = `Client ${rawCode} not found`;
+            results.push({ file: name, status: "skipped", clientCode: rawCode, error: reason });
+            unrecognized.push({ file: name, reason });
+            continue;
+          }
 
           // Determine month/year from new naming convention or use fallback
           const fromName = parseNewConvention(name);
           const reportMonth = fromName?.reportMonth ?? fallbackMonth;
           const reportYear  = fromName?.reportYear  ?? fallbackYear;
-          if (!reportMonth || !reportYear) { results.push({ file: name, status: "skipped", clientCode: rawCode, clientName: client.clientName, error: "Cannot determine report month/year" }); continue; }
+          if (!reportMonth || !reportYear) {
+            const reason = "Cannot determine report month/year";
+            results.push({ file: name, status: "skipped", clientCode: rawCode, clientName: client.clientName, error: reason });
+            unrecognized.push({ file: name, reason });
+            continue;
+          }
 
           // Determine file type
           const ft = pprFileType(name);
@@ -722,14 +741,20 @@ export async function registerRoutes(
 
           await upsertPprFile(client.id, reportMonth, reportYear, ft, filePath, newName, null, uploadedBy);
           results.push({ file: name, status: "imported", clientCode: rawCode, clientName: client.clientName, fileType: ft, reportMonth, reportYear });
+
+          // Accumulate byClient
+          if (!byClientMap.has(rawCode)) byClientMap.set(rawCode, { clientCode: rawCode, clientName: client.clientName, files: [] });
+          byClientMap.get(rawCode)!.files.push({ file: newName, fileType: ft, reportMonth, reportYear });
         } catch (e: any) {
           results.push({ file: name, status: "error", error: e.message });
+          unrecognized.push({ file: name, reason: e.message });
         }
       }
 
       const imported = results.filter(r => r.status === "imported").length;
       const skipped  = results.filter(r => r.status === "skipped").length;
       const errors   = results.filter(r => r.status === "error").length;
+      const byClient = Array.from(byClientMap.values());
 
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -738,7 +763,7 @@ export async function registerRoutes(
         entity: "ppr",
         details: `Batch PPR upload: ${imported} imported, ${skipped} skipped, ${errors} errors`,
       });
-      res.json({ imported, skipped, errors, results });
+      res.json({ imported, skipped, errors, byClient, unrecognized, results });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

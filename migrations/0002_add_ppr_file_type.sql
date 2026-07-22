@@ -1,0 +1,1 @@
+ALTER TABLE ppr_uploads ADD COLUMN IF NOT EXISTS file_type TEXT;
