@@ -567,8 +567,12 @@ export async function registerRoutes(
   ) {
     const existing = await storage.findPprUploadByType(clientId, reportMonth, reportYear, fileType);
     if (existing) {
-      try { fs.unlinkSync(existing.filePath); } catch {}
-      return await storage.updatePprUpload(existing.id, { filePath: newFilePath, fileName, notes, uploadedBy, uploadedAt: new Date() } as any);
+      // Only delete the old file if it's at a different path than the new file
+      // (renameSync/writeFileSync already overwrites when paths are equal)
+      if (existing.filePath !== newFilePath) {
+        try { fs.unlinkSync(existing.filePath); } catch {}
+      }
+      return await storage.updatePprUpload(existing.id, { filePath: newFilePath, fileName, notes: notes ?? existing.notes, uploadedBy, uploadedAt: new Date() } as any);
     }
     return await storage.createPprUpload({ clientId, reportMonth, reportYear, fileType, filePath: newFilePath, fileName, notes, uploadedBy });
   }

@@ -177,6 +177,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
                 <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Period</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">PDF</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Excel</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden lg:table-cell">Notes</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Last Updated</th>
               </tr>
             </thead>
@@ -205,6 +206,9 @@ export default function PprTab({ clientId }: { clientId: number }) {
                       onDelete={(id) => setDeleteTarget({ id, label: `Excel for ${MONTHS[g.reportMonth - 1]} ${g.reportYear}` })}
                       onReplace={() => setReplaceTarget({ reportMonth: g.reportMonth, reportYear: g.reportYear, fileType: "EXCEL" })}
                     />
+                  </td>
+                  <td className="px-4 py-3 hidden lg:table-cell">
+                    <p className="text-xs text-[#94A3B8] max-w-[180px] truncate" title={g.notes ?? ""}>{g.notes || "—"}</p>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
                     <p className="text-xs text-[#94A3B8]">{format(new Date(g.uploadedAt), "MMM d, yyyy")}</p>
