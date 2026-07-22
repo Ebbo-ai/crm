@@ -8,9 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet } from "lucide-react";
 import { format } from "date-fns";
 
 function LossRatioBadge({ value }: { value: string | null }) {
@@ -38,12 +39,31 @@ function SurplusBadge({ value }: { value: string | null }) {
   );
 }
 
+interface PprFile {
+  id: number;
+  fileName: string;
+  filePath: string;
+  fileType: string | null;
+  uploadedAt: string;
+  uploadedBy: string;
+  notes: string | null;
+}
+interface PprGroup {
+  reportYear: number;
+  reportMonth: number;
+  pdf: PprFile | null;
+  excel: PprFile | null;
+  notes: string | null;
+  uploadedAt: string;
+}
+
 export default function PprTab({ clientId }: { clientId: number }) {
   const { toast } = useToast();
   const [showUpload, setShowUpload] = useState(false);
-  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState<{ reportMonth: number; reportYear: number; fileType: "PDF" | "EXCEL" } | null>(null);
 
-  const { data: pprs = [], isLoading } = useQuery<any[]>({
+  const { data: groups = [], isLoading } = useQuery<PprGroup[]>({
     queryKey: ["/api/clients", String(clientId), "ppr"],
   });
 
@@ -57,18 +77,16 @@ export default function PprTab({ clientId }: { clientId: number }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "ppr"] });
-      toast({ title: "PPR deleted" });
-      setDeleteId(null);
+      toast({ title: "File deleted" });
+      setDeleteTarget(null);
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  // Latest metrics entry
   const latest = metrics[0] ?? null;
 
   return (
     <div data-testid="ppr-tab">
-
       {/* Key Metrics Panel */}
       {latest && (
         <div className="mb-6">
@@ -135,7 +153,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
         </div>
       )}
 
-      {/* File Uploads Section */}
+      {/* PPR File History */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-[#1A5276]">Performance Reports (PPR)</h2>
         <Button onClick={() => setShowUpload(true)} className="bg-[#1A5276] text-white gap-2" data-testid="button-upload-ppr">
@@ -143,11 +161,12 @@ export default function PprTab({ clientId }: { clientId: number }) {
         </Button>
       </div>
 
-      {!pprs.length && !isLoading ? (
+      {!groups.length && !isLoading ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-12 text-center">
             <FileText className="w-10 h-10 text-[#94A3B8] mx-auto mb-2" />
             <p className="text-sm text-[#94A3B8]">No performance reports uploaded yet</p>
+            <p className="text-xs text-[#94A3B8] mt-1">Use "Upload PPR" above or the PPR Batch Upload page to add reports</p>
           </CardContent>
         </Card>
       ) : (
@@ -156,41 +175,39 @@ export default function PprTab({ clientId }: { clientId: number }) {
             <thead>
               <tr className="border-b bg-[#F0F4F8]">
                 <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Period</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">File</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Uploaded</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden lg:table-cell">Notes</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-[#94A3B8] uppercase">Actions</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">PDF</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Excel</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Last Updated</th>
               </tr>
             </thead>
             <tbody>
-              {pprs.map((ppr: any, i: number) => (
-                <tr key={ppr.id} className={`border-b hover:bg-[#F0F4F8]/50 transition-colors ${i % 2 === 1 ? "bg-[#F0F4F8]/30" : ""}`} data-testid={`ppr-row-${ppr.id}`}>
-                  <td className="px-4 py-3 font-medium text-[#2C3E50]">
-                    {MONTHS[ppr.reportMonth - 1]} {ppr.reportYear}
+              {groups.map((g, i) => (
+                <tr key={`${g.reportYear}-${g.reportMonth}`} className={`border-b hover:bg-[#F0F4F8]/30 transition-colors ${i % 2 === 1 ? "bg-[#F0F4F8]/20" : ""}`} data-testid={`ppr-row-${g.reportYear}-${g.reportMonth}`}>
+                  <td className="px-4 py-3 font-semibold text-[#2C3E50] whitespace-nowrap">
+                    {MONTHS[g.reportMonth - 1]} {g.reportYear}
                   </td>
                   <td className="px-4 py-3">
-                    <a href={`/api/ppr/${ppr.id}/download`} target="_blank" rel="noreferrer" className="text-[#2E86C1] hover:underline text-sm">
-                      {ppr.fileName}
-                    </a>
+                    <FileCell
+                      record={g.pdf}
+                      fileType="PDF"
+                      reportMonth={g.reportMonth}
+                      reportYear={g.reportYear}
+                      onDelete={(id) => setDeleteTarget({ id, label: `PDF for ${MONTHS[g.reportMonth - 1]} ${g.reportYear}` })}
+                      onReplace={() => setReplaceTarget({ reportMonth: g.reportMonth, reportYear: g.reportYear, fileType: "PDF" })}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <FileCell
+                      record={g.excel}
+                      fileType="EXCEL"
+                      reportMonth={g.reportMonth}
+                      reportYear={g.reportYear}
+                      onDelete={(id) => setDeleteTarget({ id, label: `Excel for ${MONTHS[g.reportMonth - 1]} ${g.reportYear}` })}
+                      onReplace={() => setReplaceTarget({ reportMonth: g.reportMonth, reportYear: g.reportYear, fileType: "EXCEL" })}
+                    />
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <p className="text-xs text-[#94A3B8]">{format(new Date(ppr.uploadedAt), "MMM d, yyyy")}</p>
-                    <p className="text-xs text-[#94A3B8]">by {ppr.uploadedBy}</p>
-                  </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <p className="text-xs text-[#94A3B8] truncate max-w-xs">{ppr.notes || "-"}</p>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <a href={`/api/ppr/${ppr.id}/download`} target="_blank" rel="noreferrer">
-                        <Button size="icon" variant="ghost" data-testid={`button-download-ppr-${ppr.id}`}>
-                          <Download className="w-4 h-4 text-[#2E86C1]" />
-                        </Button>
-                      </a>
-                      <Button size="icon" variant="ghost" onClick={() => setDeleteId(ppr.id)} data-testid={`button-delete-ppr-${ppr.id}`}>
-                        <Trash2 className="w-4 h-4 text-[#EF4444]" />
-                      </Button>
-                    </div>
+                    <p className="text-xs text-[#94A3B8]">{format(new Date(g.uploadedAt), "MMM d, yyyy")}</p>
                   </td>
                 </tr>
               ))}
@@ -201,15 +218,30 @@ export default function PprTab({ clientId }: { clientId: number }) {
 
       <PprUploadDialog open={showUpload} onClose={() => setShowUpload(false)} clientId={clientId} />
 
-      <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
+      {replaceTarget && (
+        <PprReplaceDialog
+          open={true}
+          onClose={() => setReplaceTarget(null)}
+          clientId={clientId}
+          reportMonth={replaceTarget.reportMonth}
+          reportYear={replaceTarget.reportYear}
+          fileType={replaceTarget.fileType}
+        />
+      )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete PPR</AlertDialogTitle>
-            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>Delete File</AlertDialogTitle>
+            <AlertDialogDescription>Delete {deleteTarget?.label}? This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteId && deleteMutation.mutate(deleteId)} className="bg-[#EF4444] text-white" data-testid="button-confirm-delete-ppr">
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              className="bg-[#EF4444] text-white"
+              data-testid="button-confirm-delete-ppr"
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -219,16 +251,94 @@ export default function PprTab({ clientId }: { clientId: number }) {
   );
 }
 
+function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onReplace }: {
+  record: PprFile | null;
+  fileType: "PDF" | "EXCEL";
+  reportMonth: number;
+  reportYear: number;
+  onDelete: (id: number) => void;
+  onReplace: () => void;
+}) {
+  if (!record) {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-[#94A3B8] text-xs">—</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon" variant="ghost" className="w-6 h-6 opacity-40 hover:opacity-100" onClick={onReplace} data-testid={`button-upload-${fileType.toLowerCase()}-${reportYear}-${reportMonth}`}>
+              <Upload className="w-3 h-3 text-[#1A5276]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Upload {fileType}</TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  }
+  const Icon = fileType === "PDF" ? FileText : FileSpreadsheet;
+  return (
+    <div className="flex items-center gap-1 group">
+      <a
+        href={`/api/ppr/${record.id}/download`}
+        target="_blank"
+        rel="noreferrer"
+        className={`inline-flex items-center gap-1 text-xs hover:underline max-w-[140px] truncate ${fileType === "PDF" ? "text-red-600" : "text-green-700"}`}
+        title={record.fileName}
+        data-testid={`link-download-${fileType.toLowerCase()}-${record.id}`}
+      >
+        <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="truncate">{record.fileName}</span>
+      </a>
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <a href={`/api/ppr/${record.id}/download`} target="_blank" rel="noreferrer">
+              <Button size="icon" variant="ghost" className="w-6 h-6" data-testid={`button-download-${fileType.toLowerCase()}-${record.id}`}>
+                <Download className="w-3 h-3 text-[#2E86C1]" />
+              </Button>
+            </a>
+          </TooltipTrigger>
+          <TooltipContent>Download</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon" variant="ghost" className="w-6 h-6" onClick={onReplace} data-testid={`button-replace-${fileType.toLowerCase()}-${record.id}`}>
+              <RefreshCw className="w-3 h-3 text-[#F5A623]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Replace {fileType}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => onDelete(record.id)} data-testid={`button-delete-${fileType.toLowerCase()}-${record.id}`}>
+              <Trash2 className="w-3 h-3 text-[#EF4444]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Delete</TooltipContent>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
 function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: () => void; clientId: number }) {
   const { toast } = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
+  const excelRef = useRef<HTMLInputElement>(null);
   const currentYear = new Date().getFullYear();
   const [form, setForm] = useState({ reportMonth: "", reportYear: String(currentYear), notes: "" });
-  const [file, setFile] = useState<File | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [dragOverPdf, setDragOverPdf] = useState(false);
+  const [dragOverExcel, setDragOverExcel] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: async (formData: FormData) => {
+    mutationFn: async () => {
+      const formData = new FormData();
+      formData.append("reportMonth", form.reportMonth);
+      formData.append("reportYear", form.reportYear);
+      formData.append("notes", form.notes);
+      if (pdfFile) formData.append("pdf", pdfFile);
+      if (excelFile) formData.append("excel", excelFile);
       const res = await fetch(`/api/clients/${clientId}/ppr`, {
         method: "POST",
         body: formData,
@@ -242,29 +352,21 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
       toast({ title: "PPR uploaded successfully" });
       onClose();
       setForm({ reportMonth: "", reportYear: String(currentYear), notes: "" });
-      setFile(null);
+      setPdfFile(null);
+      setExcelFile(null);
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file || !form.reportMonth || !form.reportYear) return;
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("reportMonth", form.reportMonth);
-    formData.append("reportYear", form.reportYear);
-    formData.append("notes", form.notes);
-    mutation.mutate(formData);
-  };
+  const canSubmit = (pdfFile || excelFile) && form.reportMonth && form.reportYear && !mutation.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="text-[#1A5276]">Upload PPR</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm font-medium">Report Month <span className="text-[#EF4444]">*</span></Label>
@@ -287,45 +389,153 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
               </Select>
             </div>
           </div>
-          <div>
-            <Label className="text-sm font-medium">File <span className="text-[#EF4444]">*</span></Label>
-            <div
-              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                dragOver ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"
-              }`}
-              onClick={() => fileRef.current?.click()}
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={e => { e.preventDefault(); setDragOver(false); setFile(e.dataTransfer.files[0] || null); }}
-              data-testid="ppr-dropzone"
-            >
-              <input ref={fileRef} type="file" className="hidden" accept=".pdf,.xlsx,.csv" onChange={e => setFile(e.target.files?.[0] || null)} />
-              {file ? (
-                <div>
-                  <FileText className="w-8 h-8 text-[#2E86C1] mx-auto mb-2" />
-                  <p className="text-sm font-medium text-[#2C3E50]">{file.name}</p>
-                  <p className="text-xs text-[#94A3B8]">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-              ) : (
-                <div>
-                  <Upload className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
-                  <p className="text-sm text-[#94A3B8]">Drag & drop or click to browse</p>
-                  <p className="text-xs text-[#94A3B8] mt-1">PDF, XLSX, CSV (max 25 MB)</p>
-                </div>
-              )}
+
+          <div className="grid grid-cols-2 gap-3">
+            {/* PDF drop zone */}
+            <div>
+              <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
+              </Label>
+              <div
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverPdf ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+                onClick={() => pdfRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setDragOverPdf(true); }}
+                onDragLeave={() => setDragOverPdf(false)}
+                onDrop={e => { e.preventDefault(); setDragOverPdf(false); setPdfFile(e.dataTransfer.files[0] || null); }}
+                data-testid="ppr-dropzone-pdf"
+              >
+                <input ref={pdfRef} type="file" className="hidden" accept=".pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} />
+                {pdfFile ? (
+                  <div>
+                    <FileText className="w-6 h-6 text-red-500 mx-auto mb-1" />
+                    <p className="text-xs font-medium text-[#2C3E50] truncate">{pdfFile.name}</p>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload className="w-6 h-6 text-[#94A3B8] mx-auto mb-1" />
+                    <p className="text-xs text-[#94A3B8]">Drop PDF here</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Excel drop zone */}
+            <div>
+              <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-green-600" /> Excel
+              </Label>
+              <div
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverExcel ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+                onClick={() => excelRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setDragOverExcel(true); }}
+                onDragLeave={() => setDragOverExcel(false)}
+                onDrop={e => { e.preventDefault(); setDragOverExcel(false); setExcelFile(e.dataTransfer.files[0] || null); }}
+                data-testid="ppr-dropzone-excel"
+              >
+                <input ref={excelRef} type="file" className="hidden" accept=".xlsx,.xls" onChange={e => setExcelFile(e.target.files?.[0] || null)} />
+                {excelFile ? (
+                  <div>
+                    <FileSpreadsheet className="w-6 h-6 text-green-600 mx-auto mb-1" />
+                    <p className="text-xs font-medium text-[#2C3E50] truncate">{excelFile.name}</p>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload className="w-6 h-6 text-[#94A3B8] mx-auto mb-1" />
+                    <p className="text-xs text-[#94A3B8]">Drop Excel here</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+
           <div>
             <Label className="text-sm font-medium">Notes</Label>
             <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes..." data-testid="input-ppr-notes" />
           </div>
-          <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={mutation.isPending || !file || !form.reportMonth || !form.reportYear} className="bg-[#1A5276] text-white" data-testid="button-upload-ppr-submit">
-              {mutation.isPending ? "Uploading..." : "Upload PPR"}
+          <div className="flex gap-2 pt-1">
+            <Button onClick={() => mutation.mutate()} disabled={!canSubmit} className="bg-[#1A5276] text-white" data-testid="button-upload-ppr-submit">
+              {mutation.isPending ? "Uploading…" : "Upload PPR"}
             </Button>
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
           </div>
-        </form>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PprReplaceDialog({ open, onClose, clientId, reportMonth, reportYear, fileType }: {
+  open: boolean; onClose: () => void; clientId: number;
+  reportMonth: number; reportYear: number; fileType: "PDF" | "EXCEL";
+}) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const formData = new FormData();
+      formData.append("reportMonth", String(reportMonth));
+      formData.append("reportYear", String(reportYear));
+      if (fileType === "PDF") formData.append("pdf", file!);
+      else formData.append("excel", file!);
+      const res = await fetch(`/api/clients/${clientId}/ppr`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "ppr"] });
+      toast({ title: `${fileType} replaced successfully` });
+      onClose();
+      setFile(null);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const Icon = fileType === "PDF" ? FileText : FileSpreadsheet;
+  const accept = fileType === "PDF" ? ".pdf" : ".xlsx,.xls";
+  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-[#1A5276]">Replace {fileType} — {MONTHS_SHORT[reportMonth - 1]} {reportYear}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div
+            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${dragOver ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => { e.preventDefault(); setDragOver(false); setFile(e.dataTransfer.files[0] || null); }}
+            data-testid="replace-dropzone"
+          >
+            <input ref={fileRef} type="file" className="hidden" accept={accept} onChange={e => setFile(e.target.files?.[0] || null)} />
+            {file ? (
+              <div>
+                <Icon className={`w-8 h-8 mx-auto mb-2 ${fileType === "PDF" ? "text-red-500" : "text-green-600"}`} />
+                <p className="text-sm font-medium text-[#2C3E50]">{file.name}</p>
+              </div>
+            ) : (
+              <div>
+                <Upload className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
+                <p className="text-sm text-[#94A3B8]">Drop new {fileType} here or click to browse</p>
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => mutation.mutate()} disabled={!file || mutation.isPending} className="bg-[#F5A623] text-white" data-testid="button-replace-submit">
+              {mutation.isPending ? "Replacing…" : `Replace ${fileType}`}
+            </Button>
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

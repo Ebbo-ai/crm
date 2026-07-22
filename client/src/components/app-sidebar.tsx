@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -141,6 +141,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
           { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard, badge: null },
           { title: "Clients", path: "/clients", icon: Users, badge: null },
           { title: "Issues", path: "/issues", icon: AlertCircle, badge: activeIssueCount > 0 ? activeIssueCount : null, badgeAlert: overdueFollowUpCount > 0 },
+          { title: "PPR Batch Upload", path: "/ppr-batch", icon: FileSpreadsheet, badge: null },
           { title: "Inbox", path: "/inbox", icon: Inbox, badge: unmatchedCount > 0 ? unmatchedCount : null, badgeAlert: unmatchedCount > 0 },
         ].map((item) => (
           <Link key={item.path} href={item.path}>

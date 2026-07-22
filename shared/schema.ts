@@ -135,6 +135,7 @@ export const pprUploads = pgTable("ppr_uploads", {
   clientId: integer("client_id").notNull(),
   reportMonth: integer("report_month").notNull(),
   reportYear: integer("report_year").notNull(),
+  fileType: text("file_type"),
   filePath: text("file_path").notNull(),
   fileName: text("file_name").notNull(),
   notes: text("notes"),
@@ -242,6 +243,14 @@ export type Issue = typeof issues.$inferSelect;
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 export type PprUpload = typeof pprUploads.$inferSelect;
 export type InsertPprUpload = z.infer<typeof insertPprUploadSchema>;
+export interface PprMonthGroup {
+  reportYear: number;
+  reportMonth: number;
+  pdf: PprUpload | null;
+  excel: PprUpload | null;
+  notes: string | null;
+  uploadedAt: Date;
+}
 export type PprMetrics = typeof pprMetrics.$inferSelect;
 export type InsertPprMetrics = z.infer<typeof insertPprMetricsSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;

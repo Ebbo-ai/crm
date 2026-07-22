@@ -51,6 +51,8 @@ const upload = multer({
   },
 });
 
+const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -524,39 +526,109 @@ export async function registerRoutes(
     }
   });
 
+  // ── PPR helpers ──────────────────────────────────────────────────────────
+  const MON_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function abbrevClientName(name: string): string {
+    const stop = new Set(["a","an","the","of","and","or","in","at","for","city","county","school","schools"]);
+    const words = (name || "").replace(/[^a-zA-Z0-9\s]/g,"").split(/\s+/).filter(Boolean);
+    const word = words.find(w => !stop.has(w.toLowerCase())) || words[0] || "Client";
+    return word.slice(0, 10);
+  }
+  function pprFileType(filename: string): "PDF" | "EXCEL" {
+    return /\.pdf$/i.test(filename) ? "PDF" : "EXCEL";
+  }
+  function pprFileExt(ft: "PDF" | "EXCEL"): string {
+    return ft === "PDF" ? ".pdf" : ".xlsx";
+  }
+  function autoFileName(clientCode: string, clientName: string, reportMonth: number, reportYear: number, ft: "PDF"|"EXCEL"): string {
+    const code = (clientCode || "").replace(/[^a-zA-Z0-9]/g,"");
+    const abbr = abbrevClientName(clientName);
+    const mon = MON_ABBR[(reportMonth - 1)] || "Unk";
+    return `${code}_${abbr}_${mon}${reportYear}${pprFileExt(ft)}`;
+  }
+  // Parse new-convention name: S29_Gainesville_Jun2026.pdf
+  function parseNewConvention(filename: string): { reportMonth: number; reportYear: number } | null {
+    const m = filename.match(/_([A-Za-z]{3})(\d{4})\.[^.]+$/);
+    if (!m) return null;
+    const monthIdx = MON_ABBR.findIndex(x => x.toLowerCase() === m[1].toLowerCase());
+    if (monthIdx < 0) return null;
+    return { reportMonth: monthIdx + 1, reportYear: parseInt(m[2]) };
+  }
+  // Parse client code from filename: s29gainesvilleppr2026.xlsx → S-29
+  function parseClientCode(filename: string): string | null {
+    const m = filename.match(/^s(\d+)/i);
+    return m ? `S-${m[1]}` : null;
+  }
+  // Upsert PPR (replace old file on disk + update DB, or insert new)
+  async function upsertPprFile(
+    clientId: number, reportMonth: number, reportYear: number,
+    fileType: "PDF"|"EXCEL", newFilePath: string, fileName: string,
+    notes: string|null, uploadedBy: string
+  ) {
+    const existing = await storage.findPprUploadByType(clientId, reportMonth, reportYear, fileType);
+    if (existing) {
+      try { fs.unlinkSync(existing.filePath); } catch {}
+      return await storage.updatePprUpload(existing.id, { filePath: newFilePath, fileName, notes, uploadedBy, uploadedAt: new Date() } as any);
+    }
+    return await storage.createPprUpload({ clientId, reportMonth, reportYear, fileType, filePath: newFilePath, fileName, notes, uploadedBy });
+  }
+
   app.get("/api/clients/:id/ppr", requireAuth, async (req, res) => {
     try {
-      const pprList = await storage.getPprUploads(parseInt(req.params.id));
-      res.json(pprList);
+      const groups = await storage.getPprGroupedUploads(parseInt(req.params.id));
+      res.json(groups);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
 
+  // Single-client upload: POST /api/clients/:id/ppr
+  // Accepts fields: reportMonth, reportYear, fileType (PDF|EXCEL), notes
+  // Files: "pdf" and/or "excel"
   app.post("/api/clients/:id/ppr", requireAuth, (req, res, next) => {
     (req as any).uploadSubDir = "ppr";
     next();
-  }, upload.single("file"), async (req, res) => {
+  }, upload.fields([{ name: "pdf", maxCount: 1 }, { name: "excel", maxCount: 1 }, { name: "file", maxCount: 1 }]), async (req, res) => {
     try {
-      if (!req.file) return res.status(400).json({ message: "File is required" });
-      const ppr = await storage.createPprUpload({
-        clientId: parseInt(req.params.id),
-        reportMonth: parseInt(req.body.reportMonth),
-        reportYear: parseInt(req.body.reportYear),
-        filePath: req.file.path,
-        fileName: req.file.originalname,
-        notes: req.body.notes || null,
-        uploadedBy: (req.user as any).fullName,
-      });
+      const clientId = parseInt(req.params.id);
+      const reportMonth = parseInt(req.body.reportMonth);
+      const reportYear = parseInt(req.body.reportYear);
+      const notes = req.body.notes || null;
+      const uploadedBy = (req.user as any).fullName;
+      const client = await storage.getClient(clientId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+
+      const filesMap = req.files as Record<string, Express.Multer.File[]>;
+      const saved: any[] = [];
+
+      const processFile = async (f: Express.Multer.File, ft: "PDF"|"EXCEL") => {
+        const newName = autoFileName(client.clientCode || "", client.clientName || "", reportMonth, reportYear, ft);
+        const newPath = path.join(path.dirname(f.path), newName);
+        fs.renameSync(f.path, newPath);
+        const ppr = await upsertPprFile(clientId, reportMonth, reportYear, ft, newPath, newName, notes, uploadedBy);
+        saved.push(ppr);
+      };
+
+      if (filesMap?.pdf?.[0]) await processFile(filesMap.pdf[0], "PDF");
+      if (filesMap?.excel?.[0]) await processFile(filesMap.excel[0], "EXCEL");
+      // Legacy single "file" field
+      if (!saved.length && filesMap?.file?.[0]) {
+        const f = filesMap.file[0];
+        const ft = pprFileType(f.originalname);
+        await processFile(f, ft);
+      }
+
+      if (!saved.length) return res.status(400).json({ message: "No files provided" });
+
       await storage.createAuditLog({
         userId: (req.user as any).id,
-        userName: (req.user as any).fullName,
+        userName: uploadedBy,
         action: "uploaded",
         entity: "ppr",
-        entityId: ppr.id,
-        details: `Uploaded PPR for ${req.body.reportMonth}/${req.body.reportYear}`,
+        entityId: saved[0].id,
+        details: `Uploaded PPR for ${reportMonth}/${reportYear} (${saved.map((s: any) => s.fileType).join(", ")})`,
       });
-      res.status(201).json(ppr);
+      res.status(201).json(saved);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -584,9 +656,91 @@ export async function registerRoutes(
     }
   });
 
-  // PPR Metrics — batch import via ZIP
-  const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+  // ── Cross-client monthly batch upload ─────────────────────────────────────
+  // POST /api/ppr/batch-monthly
+  // fields: reportMonth, reportYear (used when filename has no embedded month)
+  // files: "files[]" (multiple) OR "zipFile" (single ZIP)
+  app.post("/api/ppr/batch-monthly", requireAuth, memUpload.fields([
+    { name: "files", maxCount: 200 },
+    { name: "zipFile", maxCount: 1 },
+  ]), async (req, res) => {
+    try {
+      const fallbackMonth = req.body.reportMonth ? parseInt(req.body.reportMonth) : null;
+      const fallbackYear  = req.body.reportYear  ? parseInt(req.body.reportYear)  : null;
+      const uploadedBy = (req.user as any).fullName;
+      const AdmZip = (await import("adm-zip")).default;
 
+      // Collect raw file entries: { name, buffer }
+      const entries: { name: string; buffer: Buffer }[] = [];
+      const filesMap = req.files as Record<string, Express.Multer.File[]>;
+
+      if (filesMap?.zipFile?.[0]) {
+        const zip = new AdmZip(filesMap.zipFile[0].buffer);
+        for (const e of zip.getEntries()) {
+          if (e.isDirectory) continue;
+          const name = path.basename(e.entryName);
+          if (/\.(pdf|xlsx|xls)$/i.test(name)) entries.push({ name, buffer: e.getData() });
+        }
+      }
+      if (filesMap?.files?.length) {
+        for (const f of filesMap.files) {
+          entries.push({ name: f.originalname, buffer: f.buffer });
+        }
+      }
+
+      if (!entries.length) return res.status(400).json({ message: "No valid files found" });
+
+      const results: { file: string; status: "imported"|"skipped"|"error"; clientName?: string; clientCode?: string; fileType?: string; reportMonth?: number; reportYear?: number; error?: string }[] = [];
+
+      for (const { name, buffer } of entries) {
+        try {
+          // Determine client code
+          const rawCode = parseClientCode(name);
+          if (!rawCode) { results.push({ file: name, status: "skipped", error: "Cannot parse client code from filename" }); continue; }
+          const client = await storage.getClientByCode(rawCode);
+          if (!client) { results.push({ file: name, status: "skipped", clientCode: rawCode, error: `Client ${rawCode} not found` }); continue; }
+
+          // Determine month/year from new naming convention or use fallback
+          const fromName = parseNewConvention(name);
+          const reportMonth = fromName?.reportMonth ?? fallbackMonth;
+          const reportYear  = fromName?.reportYear  ?? fallbackYear;
+          if (!reportMonth || !reportYear) { results.push({ file: name, status: "skipped", clientCode: rawCode, clientName: client.clientName, error: "Cannot determine report month/year" }); continue; }
+
+          // Determine file type
+          const ft = pprFileType(name);
+          const newName = autoFileName(client.clientCode || "", client.clientName || "", reportMonth, reportYear, ft);
+
+          // Save buffer to disk
+          const dir = path.join(uploadDir, "ppr", String(client.id));
+          fs.mkdirSync(dir, { recursive: true });
+          const filePath = path.join(dir, newName);
+          fs.writeFileSync(filePath, buffer);
+
+          await upsertPprFile(client.id, reportMonth, reportYear, ft, filePath, newName, null, uploadedBy);
+          results.push({ file: name, status: "imported", clientCode: rawCode, clientName: client.clientName, fileType: ft, reportMonth, reportYear });
+        } catch (e: any) {
+          results.push({ file: name, status: "error", error: e.message });
+        }
+      }
+
+      const imported = results.filter(r => r.status === "imported").length;
+      const skipped  = results.filter(r => r.status === "skipped").length;
+      const errors   = results.filter(r => r.status === "error").length;
+
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: uploadedBy,
+        action: "imported",
+        entity: "ppr",
+        details: `Batch PPR upload: ${imported} imported, ${skipped} skipped, ${errors} errors`,
+      });
+      res.json({ imported, skipped, errors, results });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PPR Metrics — batch import via ZIP
   app.post("/api/ppr/batch-import", requireAuth, memUpload.single("file"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ message: "ZIP file is required" });

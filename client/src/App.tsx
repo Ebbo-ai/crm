@@ -13,6 +13,7 @@ import ClientDetailPage from "@/pages/client-detail";
 import SettingsUsersPage from "@/pages/settings-users";
 import IssuesPage from "@/pages/issues";
 import InboxPage from "@/pages/inbox";
+import PprBatchPage from "@/pages/ppr-batch";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
@@ -58,6 +59,7 @@ function Router() {
       <Route path="/clients/:id">{() => <ProtectedRoute component={ClientDetailPage} />}</Route>
       <Route path="/issues">{() => <ProtectedRoute component={IssuesPage} />}</Route>
       <Route path="/inbox">{() => <ProtectedRoute component={InboxPage} />}</Route>
+      <Route path="/ppr-batch">{() => <ProtectedRoute component={PprBatchPage} />}</Route>
       <Route path="/settings/users">{() => <ProtectedRoute component={SettingsUsersPage} adminOnly />}</Route>
       <Route component={NotFound} />
     </Switch>

@@ -10,6 +10,7 @@ import {
   type Document, type InsertDocument,
   type Issue, type InsertIssue,
   type PprUpload, type InsertPprUpload,
+  type PprMonthGroup,
   type PprMetrics, type InsertPprMetrics,
   type AuditLog, type InsertAuditLog,
   type Communication, type InsertCommunication,
@@ -55,8 +56,11 @@ export interface IStorage {
   getOverdueFollowUpCount(): Promise<number>;
 
   getPprUploads(clientId: number): Promise<PprUpload[]>;
+  getPprGroupedUploads(clientId: number): Promise<PprMonthGroup[]>;
   getPprUpload(id: number): Promise<PprUpload | undefined>;
+  findPprUploadByType(clientId: number, reportMonth: number, reportYear: number, fileType: string): Promise<PprUpload | undefined>;
   createPprUpload(ppr: InsertPprUpload): Promise<PprUpload>;
+  updatePprUpload(id: number, data: Partial<InsertPprUpload>): Promise<PprUpload | undefined>;
   deletePprUpload(id: number): Promise<void>;
 
   getPprMetrics(clientId: number): Promise<PprMetrics[]>;
@@ -279,14 +283,56 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(pprUploads).where(eq(pprUploads.clientId, clientId)).orderBy(desc(pprUploads.reportYear), desc(pprUploads.reportMonth));
   }
 
+  async getPprGroupedUploads(clientId: number): Promise<PprMonthGroup[]> {
+    const rows = await db.select().from(pprUploads)
+      .where(eq(pprUploads.clientId, clientId))
+      .orderBy(desc(pprUploads.reportYear), desc(pprUploads.reportMonth));
+    const groups = new Map<string, PprMonthGroup>();
+    for (const row of rows) {
+      const key = `${row.reportYear}-${String(row.reportMonth).padStart(2, "0")}`;
+      if (!groups.has(key)) {
+        groups.set(key, { reportYear: row.reportYear, reportMonth: row.reportMonth, pdf: null, excel: null, notes: row.notes ?? null, uploadedAt: row.uploadedAt });
+      }
+      const g = groups.get(key)!;
+      const ft = row.fileType?.toUpperCase();
+      if (ft === "PDF") { g.pdf = row; }
+      else if (ft === "EXCEL") { g.excel = row; }
+      else {
+        const ext = (row.fileName || "").split(".").pop()?.toLowerCase();
+        if (ext === "pdf") { if (!g.pdf) g.pdf = row; }
+        else { if (!g.excel) g.excel = row; }
+      }
+      if (row.notes && !g.notes) g.notes = row.notes;
+      if (row.uploadedAt > g.uploadedAt) g.uploadedAt = row.uploadedAt;
+    }
+    return Array.from(groups.values());
+  }
+
   async getPprUpload(id: number): Promise<PprUpload | undefined> {
     const [ppr] = await db.select().from(pprUploads).where(eq(pprUploads.id, id));
     return ppr;
   }
 
+  async findPprUploadByType(clientId: number, reportMonth: number, reportYear: number, fileType: string): Promise<PprUpload | undefined> {
+    const [row] = await db.select().from(pprUploads).where(
+      and(
+        eq(pprUploads.clientId, clientId),
+        eq(pprUploads.reportMonth, reportMonth),
+        eq(pprUploads.reportYear, reportYear),
+        eq(pprUploads.fileType, fileType.toUpperCase()),
+      )
+    );
+    return row;
+  }
+
   async createPprUpload(ppr: InsertPprUpload): Promise<PprUpload> {
     const [created] = await db.insert(pprUploads).values(ppr).returning();
     return created;
+  }
+
+  async updatePprUpload(id: number, data: Partial<InsertPprUpload>): Promise<PprUpload | undefined> {
+    const [updated] = await db.update(pprUploads).set(data).where(eq(pprUploads.id, id)).returning();
+    return updated;
   }
 
   async deletePprUpload(id: number): Promise<void> {
