@@ -29,7 +29,7 @@ export function setupAuth(app: Express) {
       resave: false,
       saveUninitialized: false,
       cookie: {
-        maxAge: 30 * 60 * 1000,
+        maxAge: 8 * 60 * 60 * 1000,
         httpOnly: true,
         secure: false,
         sameSite: "lax",
