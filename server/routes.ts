@@ -732,7 +732,7 @@ export async function registerRoutes(
 
       if (!entries.length) return res.status(400).json({ message: "No valid files found" });
 
-      type BatchRow = { file: string; status: "imported"|"skipped"|"error"; clientName?: string; clientCode?: string; fileType?: string; reportMonth?: number; reportYear?: number; error?: string };
+      type BatchRow = { file: string; status: "imported"|"skipped"|"error"; clientName?: string; clientCode?: string; fileType?: string; reportMonth?: number; reportYear?: number; pprId?: number; error?: string };
       const results: BatchRow[] = [];
       const unrecognized: { file: string; reason: string }[] = [];
       // byClient: map clientCode → { clientCode, clientName, files[] }
@@ -777,8 +777,8 @@ export async function registerRoutes(
           const filePath = path.join(dir, newName);
           fs.writeFileSync(filePath, buffer);
 
-          await upsertPprFile(client.id, reportMonth, reportYear, ft, filePath, newName, null, uploadedBy);
-          results.push({ file: name, status: "imported", clientCode: rawCode, clientName: client.clientName, fileType: ft, reportMonth, reportYear });
+          const saved = await upsertPprFile(client.id, reportMonth, reportYear, ft, filePath, newName, null, uploadedBy);
+          results.push({ file: name, status: "imported", clientCode: rawCode, clientName: client.clientName, fileType: ft, reportMonth, reportYear, pprId: saved.id });
 
           // Accumulate byClient
           if (!byClientMap.has(rawCode)) byClientMap.set(rawCode, { clientCode: rawCode, clientName: client.clientName, files: [] });

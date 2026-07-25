@@ -6,8 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, FileText, CheckCircle, XCircle, AlertCircle, Archive, X } from "lucide-react";
+import { Upload, FileText, CheckCircle, XCircle, AlertCircle, Archive, X, Eye, FileSpreadsheet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PprViewerPanel } from "@/components/tabs/ppr-tab";
 
 const MON_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -41,7 +42,14 @@ interface BatchResult {
   fileType?: string;
   reportMonth?: number;
   reportYear?: number;
+  pprId?: number;
   error?: string;
+}
+
+interface ViewTarget {
+  id: number;
+  fileName: string;
+  fileType: "PDF" | "EXCEL";
 }
 
 export default function PprBatchPage() {
@@ -55,6 +63,7 @@ export default function PprBatchPage() {
   const [previews, setPreviews] = useState<FilePreview[]>([]);
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [results, setResults] = useState<{ imported: number; skipped: number; errors: number; results: BatchResult[] } | null>(null);
+  const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null);
 
   function addFiles(files: FileList | File[]) {
     const arr = Array.from(files);
@@ -283,6 +292,7 @@ export default function PprBatchPage() {
                     <th className="px-3 py-2 text-left font-medium text-[#94A3B8] uppercase hidden sm:table-cell">Client</th>
                     <th className="px-3 py-2 text-left font-medium text-[#94A3B8] uppercase hidden md:table-cell">Period</th>
                     <th className="px-3 py-2 text-left font-medium text-[#94A3B8] uppercase">Status</th>
+                    <th className="px-3 py-2 text-left font-medium text-[#94A3B8] uppercase w-16">View</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -310,6 +320,27 @@ export default function PprBatchPage() {
                           </span>
                         )}
                       </td>
+                      <td className="px-3 py-2">
+                        {r.status === "imported" && r.pprId && r.fileType ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-6 h-6"
+                            onClick={() => setViewTarget({
+                              id: r.pprId!,
+                              fileName: r.file,
+                              fileType: r.fileType === "PDF" ? "PDF" : "EXCEL",
+                            })}
+                            data-testid={`button-view-result-${i}`}
+                          >
+                            {r.fileType === "PDF"
+                              ? <FileText className="w-3.5 h-3.5 text-red-500" />
+                              : <FileSpreadsheet className="w-3.5 h-3.5 text-green-600" />}
+                          </Button>
+                        ) : (
+                          <span className="text-[#94A3B8]">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -317,6 +348,15 @@ export default function PprBatchPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {viewTarget && (
+        <PprViewerPanel
+          id={viewTarget.id}
+          fileName={viewTarget.fileName}
+          fileType={viewTarget.fileType}
+          onClose={() => setViewTarget(null)}
+        />
       )}
     </div>
   );

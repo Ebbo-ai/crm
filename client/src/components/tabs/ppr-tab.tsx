@@ -351,7 +351,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
 }
 
 // ── PPR Viewer Panel ──────────────────────────────────────────────────────────
-function PprViewerPanel({ id, fileName, fileType, onClose }: {
+export function PprViewerPanel({ id, fileName, fileType, onClose }: {
   id: number;
   fileName: string;
   fileType: "PDF" | "EXCEL";
