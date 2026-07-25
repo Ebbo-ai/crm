@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet } from "lucide-react";
+import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet, Eye, X, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 
 function LossRatioBadge({ value }: { value: string | null }) {
@@ -56,12 +56,18 @@ interface PprGroup {
   notes: string | null;
   uploadedAt: string;
 }
+interface ViewTarget {
+  id: number;
+  fileName: string;
+  fileType: "PDF" | "EXCEL";
+}
 
 export default function PprTab({ clientId }: { clientId: number }) {
   const { toast } = useToast();
   const [showUpload, setShowUpload] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{ reportMonth: number; reportYear: number; fileType: "PDF" | "EXCEL" } | null>(null);
+  const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null);
 
   const { data: groups = [], isLoading } = useQuery<PprGroup[]>({
     queryKey: ["/api/clients", String(clientId), "ppr"],
@@ -195,6 +201,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
                       reportYear={g.reportYear}
                       onDelete={(id) => setDeleteTarget({ id, label: `PDF for ${MONTHS[g.reportMonth - 1]} ${g.reportYear}` })}
                       onReplace={() => setReplaceTarget({ reportMonth: g.reportMonth, reportYear: g.reportYear, fileType: "PDF" })}
+                      onView={(id, fileName) => setViewTarget({ id, fileName, fileType: "PDF" })}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -205,6 +212,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
                       reportYear={g.reportYear}
                       onDelete={(id) => setDeleteTarget({ id, label: `Excel for ${MONTHS[g.reportMonth - 1]} ${g.reportYear}` })}
                       onReplace={() => setReplaceTarget({ reportMonth: g.reportMonth, reportYear: g.reportYear, fileType: "EXCEL" })}
+                      onView={(id, fileName) => setViewTarget({ id, fileName, fileType: "EXCEL" })}
                     />
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
@@ -233,6 +241,15 @@ export default function PprTab({ clientId }: { clientId: number }) {
         />
       )}
 
+      {viewTarget && (
+        <PprViewerPanel
+          id={viewTarget.id}
+          fileName={viewTarget.fileName}
+          fileType={viewTarget.fileType}
+          onClose={() => setViewTarget(null)}
+        />
+      )}
+
       <AlertDialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -255,13 +272,14 @@ export default function PprTab({ clientId }: { clientId: number }) {
   );
 }
 
-function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onReplace }: {
+function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onReplace, onView }: {
   record: PprFile | null;
   fileType: "PDF" | "EXCEL";
   reportMonth: number;
   reportYear: number;
   onDelete: (id: number) => void;
   onReplace: () => void;
+  onView: (id: number, fileName: string) => void;
 }) {
   if (!record) {
     return (
@@ -295,6 +313,14 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
         <Tooltip>
           <TooltipTrigger asChild>
+            <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => onView(record.id, record.fileName)} data-testid={`button-view-${fileType.toLowerCase()}-${record.id}`}>
+              <Eye className="w-3 h-3 text-[#1A5276]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>View</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
             <a href={`/api/ppr/${record.id}/download`} target="_blank" rel="noreferrer">
               <Button size="icon" variant="ghost" className="w-6 h-6" data-testid={`button-download-${fileType.toLowerCase()}-${record.id}`}>
                 <Download className="w-3 h-3 text-[#2E86C1]" />
@@ -321,6 +347,133 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
         </Tooltip>
       </div>
     </div>
+  );
+}
+
+// ── PPR Viewer Panel ──────────────────────────────────────────────────────────
+function PprViewerPanel({ id, fileName, fileType, onClose }: {
+  id: number;
+  fileName: string;
+  fileType: "PDF" | "EXCEL";
+  onClose: () => void;
+}) {
+  const [activeSheet, setActiveSheet] = useState(0);
+
+  const { data: sheetData, isLoading: sheetLoading, error: sheetError } = useQuery<{
+    fileName: string;
+    sheets: { name: string; rows: (string | number | null)[][] }[];
+  }>({
+    queryKey: ["/api/ppr", id, "sheet-data"],
+    enabled: fileType === "EXCEL",
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-6xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0" data-testid="ppr-viewer-panel">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-[#F0F4F8] rounded-t-lg flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {fileType === "PDF"
+              ? <FileText className="w-4 h-4 text-red-500 flex-shrink-0" />
+              : <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />}
+            <span className="text-sm font-semibold text-[#1A5276] truncate">{fileName}</span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <a
+              href={`/api/ppr/${id}/download`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-[#2E86C1] hover:underline"
+              data-testid="button-viewer-download"
+            >
+              <Download className="w-3.5 h-3.5" /> Download
+            </a>
+            <Button size="icon" variant="ghost" onClick={onClose} className="w-7 h-7" data-testid="button-viewer-close">
+              <X className="w-4 h-4 text-[#94A3B8]" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-hidden">
+          {fileType === "PDF" ? (
+            <iframe
+              src={`/api/ppr/${id}/inline`}
+              title={fileName}
+              className="w-full h-full border-0"
+              data-testid="ppr-pdf-iframe"
+            />
+          ) : (
+            <div className="flex flex-col h-full">
+              {/* Sheet tabs */}
+              {sheetData && sheetData.sheets.length > 1 && (
+                <div className="flex gap-0 border-b bg-white flex-shrink-0 overflow-x-auto">
+                  {sheetData.sheets.map((sheet, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setActiveSheet(i)}
+                      className={`px-4 py-2 text-xs font-medium whitespace-nowrap border-r transition-colors ${
+                        activeSheet === i
+                          ? "bg-[#1A5276] text-white"
+                          : "text-[#94A3B8] hover:bg-[#F0F4F8]"
+                      }`}
+                      data-testid={`sheet-tab-${i}`}
+                    >
+                      {sheet.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Table content */}
+              <div className="flex-1 overflow-auto bg-white" data-testid="ppr-excel-viewer">
+                {sheetLoading && (
+                  <div className="flex items-center justify-center h-full gap-2 text-[#94A3B8]">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span className="text-sm">Loading spreadsheet…</span>
+                  </div>
+                )}
+                {sheetError && (
+                  <div className="flex items-center justify-center h-full text-[#EF4444] text-sm">
+                    Failed to load spreadsheet data
+                  </div>
+                )}
+                {sheetData && sheetData.sheets[activeSheet] && (
+                  <table className="text-xs border-collapse min-w-full">
+                    <tbody>
+                      {sheetData.sheets[activeSheet].rows.map((row, rowIdx) => (
+                        <tr key={rowIdx} className={rowIdx === 0 ? "bg-[#1A5276] text-white sticky top-0" : rowIdx % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]/40"}>
+                          {/* Row number gutter */}
+                          <td className={`px-2 py-1 text-center select-none w-8 border-r ${rowIdx === 0 ? "text-white/60 border-white/20" : "text-[#94A3B8] border-gray-200"}`}>
+                            {rowIdx + 1}
+                          </td>
+                          {(row as (string | number | null)[]).map((cell, colIdx) => (
+                            <td
+                              key={colIdx}
+                              className={`px-3 py-1.5 border-b border-r whitespace-nowrap max-w-[200px] truncate ${
+                                rowIdx === 0 ? "font-semibold border-white/20" : "text-[#2C3E50] border-gray-100"
+                              }`}
+                              title={String(cell ?? "")}
+                            >
+                              {cell != null && cell !== "" ? String(cell) : ""}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {sheetData && sheetData.sheets[activeSheet]?.rows.length === 0 && (
+                  <div className="flex items-center justify-center h-32 text-[#94A3B8] text-sm">
+                    This sheet is empty
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -395,7 +548,6 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {/* PDF drop zone */}
             <div>
               <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
                 <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
@@ -423,7 +575,6 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
               </div>
             </div>
 
-            {/* Excel drop zone */}
             <div>
               <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
                 <FileSpreadsheet className="w-3.5 h-3.5 text-green-600" /> Excel

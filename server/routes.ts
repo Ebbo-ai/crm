@@ -648,6 +648,44 @@ export async function registerRoutes(
     }
   });
 
+  // Serve file inline so the browser renders it rather than downloading
+  app.get("/api/ppr/:pprId/inline", requireAuth, async (req, res) => {
+    try {
+      const ppr = await storage.getPprUpload(parseInt(req.params.pprId));
+      if (!ppr) return res.status(404).json({ message: "PPR not found" });
+      const ext = path.extname(ppr.fileName).toLowerCase();
+      const mime = ext === ".pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Content-Disposition", `inline; filename="${ppr.fileName}"`);
+      res.sendFile(path.resolve(ppr.filePath));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Parse Excel and return sheet data as JSON for in-app viewer
+  app.get("/api/ppr/:pprId/sheet-data", requireAuth, async (req, res) => {
+    try {
+      const ppr = await storage.getPprUpload(parseInt(req.params.pprId));
+      if (!ppr) return res.status(404).json({ message: "PPR not found" });
+      const ext = path.extname(ppr.fileName).toLowerCase();
+      if (ext === ".pdf") return res.status(400).json({ message: "Use /inline for PDF files" });
+      const XLSX = (await import("xlsx")).default;
+      const workbook = XLSX.readFile(ppr.filePath);
+      const sheets = workbook.SheetNames.map(name => ({
+        name,
+        rows: XLSX.utils.sheet_to_json<(string | number | null)[]>(
+          workbook.Sheets[name], { header: 1, defval: "" }
+        ),
+      }));
+      res.json({ fileName: ppr.fileName, sheets });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.delete("/api/ppr/:pprId", requireAuth, async (req, res) => {
     try {
       const ppr = await storage.getPprUpload(parseInt(req.params.pprId));
