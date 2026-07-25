@@ -187,7 +187,7 @@ function GlobalSearchBar() {
   const { data: results = [], isFetching } = useQuery<any[]>({
     queryKey: ["/api/search", debouncedQuery],
     queryFn: () => debouncedQuery.length >= 2
-      ? fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" }).then(r => r.json())
+      ? fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" }).then(r => r.ok ? r.json() : [])
       : Promise.resolve([]),
     enabled: debouncedQuery.length >= 2,
     staleTime: 30000,

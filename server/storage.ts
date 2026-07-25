@@ -555,7 +555,7 @@ export class DatabaseStorage implements IStorage {
         ilike(clients.adminContactName, term),
         ilike(clients.decisionMakerName, term),
         ilike(clients.clientCode, term),
-        ilike(clients.planType, term),
+        sql`${clients.planType}::text ILIKE ${term}`,
       )
     ).orderBy(asc(clients.clientName)).limit(50);
     return Promise.all(found.map(async c => {
