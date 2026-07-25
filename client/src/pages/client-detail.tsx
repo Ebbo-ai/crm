@@ -16,7 +16,10 @@ import CommunicationsTab from "@/components/tabs/communications-tab";
 export default function ClientDetailPage() {
   const params = useParams<{ id: string }>();
   const clientId = parseInt(params.id!);
-  const [activeTab, setActiveTab] = useState("profile");
+  const initialTab = typeof window !== "undefined"
+    ? (new URLSearchParams(window.location.search).get("tab") ?? "profile")
+    : "profile";
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   const { data: client, isLoading } = useQuery<any>({
     queryKey: ["/api/clients", params.id],

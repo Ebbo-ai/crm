@@ -37,8 +37,8 @@ function IssueTypeBadge({ type }: { type: string | null }) {
 function LossRatioCell({ value }: { value: string | null }) {
   if (value == null) return <span className="text-[#94A3B8]">—</span>;
   const pct = parseFloat(value);
-  const color = pct >= 100 ? "text-[#EF4444]" : pct >= 90 ? "text-[#F5A623]" : "text-[#22C55E]";
-  const Icon = pct >= 100 ? TrendingUp : pct >= 90 ? Minus : TrendingDown;
+  const color = pct >= 100 ? "text-[#EF4444]" : pct >= 85 ? "text-[#F5A623]" : "text-[#22C55E]";
+  const Icon = pct >= 100 ? TrendingUp : pct >= 85 ? Minus : TrendingDown;
   return (
     <span className={`inline-flex items-center gap-1 font-semibold text-sm ${color}`}>
       <Icon className="w-3.5 h-3.5" />
@@ -392,7 +392,7 @@ export default function DashboardPage() {
     queryFn: () => fetch("/api/dashboard/issues", { credentials: "include" }).then(r => r.json()),
   });
 
-  const atRisk = pprSummary.filter((m: any) => parseFloat(m.ytdLossRatio ?? "0") >= 90);
+  const atRisk = pprSummary.filter((m: any) => parseFloat(m.ytdLossRatio ?? "0") >= 85);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -611,7 +611,7 @@ export default function DashboardPage() {
                   <TooltipTrigger asChild>
                     <Info className="w-3.5 h-3.5 text-[#94A3B8] cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent><p>Clients with YTD loss ratio ≥ 90%</p></TooltipContent>
+                  <TooltipContent><p>Clients with YTD loss ratio ≥ 85% (amber) or ≥ 100% (red)</p></TooltipContent>
                 </Tooltip>
                 {atRisk.length > 0 && (
                   <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{atRisk.length} at risk</span>
@@ -622,13 +622,13 @@ export default function DashboardPage() {
               {atRisk.length === 0 ? (
                 <div className="text-center py-10">
                   <TrendingDown className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
-                  <p className="text-sm text-[#94A3B8]">All loss ratios below 90%</p>
+                  <p className="text-sm text-[#94A3B8]">All loss ratios below 85%</p>
                   {pprSummary.length === 0 && <p className="text-xs text-[#94A3B8] mt-1">No PPR data imported yet</p>}
                 </div>
               ) : (
                 <div className="space-y-2">
                   {atRisk.map((m: any) => (
-                    <Link key={m.id} href={`/clients/${m.clientId}`}>
+                    <Link key={m.id} href={`/clients/${m.clientId}?tab=ppr`}>
                       <div
                         className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#F0F4F8] border-l-2 ${parseFloat(m.ytdLossRatio) >= 100 ? "border-l-[#EF4444]" : "border-l-[#F5A623]"}`}
                         data-testid={`ppr-at-risk-${m.clientId}`}
@@ -689,7 +689,7 @@ export default function DashboardPage() {
                   </thead>
                   <tbody>
                     {pprSummary.slice(0, 15).map((m: any, i: number) => (
-                      <Link key={m.id} href={`/clients/${m.clientId}`}>
+                      <Link key={m.id} href={`/clients/${m.clientId}?tab=ppr`}>
                         <tr
                           className={`border-b hover:bg-[#F0F4F8] cursor-pointer transition-colors ${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]/40"} ${parseFloat(m.ytdLossRatio ?? "0") >= 100 ? "border-l-2 border-[#EF4444]" : ""}`}
                           data-testid={`ppr-summary-row-${m.clientId}`}
