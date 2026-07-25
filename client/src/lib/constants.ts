@@ -71,6 +71,19 @@ export function formatPhone(value: string): string {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 }
 
+/**
+ * Parse a date-only value (e.g. "2025-11-01" or a DB timestamp string) as a
+ * local calendar date, avoiding the UTC-midnight timezone-shift bug where
+ * new Date("2025-11-01") renders as Oct 31 in US timezones.
+ */
+export function parseLocalDate(value: string | Date | null | undefined): Date {
+  if (!value) return new Date();
+  if (value instanceof Date) return value;
+  const datePart = (value as string).split("T")[0];
+  const [year, month, day] = datePart.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export function formatCurrency(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "$0.00";
   const num = typeof value === "string" ? parseFloat(value) : value;

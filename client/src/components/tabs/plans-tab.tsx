@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { PLAN_BASIS_LABELS, TIER_LABELS, formatCurrency } from "@/lib/constants";
+import { PLAN_BASIS_LABELS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
 import {
   Plus, ChevronDown, ChevronUp, Edit, RefreshCw, FileText, CalendarDays,
   CheckCircle2, Clock, Upload, Download, Trash2, Users, AlertTriangle
@@ -167,7 +167,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
 
-  const effectiveDate = new Date(plan.effectiveDate);
+  const effectiveDate = parseLocalDate(plan.effectiveDate);
   const nextRenewal = getNextRenewalDate(effectiveDate);
   const monthsBefore = plan.renewalDueMonthsBefore ?? 3;
   const renewalDueDate = getRenewalDueDate(effectiveDate, monthsBefore);
@@ -349,7 +349,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
 
               {plan.isRenewalComplete && plan.renewalCompletedDate && (
                 <div className="mb-3 text-xs text-[#94A3B8] bg-[#F0F4F8] rounded px-3 py-2">
-                  Marked complete {format(new Date(plan.renewalCompletedDate), "MMM d, yyyy")}
+                  Marked complete {format(parseLocalDate(plan.renewalCompletedDate), "MMM d, yyyy")}
                   {plan.renewalCompletedBy ? ` by ${plan.renewalCompletedBy}` : ""}
                 </div>
               )}
@@ -623,7 +623,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
   const isEdit = !!plan;
   const [form, setForm] = useState({
     planName: plan?.planName || "",
-    effectiveDate: plan?.effectiveDate ? format(new Date(plan.effectiveDate), "yyyy-MM-dd") : "",
+    effectiveDate: plan?.effectiveDate ? format(parseLocalDate(plan.effectiveDate), "yyyy-MM-dd") : "",
     planBasis: plan?.planBasis || "PROCEDURE_BASED",
     preventivePercent: plan?.preventivePercent ?? 100,
     correctivePercent: plan?.correctivePercent ?? 80,

@@ -16,7 +16,7 @@ import {
   ChevronRight, Info, Plus, Building2, User
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
-import { MONTHS } from "@/lib/constants";
+import { MONTHS, parseLocalDate } from "@/lib/constants";
 
 const ISSUE_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   FUNDING:      { label: "Funding",     color: "bg-blue-100 text-blue-700" },
@@ -489,7 +489,7 @@ export default function DashboardPage() {
                           <p className="text-sm font-semibold text-[#2C3E50] truncate">{r.clientName}</p>
                           <p className="text-xs text-[#94A3B8] truncate">{r.planName}</p>
                           <p className="text-xs text-[#94A3B8] mt-0.5">
-                            Due {format(new Date(r.dueDate), "MMM d")} · Anniversary {format(new Date(r.renewalDate), "MMM d, yyyy")}
+                            Due {format(parseLocalDate(r.dueDate), "MMM d")} · Anniversary {format(parseLocalDate(r.renewalDate), "MMM d, yyyy")}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-1">
