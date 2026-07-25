@@ -2,7 +2,7 @@ import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
 import {
   users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
-  communications, communicationClients, communicationAttachments, communicationTasks,
+  communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory,
   type User, type InsertUser,
   type Client, type InsertClient,
   type Plan, type InsertPlan,
@@ -16,6 +16,7 @@ import {
   type Communication, type InsertCommunication,
   type CommunicationAttachment, type InsertCommunicationAttachment,
   type CommunicationTask, type InsertCommunicationTask,
+  type BrokerHistory,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -100,6 +101,9 @@ export interface IStorage {
   completeCommunicationTask(id: number): Promise<void>;
   getClientTasks(clientId: number): Promise<CommunicationTask[]>;
   getUnreadCommunicationsCount(): Promise<number>;
+
+  getBrokerHistory(clientId: number): Promise<BrokerHistory[]>;
+  addBrokerChange(clientId: number, newBroker: { brokerFirmName: string | null; brokerContactName: string | null; brokerPhone: string | null; brokerEmail: string | null; effectiveDate: Date }): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -692,6 +696,68 @@ export class DatabaseStorage implements IStorage {
   async getUnreadCommunicationsCount(): Promise<number> {
     const [result] = await db.select({ count: count() }).from(communications).where(eq(communications.isUnmatched, true));
     return result?.count ?? 0;
+  }
+
+  async getBrokerHistory(clientId: number): Promise<BrokerHistory[]> {
+    return db.select().from(brokerHistory)
+      .where(eq(brokerHistory.clientId, clientId))
+      .orderBy(desc(brokerHistory.effectiveDate));
+  }
+
+  async addBrokerChange(clientId: number, newBroker: {
+    brokerFirmName: string | null;
+    brokerContactName: string | null;
+    brokerPhone: string | null;
+    brokerEmail: string | null;
+    effectiveDate: Date;
+  }): Promise<void> {
+    const termDate = new Date(newBroker.effectiveDate);
+    termDate.setDate(0);
+
+    const [currentRecord] = await db.select().from(brokerHistory)
+      .where(and(eq(brokerHistory.clientId, clientId), isNull(brokerHistory.terminationDate)))
+      .orderBy(desc(brokerHistory.effectiveDate))
+      .limit(1);
+
+    if (!currentRecord) {
+      const client = await this.getClient(clientId);
+      if (client?.hasBroker && (client.brokerFirmName || client.brokerContactName)) {
+        const d = new Date(client.createdAt);
+        const seedDate = new Date(d.getFullYear(), d.getMonth(), 1);
+        await db.insert(brokerHistory).values({
+          clientId,
+          brokerFirmName: client.brokerFirmName,
+          brokerContactName: client.brokerContactName,
+          brokerPhone: client.brokerPhone,
+          brokerEmail: client.brokerEmail,
+          effectiveDate: seedDate,
+          terminationDate: termDate,
+        });
+      }
+    } else {
+      await db.update(brokerHistory)
+        .set({ terminationDate: termDate })
+        .where(eq(brokerHistory.id, currentRecord.id));
+    }
+
+    await db.insert(brokerHistory).values({
+      clientId,
+      brokerFirmName: newBroker.brokerFirmName,
+      brokerContactName: newBroker.brokerContactName,
+      brokerPhone: newBroker.brokerPhone,
+      brokerEmail: newBroker.brokerEmail,
+      effectiveDate: newBroker.effectiveDate,
+      terminationDate: null,
+    });
+
+    await db.update(clients).set({
+      brokerFirmName: newBroker.brokerFirmName,
+      brokerContactName: newBroker.brokerContactName,
+      brokerPhone: newBroker.brokerPhone,
+      brokerEmail: newBroker.brokerEmail,
+      hasBroker: true,
+      updatedAt: new Date(),
+    }).where(eq(clients.id, clientId));
   }
 }
 

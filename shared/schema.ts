@@ -214,6 +214,18 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const brokerHistory = pgTable("broker_history", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  brokerFirmName: text("broker_firm_name"),
+  brokerContactName: text("broker_contact_name"),
+  brokerPhone: text("broker_phone"),
+  brokerEmail: text("broker_email"),
+  effectiveDate: timestamp("effective_date").notNull(),
+  terminationDate: timestamp("termination_date"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertCommunicationSchema = createInsertSchema(communications).omit({ id: true, receivedAt: true });
 export const insertCommunicationClientSchema = createInsertSchema(communicationClients).omit({ id: true });
 export const insertCommunicationAttachmentSchema = createInsertSchema(communicationAttachments).omit({ id: true, uploadedAt: true });
@@ -264,3 +276,7 @@ export type CommunicationAttachment = typeof communicationAttachments.$inferSele
 export type InsertCommunicationAttachment = z.infer<typeof insertCommunicationAttachmentSchema>;
 export type CommunicationTask = typeof communicationTasks.$inferSelect;
 export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSchema>;
+
+export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
+export type BrokerHistory = typeof brokerHistory.$inferSelect;
+export type InsertBrokerHistory = z.infer<typeof insertBrokerHistorySchema>;

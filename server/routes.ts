@@ -152,6 +152,44 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/clients/:id/broker-history", requireAuth, async (req, res) => {
+    try {
+      const history = await storage.getBrokerHistory(parseInt(req.params.id));
+      res.json(history);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/clients/:id/broker-change", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const { brokerFirmName, brokerContactName, brokerPhone, brokerEmail, effectiveYear, effectiveMonth } = req.body;
+      if (!effectiveYear || !effectiveMonth) {
+        return res.status(400).json({ message: "Effective date is required" });
+      }
+      const effectiveDate = new Date(parseInt(effectiveYear), parseInt(effectiveMonth) - 1, 1);
+      await storage.addBrokerChange(clientId, {
+        brokerFirmName: brokerFirmName || null,
+        brokerContactName: brokerContactName || null,
+        brokerPhone: brokerPhone || null,
+        brokerEmail: brokerEmail || null,
+        effectiveDate,
+      });
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "broker_change",
+        entity: "client",
+        entityId: clientId,
+        details: `Broker changed to "${brokerFirmName}" effective ${effectiveDate.toLocaleDateString()}`,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/clients/:id/plans", requireAuth, async (req, res) => {
     try {
       const planList = await storage.getPlans(parseInt(req.params.id));
