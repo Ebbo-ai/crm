@@ -104,6 +104,8 @@ export interface IStorage {
 
   getBrokerHistory(clientId: number): Promise<BrokerHistory[]>;
   addBrokerChange(clientId: number, newBroker: { brokerFirmName: string | null; brokerContactName: string | null; brokerPhone: string | null; brokerEmail: string | null; effectiveDate: Date }): Promise<void>;
+
+  getClientsByBrokerFirm(firm: string): Promise<(Client & { plans: Plan[] })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -696,6 +698,19 @@ export class DatabaseStorage implements IStorage {
   async getUnreadCommunicationsCount(): Promise<number> {
     const [result] = await db.select({ count: count() }).from(communications).where(eq(communications.isUnmatched, true));
     return result?.count ?? 0;
+  }
+
+  async getClientsByBrokerFirm(firm: string): Promise<(Client & { plans: Plan[] })[]> {
+    const term = `%${firm}%`;
+    const matchingClients = await db.select().from(clients)
+      .where(ilike(clients.brokerFirmName, term))
+      .orderBy(asc(clients.clientName));
+    return Promise.all(matchingClients.map(async (c) => {
+      const clientPlans = await db.select().from(plans)
+        .where(and(eq(plans.clientId, c.id), eq(plans.isArchived, false)))
+        .orderBy(asc(plans.effectiveDate));
+      return { ...c, plans: clientPlans };
+    }));
   }
 
   async getBrokerHistory(clientId: number): Promise<BrokerHistory[]> {

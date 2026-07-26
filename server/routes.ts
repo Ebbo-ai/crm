@@ -1041,6 +1041,17 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/reports/broker", requireAuth, async (req, res) => {
+    try {
+      const firm = (req.query.firm as string || "").trim();
+      if (firm.length < 2) return res.json([]);
+      const results = await storage.getClientsByBrokerFirm(firm);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/search", requireAuth, async (req, res) => {
     try {
       const q = req.query.q as string;
