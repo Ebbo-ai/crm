@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -83,7 +83,9 @@ export const plans = pgTable("plans", {
   renewalCompletedBy: text("renewal_completed_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  clientNameYearUnique: uniqueIndex("plans_client_name_year_unique").on(table.clientId, table.planName, table.planYear),
+}));
 
 export const rateCards = pgTable("rate_cards", {
   id: serial("id").primaryKey(),

@@ -61,6 +61,32 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Idempotent startup migration: remove duplicate plans then enforce uniqueness
+  try {
+    const { pool } = await import("./db");
+    await pool.query(`
+      DELETE FROM plans
+      WHERE id IN (
+        SELECT MAX(id) FROM plans
+        WHERE is_archived = false
+        GROUP BY client_id, plan_name, plan_year
+        HAVING COUNT(*) > 1
+      );
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'plans_client_name_year_unique'
+        ) THEN
+          ALTER TABLE plans
+            ADD CONSTRAINT plans_client_name_year_unique
+            UNIQUE (client_id, plan_name, plan_year);
+        END IF;
+      END $$;
+    `);
+    log("Startup migration: duplicate plans cleaned, unique constraint ensured");
+  } catch (err: any) {
+    console.error("Startup migration error:", err.message);
+  }
+
   await registerRoutes(httpServer, app);
   await seedDatabase().catch((err) => console.error("Seed error:", err));
 
