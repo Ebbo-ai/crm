@@ -1,0 +1,1 @@
+- [Rating Engine service](rating-engine-service.md) — internal Flask service on port 5001, WeasyPrint PDF confirmed working; no waitForPort in workflow config.
