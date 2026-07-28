@@ -27,6 +27,7 @@ export default function ClientsPage() {
   const filters = [
     { label: "All", value: "all" },
     { label: "Active", value: "active" },
+    { label: "Prospect", value: "prospect" },
     { label: "Terminated", value: "terminated" },
   ];
 
@@ -110,11 +111,13 @@ export default function ClientsPage() {
                       </h3>
                     </div>
                     <span className={`text-[10px] px-2 py-1 rounded-full font-semibold flex-shrink-0 ${
-                      client.isActive
+                      client.clientStatus === "ACTIVE"
                         ? "bg-[#22C55E]/10 text-[#22C55E]"
-                        : "bg-[#EF4444]/10 text-[#EF4444]"
+                        : client.clientStatus === "PROSPECT"
+                          ? "bg-[#2E86C1]/10 text-[#2E86C1]"
+                          : "bg-[#EF4444]/10 text-[#EF4444]"
                     }`} data-testid={`badge-status-${client.id}`}>
-                      {client.isActive ? "Active" : "Terminated"}
+                      {client.clientStatus === "ACTIVE" ? "Active" : client.clientStatus === "PROSPECT" ? "Prospect" : "Terminated"}
                     </span>
                   </div>
 

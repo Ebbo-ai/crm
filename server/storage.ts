@@ -139,9 +139,11 @@ export class DatabaseStorage implements IStorage {
       conditions.push(ilike(clients.clientName, `%${search}%`));
     }
     if (status === "active") {
-      conditions.push(eq(clients.isActive, true));
+      conditions.push(eq(clients.clientStatus, "ACTIVE" as any));
     } else if (status === "terminated") {
-      conditions.push(eq(clients.isActive, false));
+      conditions.push(eq(clients.clientStatus, "TERMINATED" as any));
+    } else if (status === "prospect") {
+      conditions.push(eq(clients.clientStatus, "PROSPECT" as any));
     }
 
     const clientList = conditions.length > 0

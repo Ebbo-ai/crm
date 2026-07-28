@@ -262,6 +262,37 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
             )}
           </div>
 
+          {/* orthodontia details */}
+          <div className="pt-2 pb-2">
+            <p className="text-xs font-semibold text-[#1A5276] mb-2">Orthodontia</p>
+            {(!plan.orthoEligibility || plan.orthoEligibility === "NONE") ? (
+              <p className="text-sm text-[#94A3B8]">Not covered</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-[#94A3B8]">Eligible</p>
+                  <p className="text-sm font-medium">
+                    {plan.orthoEligibility === "CHILDREN" ? "Children only" : "All enrollees"}
+                  </p>
+                </div>
+                {plan.orthoCoinsurancePercent != null && (
+                  <div>
+                    <p className="text-xs text-[#94A3B8]">Coinsurance</p>
+                    <p className="text-sm font-medium">{plan.orthoCoinsurancePercent}%</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-[#94A3B8]">Maximum</p>
+                  <p className="text-sm font-medium">
+                    {plan.orthoMaxType === "SEPARATE_LIFETIME"
+                      ? `Separate lifetime${plan.orthoLifetimeMax ? ` — ${formatCurrency(plan.orthoLifetimeMax)}` : ""}`
+                      : "Shares annual max"}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* rate card table */}
           {plan.rateCards?.length > 0 && (
             <div className="mt-2 mb-4">
@@ -637,6 +668,10 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     dollarTier3Percent: plan?.dollarTier3Percent ?? "",
     renewalDueMonthsBefore: plan?.renewalDueMonthsBefore ?? 3,
     renewalRecipient: plan?.renewalRecipient ?? "CLIENT",
+    orthoEligibility: (plan?.orthoEligibility ?? "NONE") as "NONE" | "CHILDREN" | "ALL",
+    orthoCoinsurancePercent: plan?.orthoCoinsurancePercent ?? "",
+    orthoMaxType: (plan?.orthoMaxType ?? "SHARED_ANNUAL") as "SHARED_ANNUAL" | "SEPARATE_LIFETIME",
+    orthoLifetimeMax: plan?.orthoLifetimeMax ?? "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -694,6 +729,10 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
       isArchived: false,
       renewalDueMonthsBefore: Number(form.renewalDueMonthsBefore),
       renewalRecipient: form.renewalRecipient,
+      orthoEligibility: form.orthoEligibility,
+      orthoCoinsurancePercent: form.orthoEligibility !== "NONE" && form.orthoCoinsurancePercent !== "" ? Number(form.orthoCoinsurancePercent) : null,
+      orthoMaxType: form.orthoEligibility !== "NONE" ? form.orthoMaxType : "SHARED_ANNUAL",
+      orthoLifetimeMax: form.orthoEligibility !== "NONE" && form.orthoMaxType === "SEPARATE_LIFETIME" && form.orthoLifetimeMax ? String(form.orthoLifetimeMax) : null,
     });
   };
 
@@ -805,6 +844,66 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
               <Input value={form.deductible} onChange={e => setForm(f => ({ ...f, deductible: e.target.value }))} placeholder="Optional" data-testid="input-deductible" />
               <p className="text-xs text-[#94A3B8] mt-1">Corrective & Restorative only</p>
             </div>
+          </div>
+
+          {/* orthodontia settings */}
+          <div className="p-3 bg-[#F0F4F8] rounded-md border space-y-3">
+            <p className="text-xs font-semibold text-[#1A5276]">Orthodontia</p>
+            <div>
+              <Label className="text-xs">Ortho Coverage</Label>
+              <Select value={form.orthoEligibility} onValueChange={v => setForm(f => ({ ...f, orthoEligibility: v as any, orthoCoinsurancePercent: v === "NONE" ? "" : f.orthoCoinsurancePercent, orthoMaxType: v === "NONE" ? "SHARED_ANNUAL" : f.orthoMaxType, orthoLifetimeMax: v === "NONE" ? "" : f.orthoLifetimeMax }))}>
+                <SelectTrigger data-testid="select-ortho-eligibility"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NONE">Not covered</SelectItem>
+                  <SelectItem value="CHILDREN">Children only</SelectItem>
+                  <SelectItem value="ALL">All enrollees</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.orthoEligibility !== "NONE" && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Ortho Coinsurance %</Label>
+                    <div className="relative">
+                      <Input
+                        type="number" min={0} max={100}
+                        value={form.orthoCoinsurancePercent}
+                        onChange={e => setForm(f => ({ ...f, orthoCoinsurancePercent: e.target.value }))}
+                        placeholder="50"
+                        data-testid="input-ortho-coinsurance"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Ortho Maximum</Label>
+                    <Select value={form.orthoMaxType} onValueChange={v => setForm(f => ({ ...f, orthoMaxType: v as any, orthoLifetimeMax: v === "SHARED_ANNUAL" ? "" : f.orthoLifetimeMax }))}>
+                      <SelectTrigger data-testid="select-ortho-max-type"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SHARED_ANNUAL">Shares plan annual max</SelectItem>
+                        <SelectItem value="SEPARATE_LIFETIME">Separate lifetime max</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {form.orthoMaxType === "SEPARATE_LIFETIME" && (
+                  <div>
+                    <Label className="text-xs">Ortho Lifetime Max ($)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                      <Input
+                        className="pl-6"
+                        value={form.orthoLifetimeMax}
+                        onChange={e => setForm(f => ({ ...f, orthoLifetimeMax: e.target.value }))}
+                        placeholder="1000"
+                        data-testid="input-ortho-lifetime-max"
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* renewal settings */}

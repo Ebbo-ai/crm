@@ -79,9 +79,17 @@ export default function ClientDetailPage() {
             </div>
           </div>
           <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ml-2 ${
-            client.isActive ? "bg-[#22C55E]/10 text-[#22C55E]" : "bg-[#EF4444]/10 text-[#EF4444]"
+            client.clientStatus === "ACTIVE" || (!client.clientStatus && client.isActive)
+              ? "bg-[#22C55E]/10 text-[#22C55E]"
+              : client.clientStatus === "PROSPECT"
+                ? "bg-[#2E86C1]/10 text-[#2E86C1]"
+                : "bg-[#EF4444]/10 text-[#EF4444]"
           }`} data-testid="badge-client-status">
-            {client.isActive ? "Active" : "Terminated"}
+            {client.clientStatus === "ACTIVE" || (!client.clientStatus && client.isActive)
+              ? "Active"
+              : client.clientStatus === "PROSPECT"
+                ? "Prospect"
+                : "Terminated"}
           </span>
         </div>
         <Link href={`/clients/${clientId}/edit`}>

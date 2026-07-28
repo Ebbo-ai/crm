@@ -11,6 +11,9 @@ export const bankingTypeEnum = pgEnum("banking_type", ["CLIENT_BANK", "NINETY_DE
 export const fundingTypeEnum = pgEnum("funding_type", ["REQUIRES_APPROVAL", "PROCESS_WITHOUT_APPROVAL"]);
 export const documentCategoryEnum = pgEnum("document_category", ["CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD", "RENEWAL_PROPOSAL", "OTHER"]);
 export const issueStatusEnum = pgEnum("issue_status", ["ACTIVE", "RESOLVED"]);
+export const clientStatusEnum = pgEnum("client_status", ["PROSPECT", "ACTIVE", "TERMINATED"]);
+export const orthoEligibilityEnum = pgEnum("ortho_eligibility", ["NONE", "CHILDREN", "ALL"]);
+export const orthoMaxTypeEnum = pgEnum("ortho_max_type", ["SHARED_ANNUAL", "SEPARATE_LIFETIME"]);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -36,6 +39,7 @@ export const clients = pgTable("clients", {
   numberOfEmployees: integer("number_of_employees").notNull(),
   isActive: boolean("is_active").notNull().default(true),
   terminationDate: timestamp("termination_date"),
+  clientStatus: clientStatusEnum("client_status").notNull().default("ACTIVE"),
   planType: planTypeEnum("plan_type").notNull(),
   networkActive: boolean("network_active").notNull().default(false),
   dentalNetworkName: text("dental_network_name").default("Dentemax"),
@@ -76,6 +80,10 @@ export const plans = pgTable("plans", {
   dollarTier3Percent: integer("dollar_tier3_percent"),
   isArchived: boolean("is_archived").notNull().default(false),
   planYear: integer("plan_year").notNull(),
+  orthoEligibility: orthoEligibilityEnum("ortho_eligibility").notNull().default("NONE"),
+  orthoCoinsurancePercent: integer("ortho_coinsurance_percent"),
+  orthoMaxType: orthoMaxTypeEnum("ortho_max_type").default("SHARED_ANNUAL"),
+  orthoLifetimeMax: decimal("ortho_lifetime_max", { precision: 10, scale: 2 }),
   renewalDueMonthsBefore: integer("renewal_due_months_before").notNull().default(3),
   renewalRecipient: text("renewal_recipient").notNull().default("CLIENT"),
   isRenewalComplete: boolean("is_renewal_complete").notNull().default(false),

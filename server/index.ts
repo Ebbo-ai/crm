@@ -80,7 +80,43 @@ app.use((req, res, next) => {
             ADD CONSTRAINT plans_client_name_year_unique
             UNIQUE (client_id, plan_name, plan_year);
         END IF;
+
+        -- client_status enum + column
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'client_status') THEN
+          CREATE TYPE client_status AS ENUM ('PROSPECT', 'ACTIVE', 'TERMINATED');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'clients' AND column_name = 'client_status') THEN
+          ALTER TABLE clients ADD COLUMN client_status client_status NOT NULL DEFAULT 'ACTIVE';
+        END IF;
+
+        -- ortho_eligibility enum + column
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ortho_eligibility') THEN
+          CREATE TYPE ortho_eligibility AS ENUM ('NONE', 'CHILDREN', 'ALL');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'plans' AND column_name = 'ortho_eligibility') THEN
+          ALTER TABLE plans ADD COLUMN ortho_eligibility ortho_eligibility NOT NULL DEFAULT 'NONE';
+        END IF;
+
+        -- ortho_max_type enum + columns
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ortho_max_type') THEN
+          CREATE TYPE ortho_max_type AS ENUM ('SHARED_ANNUAL', 'SEPARATE_LIFETIME');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'plans' AND column_name = 'ortho_max_type') THEN
+          ALTER TABLE plans ADD COLUMN ortho_max_type ortho_max_type DEFAULT 'SHARED_ANNUAL';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'plans' AND column_name = 'ortho_coinsurance_percent') THEN
+          ALTER TABLE plans ADD COLUMN ortho_coinsurance_percent INTEGER;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'plans' AND column_name = 'ortho_lifetime_max') THEN
+          ALTER TABLE plans ADD COLUMN ortho_lifetime_max DECIMAL(10,2);
+        END IF;
       END $$;
+
+      -- Back-fill clientStatus for existing terminated clients
+      UPDATE clients
+        SET client_status = 'TERMINATED'
+        WHERE (is_active = false OR termination_date IS NOT NULL)
+          AND client_status = 'ACTIVE';
     `);
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
   } catch (err: any) {

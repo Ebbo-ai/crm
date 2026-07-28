@@ -41,7 +41,7 @@ export default function ClientFormPage() {
 
   const [form, setForm] = useState({
     clientCode: "", clientName: "", streetAddress: "", suiteUnit: "", city: "", state: "", zipCode: "",
-    industryType: "", numberOfEmployees: 1, isActive: true, terminationDate: "",
+    industryType: "", numberOfEmployees: 1, clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED", terminationDate: "",
     planType: "DENTAL", networkActive: false, dentalNetworkName: "Dentemax",
     decisionMakerName: "", decisionMakerTitle: "", decisionMakerPhone: "", decisionMakerEmail: "",
     adminContactName: "", adminContactTitle: "Admin Contact", adminContactPhone: "", adminContactEmail: "",
@@ -69,7 +69,8 @@ export default function ClientFormPage() {
         zipCode: existingClient.zipCode || "",
         industryType: existingClient.industryType || "",
         numberOfEmployees: existingClient.numberOfEmployees || 1,
-        isActive: existingClient.isActive ?? true,
+        clientStatus: (existingClient.clientStatus as "PROSPECT" | "ACTIVE" | "TERMINATED") ||
+          (existingClient.isActive === false || existingClient.terminationDate ? "TERMINATED" : "ACTIVE"),
         terminationDate: existingClient.terminationDate ? existingClient.terminationDate.split("T")[0] : "",
         planType: existingClient.planType || "DENTAL",
         networkActive: existingClient.networkActive ?? false,
@@ -154,7 +155,7 @@ export default function ClientFormPage() {
       if (!form.brokerEmail.trim()) errs.brokerEmail = "Broker email is required";
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.brokerEmail)) errs.brokerEmail = "Invalid email";
     }
-    if (!form.isActive && form.terminationDate) {
+    if (form.clientStatus === "TERMINATED" && form.terminationDate) {
       const d = new Date(form.terminationDate + "T00:00:00");
       if (!isLastDayOfMonth(d)) errs.terminationDate = "Termination date must be the last day of a calendar month";
     }
@@ -184,7 +185,8 @@ export default function ClientFormPage() {
     setCodeChecking(false);
 
     const data: any = { ...form, clientCode: fullCode, numberOfEmployees: Number(form.numberOfEmployees) };
-    if (!data.isActive && data.terminationDate) {
+    data.isActive = data.clientStatus === "ACTIVE"; // keep backward-compatible field in sync
+    if (data.clientStatus === "TERMINATED" && data.terminationDate) {
       data.terminationDate = new Date(data.terminationDate + "T00:00:00");
     } else {
       data.terminationDate = null;
@@ -480,11 +482,31 @@ export default function ClientFormPage() {
             <h2 className="text-lg font-semibold text-[#1A5276]">Account Status</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
-            <div className="flex items-center gap-3">
-              <Switch checked={form.isActive} onCheckedChange={v => { updateField("isActive", v); if (v) updateField("terminationDate", ""); }} data-testid="switch-status" />
-              <Label className="text-sm text-[#2C3E50]">{form.isActive ? "Active" : "Terminated"}</Label>
+            <div>
+              <RequiredLabel htmlFor="clientStatus">Status</RequiredLabel>
+              <Select
+                value={form.clientStatus}
+                onValueChange={v => {
+                  updateField("clientStatus", v);
+                  if (v !== "TERMINATED") updateField("terminationDate", "");
+                }}
+              >
+                <SelectTrigger id="clientStatus" data-testid="select-client-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ACTIVE">Active — current client</SelectItem>
+                  <SelectItem value="PROSPECT">Prospect — quoting, not yet signed</SelectItem>
+                  <SelectItem value="TERMINATED">Terminated — no longer active</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-[#94A3B8] mt-1">
+                {form.clientStatus === "PROSPECT" ? "Prospect clients are being quoted but have not yet signed." :
+                 form.clientStatus === "TERMINATED" ? "Terminated clients are retained for historical reference." :
+                 "Active clients are currently covered under a plan."}
+              </p>
             </div>
-            {!form.isActive && (
+            {form.clientStatus === "TERMINATED" && (
               <div>
                 <RequiredLabel htmlFor="terminationDate">Termination Date</RequiredLabel>
                 <Input id="terminationDate" type="date" value={form.terminationDate} onChange={e => updateField("terminationDate", e.target.value)} data-testid="input-termination-date" />
