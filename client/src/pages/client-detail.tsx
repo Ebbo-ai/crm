@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus } from "lucide-react";
+import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2 } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +47,20 @@ export default function ClientDetailPage() {
 
   const { data: client, isLoading } = useQuery<any>({
     queryKey: ["/api/clients", params.id],
+  });
+
+  const { toast } = useToast();
+
+  const generateDraftMutation = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/clients/${clientId}/generate-renewal-draft`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "documents"] });
+      setActiveTab("documents");
+      toast({ title: "Renewal draft generated", description: "The proposal PDF is now in the Documents tab." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Generation failed", description: err.message || "Rating engine error", variant: "destructive" });
+    },
   });
 
   if (isLoading) {
@@ -92,11 +106,23 @@ export default function ClientDetailPage() {
                 : "Terminated"}
           </span>
         </div>
-        <Link href={`/clients/${clientId}/edit`}>
-          <Button className="bg-[#1A5276] text-white gap-2" data-testid="button-edit-client">
-            <Edit className="w-4 h-4" /> Edit Client
+        <div className="flex gap-2">
+          <Button
+            onClick={() => generateDraftMutation.mutate()}
+            disabled={generateDraftMutation.isPending}
+            className="bg-[#0c6b59] hover:bg-[#08382f] text-white gap-2"
+            data-testid="button-generate-renewal-draft"
+          >
+            {generateDraftMutation.isPending
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+              : <><FileText className="w-4 h-4" /> Generate Renewal Draft</>}
           </Button>
-        </Link>
+          <Link href={`/clients/${clientId}/edit`}>
+            <Button className="bg-[#1A5276] text-white gap-2" data-testid="button-edit-client">
+              <Edit className="w-4 h-4" /> Edit Client
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>

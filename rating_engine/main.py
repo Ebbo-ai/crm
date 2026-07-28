@@ -4,13 +4,76 @@ Internal-only HTTP service (port 5001).
 Not exposed to the browser; called only by the Node backend.
 """
 
+import base64
+import copy
 import io
 import logging
+import os
+import sys
 
-from flask import Flask, send_file, jsonify
+from flask import Flask, request, send_file, jsonify
+
+# Make sure the rating_engine directory is importable
+sys.path.insert(0, os.path.dirname(__file__))
+
+from generate_renewal import (
+    validate, advisories, build_html, compute, load_config,
+)
+from weasyprint import HTML
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rating] %(message)s")
+
+_SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "config_sample.py")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _render_cfg(cfg):
+    """Validate, render to PDF bytes, extract per-plan scenarios. Raises on error."""
+    problems = validate(cfg)
+    if problems:
+        raise ValueError("Config rejected:\n" + "\n".join(problems))
+    warns = advisories(cfg)
+
+    html_str = build_html(cfg)
+    pdf_bytes = HTML(string=html_str).write_pdf()
+
+    # Extract scenario rows per plan for the caller's convenience
+    scenarios_out = []
+    for plan in cfg["plans"]:
+        d = compute(plan)
+        scenarios_out.append({
+            "plan_name": plan["name"],
+            "coverage":  plan["coverage"],
+            "admin_new": d["admin_new"],
+            "subs":      d["subs"],
+            "adequate":  d["adequate"],
+            "surplus":   d["surplus"],
+            "rows": [
+                {
+                    "key":         r["key"],
+                    "name":        r["name"],
+                    "net":         r["net"],
+                    "tiers":       r["tiers"],
+                    "collected":   r["collected"],
+                    "draw":        r["draw"],
+                    "end_reserve": r["end_reserve"],
+                    "reserve_mo":  round(r["reserve_mo"], 2),
+                    "recommended": r["recommended"],
+                }
+                for r in d["rows"]
+            ],
+        })
+
+    return {
+        "pdf_b64":    base64.b64encode(pdf_bytes).decode(),
+        "total_pages": cfg["total_pages"],
+        "scenarios":  scenarios_out,
+        "advisories": warns,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -23,80 +86,95 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# PDF proof-of-concept endpoint
-# Renders a minimal branded HTML page to PDF and returns the binary.
+# POST /generate-renewal
+# Accept a full cfg dict as JSON, render, return scenarios + PDF as base64.
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-renewal")
+def generate_renewal():
+    cfg = request.get_json(force=True, silent=True)
+    if not cfg or not isinstance(cfg, dict):
+        return jsonify({"error": "Request body must be a JSON object (cfg dict)"}), 400
+    try:
+        result = _render_cfg(cfg)
+        app.logger.info("generate-renewal: %s — %d pages, %d bytes",
+                        cfg.get("group_name", "?"), result["total_pages"],
+                        len(base64.b64decode(result["pdf_b64"])))
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("generate-renewal: render failed for %s",
+                              cfg.get("group_name", "?"))
+        return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-renewal-sample
+# Load the bundled sample config, optionally override header fields, render.
+# Body (all optional): { group_name, group_id, prepared_for,
+#                        renewal_effective, prepared_date }
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-renewal-sample")
+def generate_renewal_sample():
+    overrides = request.get_json(force=True, silent=True) or {}
+    try:
+        cfg = copy.deepcopy(load_config(_SAMPLE_PATH))
+    except Exception as exc:
+        return jsonify({"error": f"Could not load sample config: {exc}"}), 500
+
+    # Apply caller's overrides to the program-level header fields
+    for field in ("group_name", "group_id", "prepared_for",
+                  "renewal_effective", "prepared_date", "plan_year"):
+        if field in overrides:
+            cfg[field] = overrides[field]
+
+    try:
+        result = _render_cfg(cfg)
+        app.logger.info("generate-renewal-sample: %s — %d pages",
+                        cfg.get("group_name"), result["total_pages"])
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("generate-renewal-sample failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# GET /test-pdf  (original proof-of-concept, kept for smoke testing)
 # ---------------------------------------------------------------------------
 
 TEST_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
+<html lang="en"><head><meta charset="utf-8"/>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', Arial, sans-serif;
-    background: #f4f8fb;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-  }
-  .card {
-    background: #ffffff;
-    border-radius: 12px;
-    padding: 48px 56px;
-    box-shadow: 0 4px 24px rgba(26,82,118,0.10);
-    text-align: center;
-    max-width: 480px;
-  }
-  .logo { font-size: 32px; font-weight: 700; color: #1A5276; margin-bottom: 4px; }
-  .sub  { font-size: 14px; color: #E67E22; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 32px; }
-  h1    { font-size: 22px; font-weight: 700; color: #1A5276; margin-bottom: 12px; }
-  p     { font-size: 14px; color: #5D6D7E; line-height: 1.6; }
-  .stamp {
-    display: inline-block;
-    margin-top: 28px;
-    padding: 8px 20px;
-    border-radius: 999px;
-    background: #eaf4fb;
-    color: #1A5276;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-  }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">Simple Benefits</div>
-  <div class="sub">TPA Client Management</div>
+  body { font-family: Arial, sans-serif; display:flex; align-items:center;
+         justify-content:center; height:100vh; background:#f4f8fb; margin:0; }
+  .card { background:#fff; border-radius:12px; padding:48px 56px;
+          box-shadow:0 4px 24px rgba(26,82,118,.1); text-align:center; max-width:480px; }
+  h1 { color:#1A5276; margin:0 0 12px; }
+  p  { color:#5D6D7E; font-size:14px; line-height:1.6; }
+  .stamp { display:inline-block; margin-top:28px; padding:8px 20px;
+           border-radius:999px; background:#eaf4fb; color:#1A5276;
+           font-size:12px; font-weight:600; }
+</style></head>
+<body><div class="card">
   <h1>Rating Engine — PDF Proof of Concept</h1>
-  <p>WeasyPrint rendered this document successfully.
-     System graphics libraries (Pango, Cairo, GDK-Pixbuf) are
-     confirmed working. The rating engine is ready to produce
-     branded proposal PDFs.</p>
+  <p>WeasyPrint rendered this document successfully. System graphics libraries
+     are confirmed working.</p>
   <div class="stamp">✓ PDF generation verified</div>
-</div>
-</body>
-</html>"""
+</div></body></html>"""
 
 
 @app.get("/test-pdf")
 def test_pdf():
-    """Render a one-page branded test PDF and return it as application/pdf."""
     try:
-        from weasyprint import HTML
         pdf_bytes = HTML(string=TEST_HTML).write_pdf()
         buf = io.BytesIO(pdf_bytes)
         buf.seek(0)
-        app.logger.info("test-pdf: rendered %d bytes", len(pdf_bytes))
-        return send_file(
-            buf,
-            mimetype="application/pdf",
-            as_attachment=False,
-            download_name="rating-engine-test.pdf",
-        )
+        return send_file(buf, mimetype="application/pdf",
+                         download_name="rating-engine-test.pdf")
     except Exception as exc:
         app.logger.exception("test-pdf: render failed")
         return jsonify({"error": str(exc)}), 500

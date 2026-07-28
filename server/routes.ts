@@ -409,6 +409,82 @@ export async function registerRoutes(
     }
   });
 
+  // ── Renewal draft generator ────────────────────────────────────────────
+  // Calls the internal Python rating engine, saves the returned PDF as a
+  // RENEWAL_PROPOSAL document attached to the client, and returns the doc
+  // record plus the computed funding scenarios.
+  // DRAFT ONLY: does not write rate cards or mark any renewal complete.
+  app.post("/api/clients/:id/generate-renewal-draft", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const client = await storage.getClient(clientId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+
+      // Call internal Python service with the client's identity so the PDF
+      // cover page shows the real group name, not "Westside School District".
+      const engineRes = await fetch("http://127.0.0.1:5001/generate-renewal-sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group_name:        client.clientName,
+          group_id:          client.clientCode || String(client.id),
+          prepared_for:      client.clientName,
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!engineRes.ok) {
+        let msg = "Rating engine error";
+        try { msg = ((await engineRes.json()) as any).error || msg; } catch {}
+        return res.status(502).json({ message: msg });
+      }
+
+      const { pdf_b64, scenarios, total_pages, advisories } =
+        (await engineRes.json()) as any;
+
+      // Decode and persist the PDF
+      const pdfBuffer = Buffer.from(pdf_b64, "base64");
+      const dir = path.join(uploadDir, "documents", String(clientId));
+      fs.mkdirSync(dir, { recursive: true });
+      const timestamp = Date.now();
+      const fileName = `${timestamp}-renewal-draft.pdf`;
+      const filePath = path.join(dir, fileName);
+      fs.writeFileSync(filePath, pdfBuffer);
+
+      const label = new Date().toLocaleDateString("en-US",
+        { month: "long", day: "numeric", year: "numeric" });
+      const notes = [
+        `Draft generated from sample data (${total_pages} pages).`,
+        advisories?.length
+          ? `Advisories: ${advisories.join("; ")}`
+          : "No advisories.",
+      ].join(" ");
+
+      const doc = await storage.createDocument({
+        clientId,
+        documentName: `Renewal Proposal Draft — ${label}`,
+        category: "RENEWAL_PROPOSAL",
+        filePath,
+        fileName,
+        notes,
+        uploadedBy: (req.user as any).fullName,
+      });
+
+      await storage.createAuditLog({
+        userId:   (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action:   "generated",
+        entity:   "document",
+        entityId: doc.id,
+        details:  `Generated renewal draft for client #${clientId}`,
+      });
+
+      res.status(201).json({ document: doc, scenarios, total_pages });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/documents/:docId/download", requireAuth, async (req, res) => {
     try {
       const doc = await storage.getDocument(parseInt(req.params.docId));
