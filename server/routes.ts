@@ -1552,5 +1552,114 @@ export async function registerRoutes(
     }
   });
 
+  // ─── Renewal pipeline ────────────────────────────────────────────────────────
+
+  app.get("/api/plans/:planId/renewal-progress", requireAuth, async (req, res) => {
+    try {
+      const prog = await storage.getRenewalProgress(parseInt(req.params.planId));
+      res.json(prog ?? {});
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/plans/:planId/renewal-progress", requireAuth, async (req, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const plan = await storage.getPlan(planId);
+      if (!plan) return res.status(404).json({ message: "Plan not found" });
+
+      const allowed = ["step1Date","step2Date","step3Date","step4Revisions","step5Date","step6Date","step6DocumentId","step7Date"];
+      const data: Record<string, any> = {};
+      for (const key of allowed) {
+        if (key in req.body) {
+          const val = req.body[key];
+          if (val === null || val === undefined) {
+            data[key] = null;
+          } else if (key === "step4Revisions") {
+            data[key] = Array.isArray(val) ? val : [];
+          } else if (key === "step6DocumentId") {
+            data[key] = Number(val);
+          } else {
+            data[key] = new Date(val);
+          }
+        }
+      }
+
+      const prog = await storage.upsertRenewalProgress(planId, plan.clientId, data);
+      res.json(prog);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/plans/:planId/renewal-progress/step6-upload", requireAuth,
+    (req: any, _res: any, next: any) => { req.uploadSubDir = "signed-forms"; next(); },
+    upload.single("file"),
+    async (req, res) => {
+      try {
+        const planId = parseInt(req.params.planId);
+        const plan = await storage.getPlan(planId);
+        if (!plan) return res.status(404).json({ message: "Plan not found" });
+        if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+        const user = (req as any).user;
+        const doc = await storage.createDocument({
+          clientId: plan.clientId,
+          planId,
+          documentName: req.file.originalname,
+          category: "EMPLOYER_ACCEPTANCE",
+          filePath: req.file.path,
+          fileName: req.file.filename,
+          uploadedBy: user?.fullName ?? "System",
+        });
+
+        const prog = await storage.upsertRenewalProgress(planId, plan.clientId, { step6DocumentId: doc.id });
+        res.json({ document: doc, progress: prog });
+      } catch (err: any) {
+        res.status(500).json({ message: err.message });
+      }
+    }
+  );
+
+  // ─── Prospect pipeline ───────────────────────────────────────────────────────
+
+  app.get("/api/clients/:id/prospect-progress", requireAuth, async (req, res) => {
+    try {
+      const prog = await storage.getProspectProgress(parseInt(req.params.id));
+      res.json(prog ?? {});
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/clients/:id/prospect-progress", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const allowed = ["step1Date","step2Date","step3Date"];
+      const data: Record<string, any> = {};
+      for (const key of allowed) {
+        if (key in req.body) {
+          const val = req.body[key];
+          data[key] = val === null || val === undefined ? null : new Date(val);
+        }
+      }
+      const prog = await storage.upsertProspectProgress(clientId, data);
+      res.json(prog);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Stalled pipeline dashboard ──────────────────────────────────────────────
+
+  app.get("/api/dashboard/stalled", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getStalledPipelines());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }

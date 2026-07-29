@@ -392,6 +392,11 @@ export default function DashboardPage() {
     queryFn: () => fetch("/api/dashboard/issues", { credentials: "include" }).then(r => r.json()),
   });
 
+  const { data: stalledPipelines = [] } = useQuery<any[]>({
+    queryKey: ["/api/dashboard/stalled"],
+    queryFn: () => fetch("/api/dashboard/stalled", { credentials: "include" }).then(r => r.json()),
+  });
+
   const atRisk = pprSummary.filter((m: any) => parseFloat(m.ytdLossRatio ?? "0") >= 85);
 
   const hour = new Date().getHours();
@@ -661,6 +666,66 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Stalled pipeline reminders */}
+        {stalledPipelines.length > 0 && (
+          <Card className="border-0 shadow-sm mb-6" data-testid="stalled-pipelines-card">
+            <CardHeader className="pb-3 pt-5 px-5">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-semibold text-[#EF4444] flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" /> Stalled Pipelines
+                </h2>
+                <span className="text-xs text-[#94A3B8]">
+                  {stalledPipelines.length} item{stalledPipelines.length !== 1 ? "s" : ""} stuck ≥14 days
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="px-5 pb-5">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" data-testid="stalled-pipelines-table">
+                  <thead>
+                    <tr className="bg-[#EF4444]/10 text-[#EF4444]">
+                      <th className="px-3 py-2 text-left text-xs font-semibold">Client</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold">Type</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold">Stuck at Step</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold">Days Overdue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stalledPipelines.map((item: any, i: number) => (
+                      <Link key={i} href={`/clients/${item.clientId}?tab=${item.type === "prospect" ? "pipeline" : "plans"}`}>
+                        <tr
+                          className={`border-b hover:bg-[#FFF5F5] cursor-pointer transition-colors ${i % 2 === 0 ? "bg-white" : "bg-[#FFF5F5]/40"}`}
+                          data-testid={`stalled-row-${item.clientId}`}
+                        >
+                          <td className="px-3 py-2.5">
+                            <p className="font-medium text-[#2C3E50]">{item.clientName}</p>
+                            <p className="text-[10px] text-[#94A3B8]">
+                              {item.clientCode}{item.planName ? ` · ${item.planName}` : ""}
+                            </p>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                              item.type === "prospect"
+                                ? "bg-blue-100 text-blue-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}>
+                              {item.type === "prospect" ? "Prospect" : "Renewal"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-[#2C3E50]">{item.step}</td>
+                          <td className="px-3 py-2.5 text-right">
+                            <span className="text-sm font-bold text-[#EF4444]">{item.daysOverdue}d</span>
+                          </td>
+                        </tr>
+                      </Link>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Full PPR table if there's data — below 90% clients too */}
         {pprSummary.length > 0 && (

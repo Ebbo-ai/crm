@@ -3,6 +3,8 @@ import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } 
 import {
   users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
   communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory,
+  renewalProgress, prospectProgress,
+  type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
   type Plan, type InsertPlan,
@@ -106,6 +108,12 @@ export interface IStorage {
   addBrokerChange(clientId: number, newBroker: { brokerFirmName: string | null; brokerContactName: string | null; brokerPhone: string | null; brokerEmail: string | null; effectiveDate: Date }): Promise<void>;
 
   getClientsByBrokerFirm(firm: string): Promise<(Client & { plans: Plan[] })[]>;
+
+  getRenewalProgress(planId: number): Promise<RenewalProgress | null>;
+  upsertRenewalProgress(planId: number, clientId: number, data: Record<string, any>): Promise<RenewalProgress>;
+  getProspectProgress(clientId: number): Promise<any | null>;
+  upsertProspectProgress(clientId: number, data: Record<string, any>): Promise<any>;
+  getStalledPipelines(): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -775,6 +783,182 @@ export class DatabaseStorage implements IStorage {
       hasBroker: true,
       updatedAt: new Date(),
     }).where(eq(clients.id, clientId));
+  }
+
+  // ── Renewal pipeline ────────────────────────────────────────────────────────
+
+  async getRenewalProgress(planId: number): Promise<RenewalProgress | null> {
+    const [row] = await db.select().from(renewalProgress).where(eq(renewalProgress.planId, planId));
+    return row ?? null;
+  }
+
+  async upsertRenewalProgress(planId: number, clientId: number, data: Record<string, any>): Promise<RenewalProgress> {
+    const existing = await this.getRenewalProgress(planId);
+    if (existing) {
+      const [updated] = await db.update(renewalProgress)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(renewalProgress.planId, planId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(renewalProgress)
+        .values({ planId, clientId, ...data })
+        .returning();
+      return created;
+    }
+  }
+
+  // ── Prospect pipeline ───────────────────────────────────────────────────────
+
+  async getProspectProgress(clientId: number): Promise<any | null> {
+    const [row] = await db.select().from(prospectProgress).where(eq(prospectProgress.clientId, clientId));
+    return row ?? null;
+  }
+
+  async upsertProspectProgress(clientId: number, data: Record<string, any>): Promise<any> {
+    const existing = await this.getProspectProgress(clientId);
+    if (existing) {
+      const [updated] = await db.update(prospectProgress)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(prospectProgress.clientId, clientId))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(prospectProgress)
+        .values({ clientId, ...data })
+        .returning();
+      return created;
+    }
+  }
+
+  // ── Stalled pipelines dashboard ─────────────────────────────────────────────
+
+  async getStalledPipelines(): Promise<any[]> {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    function nextAnniversary(effectiveDate: Date): Date {
+      const month = effectiveDate.getMonth();
+      let candidate = new Date(todayStart.getFullYear(), month, 1);
+      if (candidate <= todayStart) candidate = new Date(todayStart.getFullYear() + 1, month, 1);
+      return candidate;
+    }
+
+    function subtractMonths(date: Date, n: number): Date {
+      const d = new Date(date);
+      d.setMonth(d.getMonth() - n);
+      return d;
+    }
+
+    function daysSince(from: Date): number {
+      return Math.floor((todayStart.getTime() - from.getTime()) / 86400000);
+    }
+
+    const result: any[] = [];
+
+    // Renewal pipeline — ACTIVE clients, non-archived plans
+    const renewalRows = await db
+      .select({ plan: plans, client: clients, prog: renewalProgress })
+      .from(clients)
+      .innerJoin(plans, and(eq(plans.clientId, clients.id), eq(plans.isArchived, false)))
+      .leftJoin(renewalProgress, eq(renewalProgress.planId, plans.id))
+      .where(eq(clients.clientStatus, "ACTIVE" as any));
+
+    for (const { plan, client, prog } of renewalRows) {
+      if (prog?.step7Date) continue;
+
+      const eff = plan.effectiveDate instanceof Date
+        ? new Date(plan.effectiveDate.getTime())
+        : new Date(String(plan.effectiveDate) + "T00:00:00");
+      eff.setHours(0, 0, 0, 0);
+
+      const monthsBefore = plan.renewalDueMonthsBefore ?? 3;
+      const dueDate = subtractMonths(nextAnniversary(eff), monthsBefore);
+
+      const stepSeq = [
+        { key: "step1Date", label: "Renewal Requested",          date: prog?.step1Date ?? null },
+        { key: "step2Date", label: "Renewal Processed",          date: prog?.step2Date ?? null },
+        { key: "step3Date", label: "Renewal Sent",               date: prog?.step3Date ?? null },
+        { key: "step5Date", label: "Renewal Accepted",           date: prog?.step5Date ?? null },
+        { key: "step6Date", label: "Signed Form Attached",       date: prog?.step6Date ?? null },
+        { key: "step7Date", label: "Form Emailed to 90 Degree",  date: prog?.step7Date ?? null },
+      ];
+
+      const currentIdx = stepSeq.findIndex(s => !s.date);
+      if (currentIdx < 0) continue;
+
+      let clockStart: Date | null = null;
+      if (currentIdx === 0) {
+        clockStart = dueDate;
+      } else {
+        const prev = stepSeq[currentIdx - 1].date;
+        clockStart = prev ? new Date(prev) : null;
+        // For step5: check if a step4 revision is more recent than step3
+        if (stepSeq[currentIdx].key === "step5Date") {
+          const revs: string[] = Array.isArray(prog?.step4Revisions) ? (prog.step4Revisions as string[]) : [];
+          if (revs.length > 0) {
+            const latestRev = new Date([...revs].sort().at(-1)!);
+            if (!clockStart || latestRev > clockStart) clockStart = latestRev;
+          }
+        }
+      }
+
+      if (!clockStart) continue;
+      const stalledDays = daysSince(clockStart) - 14;
+      if (stalledDays >= 0) {
+        result.push({
+          type: "renewal",
+          clientId: client.id,
+          clientName: client.clientName,
+          clientCode: client.clientCode,
+          planName: plan.planName,
+          step: stepSeq[currentIdx].label,
+          clockStartDate: clockStart.toISOString().split("T")[0],
+          daysOverdue: stalledDays,
+        });
+      }
+    }
+
+    // Prospect pipeline — PROSPECT clients
+    const prospectRows = await db
+      .select({ client: clients, prog: prospectProgress })
+      .from(clients)
+      .leftJoin(prospectProgress, eq(prospectProgress.clientId, clients.id))
+      .where(eq(clients.clientStatus, "PROSPECT" as any));
+
+    for (const { client, prog } of prospectRows) {
+      if (!prog?.step1Date) continue;
+      if (prog.step3Date) continue;
+
+      const stepSeq = [
+        { label: "New Proposal Requested", date: prog.step1Date },
+        { label: "Proposal Received",      date: prog.step2Date ?? null },
+        { label: "Proposal Sent",          date: prog.step3Date ?? null },
+      ];
+
+      const currentIdx = stepSeq.findIndex(s => !s.date);
+      if (currentIdx <= 0) continue;
+
+      const prevDate = stepSeq[currentIdx - 1].date;
+      if (!prevDate) continue;
+      const clockStart = new Date(prevDate);
+
+      const stalledDays = daysSince(clockStart) - 14;
+      if (stalledDays >= 0) {
+        result.push({
+          type: "prospect",
+          clientId: client.id,
+          clientName: client.clientName,
+          clientCode: client.clientCode,
+          planName: null,
+          step: stepSeq[currentIdx].label,
+          clockStartDate: clockStart.toISOString().split("T")[0],
+          daysOverdue: stalledDays,
+        });
+      }
+    }
+
+    return result.sort((a, b) => b.daysOverdue - a.daysOverdue);
   }
 }
 

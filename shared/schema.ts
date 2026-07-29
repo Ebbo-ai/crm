@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -290,3 +290,33 @@ export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSche
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;
 export type InsertBrokerHistory = z.infer<typeof insertBrokerHistorySchema>;
+
+// ── Renewal pipeline progress (one record per plan) ──────────────────────────
+export const renewalProgress = pgTable("renewal_progress", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().unique(),
+  clientId: integer("client_id").notNull(),
+  step1Date: timestamp("step1_date"),                                   // Renewal Requested
+  step2Date: timestamp("step2_date"),                                   // Renewal Processed
+  step3Date: timestamp("step3_date"),                                   // Renewal Sent
+  step4Revisions: jsonb("step4_revisions").$type<string[]>().default([]), // Renewal Revised (optional, multiple)
+  step5Date: timestamp("step5_date"),                                   // Renewal Accepted
+  step6Date: timestamp("step6_date"),                                   // Signed Form Attached
+  step6DocumentId: integer("step6_document_id"),                        // FK → documents (optional)
+  step7Date: timestamp("step7_date"),                                   // Form Emailed to 90 Degree
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type RenewalProgress = typeof renewalProgress.$inferSelect;
+
+// ── Prospect pipeline progress (one record per client) ───────────────────────
+export const prospectProgress = pgTable("prospect_progress", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().unique(),
+  step1Date: timestamp("step1_date"),   // New Proposal Requested
+  step2Date: timestamp("step2_date"),   // Proposal Received
+  step3Date: timestamp("step3_date"),   // Proposal Sent
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type ProspectProgress = typeof prospectProgress.$inferSelect;

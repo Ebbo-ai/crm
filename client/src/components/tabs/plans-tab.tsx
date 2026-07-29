@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { PLAN_BASIS_LABELS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
@@ -155,6 +155,224 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
           client={client}
           existingRates={plans.find((p: any) => p.id === showRateForm)?.rateCards || []}
         />
+      )}
+    </div>
+  );
+}
+
+// ---------- renewal pipeline ----------
+const RENEWAL_STEP_DEFS = [
+  { key: "step1Date", label: "Renewal Requested",           desc: "Request submitted to 90 Degree Benefits" },
+  { key: "step2Date", label: "Renewal Processed",           desc: "90 Degree has processed the renewal" },
+  { key: "step3Date", label: "Renewal Sent",                desc: "Renewal proposal sent to recipient" },
+  // step4 (optional, multiple revisions) is rendered inline after step3
+  { key: "step5Date", label: "Renewal Accepted",            desc: "Client or broker has accepted the terms" },
+  { key: "step6Date", label: "Signed Form Attached",        desc: "Upload the signed renewal form", hasUpload: true },
+  { key: "step7Date", label: "Form Emailed to 90 Degree",  desc: "Final step — signed form sent to 90 Degree" },
+] as const;
+
+function RenewalPipeline({ planId, onStep7Change }: {
+  planId: number;
+  onStep7Change: (done: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const today = format(new Date(), "yyyy-MM-dd");
+  const [markingKey, setMarkingKey] = useState<string | null>(null);
+  const [markDate, setMarkDate] = useState(today);
+  const [addingRevision, setAddingRevision] = useState(false);
+  const [revisionDate, setRevisionDate] = useState(today);
+
+  const { data: prog = {} as any } = useQuery<any>({
+    queryKey: ["/api/plans", String(planId), "renewal-progress"],
+    queryFn: () =>
+      fetch(`/api/plans/${planId}/renewal-progress`, { credentials: "include" }).then(r => r.json()),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("PATCH", `/api/plans/${planId}/renewal-progress`, data);
+      return res.json();
+    },
+    onSuccess: (_: any, vars: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/plans", String(planId), "renewal-progress"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stalled"] });
+      if ("step7Date" in vars) onStep7Change(!!vars.step7Date);
+      setMarkingKey(null);
+      setAddingRevision(false);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const step6UploadMutation = useMutation({
+    mutationFn: async (fd: FormData) => {
+      const res = await fetch(`/api/plans/${planId}/renewal-progress/step6-upload`, {
+        method: "POST", credentials: "include", body: fd,
+      });
+      if (!res.ok) throw new Error((await res.json()).message ?? "Upload failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/plans", String(planId), "renewal-progress"] });
+      toast({ title: "Signed form uploaded" });
+    },
+    onError: (err: any) => toast({ title: "Upload failed", description: err.message, variant: "destructive" }),
+  });
+
+  const revisions: string[] = Array.isArray(prog?.step4Revisions) ? prog.step4Revisions : [];
+  const currentIdx = RENEWAL_STEP_DEFS.findIndex(s => !prog?.[s.key]);
+  const isComplete = !!prog?.step7Date;
+  const markingStep = markingKey ? RENEWAL_STEP_DEFS.find(s => s.key === markingKey) ?? null : null;
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    step6UploadMutation.mutate(fd);
+    e.target.value = "";
+  }
+
+  return (
+    <div>
+      {isComplete && (
+        <div className="mb-3 px-3 py-2 bg-[#22C55E]/10 rounded text-xs text-[#22C55E] font-semibold flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Renewal complete — all steps done.
+        </div>
+      )}
+
+      <div>
+        {RENEWAL_STEP_DEFS.map((step, idx) => {
+          const isDone = !!prog?.[step.key];
+          const isActive = idx === currentIdx;
+          const isFuture = !isDone && !isActive;
+          const stepDate = isDone ? new Date(prog[step.key]) : null;
+
+          return (
+            <div key={step.key}>
+              <div className={`flex items-start gap-2.5 py-2 ${isFuture ? "opacity-40" : ""}`}>
+                <div className="flex-shrink-0 mt-0.5">
+                  {isDone
+                    ? <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
+                    : isActive
+                      ? <div className="w-4 h-4 rounded-full border-2 border-[#2E86C1] bg-white" />
+                      : <div className="w-4 h-4 rounded-full border-2 border-[#CBD5E1] bg-white" />}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between flex-wrap gap-1.5">
+                    <div>
+                      <span className={`text-xs font-medium ${isDone ? "text-[#22C55E]" : isActive ? "text-[#1A5276]" : "text-[#94A3B8]"}`}>
+                        {step.label}
+                      </span>
+                      {!isDone && <p className="text-[10px] text-[#94A3B8] mt-0.5">{step.desc}</p>}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {isDone && (
+                        <>
+                          <span className="text-[11px] text-[#94A3B8]">{format(stepDate!, "MMM d, yyyy")}</span>
+                          {"hasUpload" in step && step.hasUpload && (
+                            <>
+                              <input ref={fileRef} type="file" className="hidden" accept=".pdf,.doc,.docx,.png,.jpg" onChange={handleFileChange} />
+                              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] text-[#2E86C1]" onClick={() => fileRef.current?.click()}>
+                                {prog?.step6DocumentId ? "Re-upload" : "Upload"}
+                              </Button>
+                            </>
+                          )}
+                          {!isComplete && (
+                            <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] text-[#94A3B8] hover:text-[#EF4444]"
+                              onClick={() => updateMutation.mutate({ [step.key]: null, ...(step.key === "step3Date" && revisions.length > 0 ? { step4Revisions: [] } : {}) })}>
+                              Undo
+                            </Button>
+                          )}
+                        </>
+                      )}
+                      {isActive && (
+                        <Button size="sm" className="h-6 px-2.5 text-[11px] bg-[#2E86C1] text-white hover:bg-[#1A5276]"
+                          onClick={() => { setMarkingKey(step.key); setMarkDate(today); }}>
+                          Mark Done
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 4 revisions — shown after step3 (idx 2) */}
+              {idx === 2 && (
+                <div className={`ml-6 mb-1 ${!prog?.step3Date ? "opacity-30 pointer-events-none" : ""}`}>
+                  <div className="border-l-2 border-dashed border-[#CBD5E1] pl-3 pb-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wide">Revisions (optional)</p>
+                      {prog?.step3Date && !isComplete && (
+                        <Button size="sm" variant="ghost" className="h-4 px-1.5 text-[10px] text-[#2E86C1]"
+                          onClick={() => { setAddingRevision(true); setRevisionDate(today); }}>
+                          + Add
+                        </Button>
+                      )}
+                    </div>
+                    {revisions.length === 0 && <p className="text-[10px] text-[#94A3B8] italic">None</p>}
+                    {revisions.map((rev: string, i: number) => (
+                      <div key={i} className="flex items-center gap-1.5 text-[11px] py-0.5">
+                        <RefreshCw className="w-3 h-3 text-[#F5A623]" />
+                        <span className="text-[#2C3E50]">Revised {format(new Date(rev), "MMM d, yyyy")}</span>
+                        {!isComplete && (
+                          <button className="text-[10px] text-[#EF4444] hover:underline ml-0.5"
+                            onClick={() => updateMutation.mutate({ step4Revisions: revisions.filter((_: any, j: number) => j !== i) })}>
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {addingRevision && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <input type="date" value={revisionDate} onChange={e => setRevisionDate(e.target.value)}
+                          className="text-[11px] border rounded px-1.5 py-0.5 h-6 bg-white" />
+                        <Button size="sm" className="h-6 px-2 text-[10px] bg-[#2E86C1] text-white"
+                          onClick={() => updateMutation.mutate({ step4Revisions: [...revisions, revisionDate || today] })}>
+                          Save
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"
+                          onClick={() => setAddingRevision(false)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Mark-step dialog */}
+      {markingStep && (
+        <Dialog open={true} onOpenChange={() => setMarkingKey(null)}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Mark: {markingStep.label}</DialogTitle>
+            </DialogHeader>
+            <div className="py-2">
+              <Label className="text-xs">Date completed</Label>
+              <Input type="date" value={markDate} onChange={e => setMarkDate(e.target.value)} className="mt-1 h-8 text-sm" />
+              {"hasUpload" in markingStep && markingStep.hasUpload && (
+                <p className="text-[11px] text-[#94A3B8] mt-2">
+                  You can upload the signed form after marking this step done.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setMarkingKey(null)}>Cancel</Button>
+              <Button size="sm" className="bg-[#2E86C1] text-white"
+                onClick={() => updateMutation.mutate({ [markingStep.key]: markDate || today })}
+                disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? "Saving…" : "Mark Done"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
@@ -338,55 +556,32 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
             </div>
           )}
 
-          {/* renewal tracking section */}
+          {/* renewal tracking section — 7-step pipeline */}
           {!archived && (
             <div className="mt-4 pt-4 border-t">
-              <h4 className="text-sm font-semibold text-[#1A5276] mb-3 flex items-center gap-2">
-                <Clock className="w-4 h-4" /> Renewal Tracking
-              </h4>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div>
-                  <p className="text-xs text-[#94A3B8]">Next Renewal Date</p>
-                  <p className="text-sm font-semibold text-[#2C3E50]">{format(nextRenewal, "MMM d, yyyy")}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-[#94A3B8]">Renewal Proposal Due</p>
-                  <p className={`text-sm font-semibold ${isDueSoon && !plan.isRenewalComplete ? "text-[#F5A623]" : "text-[#2C3E50]"}`}>
-                    {format(renewalDueDate, "MMM d, yyyy")}
-                    <span className="text-[10px] text-[#94A3B8] ml-1">({monthsBefore} mo. before)</span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-[#94A3B8]">Recipient</p>
-                  <p className="text-sm font-semibold text-[#2C3E50] flex items-center gap-1">
-                    <Users className="w-3 h-3 text-[#2E86C1]" />
-                    {RECIPIENT_LABELS[plan.renewalRecipient ?? "CLIENT"]}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-[#94A3B8]">Status</p>
-                  {plan.isRenewalComplete ? (
-                    <p className="text-sm font-semibold text-[#22C55E] flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Complete
-                    </p>
-                  ) : (
-                    <p className="text-sm font-semibold text-[#94A3B8] flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> Pending
-                    </p>
-                  )}
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold text-[#1A5276] flex items-center gap-2">
+                  <Clock className="w-4 h-4" /> Renewal Tracking
+                </h4>
+                <div className="flex items-center gap-3 text-xs text-[#94A3B8]">
+                  <span>Next renewal: <span className="font-medium text-[#2C3E50]">{format(nextRenewal, "MMM d, yyyy")}</span></span>
+                  <span>Proposal due: <span className={`font-medium ${isDueSoon && !plan.isRenewalComplete ? "text-[#F5A623]" : "text-[#2C3E50]"}`}>{format(renewalDueDate, "MMM d, yyyy")}</span></span>
                 </div>
               </div>
 
-              {plan.isRenewalComplete && plan.renewalCompletedDate && (
-                <div className="mb-3 text-xs text-[#94A3B8] bg-[#F0F4F8] rounded px-3 py-2">
-                  Marked complete {format(parseLocalDate(plan.renewalCompletedDate), "MMM d, yyyy")}
-                  {plan.renewalCompletedBy ? ` by ${plan.renewalCompletedBy}` : ""}
-                </div>
-              )}
+              <RenewalPipeline
+                planId={plan.id}
+                onStep7Change={(done) =>
+                  renewalMutation.mutate({
+                    isRenewalComplete: done,
+                    renewalCompletedDate: done ? new Date().toISOString().split("T")[0] : null,
+                    renewalCompletedBy: done ? undefined : null,
+                  })
+                }
+              />
 
               {/* renewal proposal documents */}
-              <div className="mb-3">
+              <div className="mt-3 pt-3 border-t">
                 <button
                   className="flex items-center gap-1 text-xs font-medium text-[#2E86C1] hover:text-[#1A5276] mb-2"
                   onClick={() => setShowRenewalDocs(!showRenewalDocs)}
@@ -432,10 +627,6 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                     ))}
                   </div>
                 )}
-              </div>
-
-              {/* action buttons */}
-              <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm" variant="outline"
                   className="gap-1 text-[#2E86C1] border-[#2E86C1]"
@@ -444,25 +635,6 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 >
                   <Upload className="w-3 h-3" /> Upload Proposal
                 </Button>
-                {!plan.isRenewalComplete ? (
-                  <Button
-                    size="sm" variant="outline"
-                    className="gap-1 text-[#22C55E] border-[#22C55E]"
-                    onClick={() => setShowCompleteDialog(true)}
-                    data-testid={`button-mark-complete-${plan.id}`}
-                  >
-                    <CheckCircle2 className="w-3 h-3" /> Mark Complete
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm" variant="ghost"
-                    className="gap-1 text-[#94A3B8]"
-                    onClick={() => renewalMutation.mutate({ isRenewalComplete: false, renewalCompletedDate: null, renewalCompletedBy: null })}
-                    data-testid={`button-unmark-complete-${plan.id}`}
-                  >
-                    Undo Complete
-                  </Button>
-                )}
               </div>
             </div>
           )}

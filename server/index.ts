@@ -110,6 +110,38 @@ app.use((req, res, next) => {
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'plans' AND column_name = 'ortho_lifetime_max') THEN
           ALTER TABLE plans ADD COLUMN ortho_lifetime_max DECIMAL(10,2);
         END IF;
+
+        -- renewal_progress table
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'renewal_progress' AND table_schema = 'public') THEN
+          CREATE TABLE renewal_progress (
+            id SERIAL PRIMARY KEY,
+            plan_id INTEGER NOT NULL UNIQUE,
+            client_id INTEGER NOT NULL,
+            step1_date TIMESTAMP,
+            step2_date TIMESTAMP,
+            step3_date TIMESTAMP,
+            step4_revisions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            step5_date TIMESTAMP,
+            step6_date TIMESTAMP,
+            step6_document_id INTEGER,
+            step7_date TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+          );
+        END IF;
+
+        -- prospect_progress table
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'prospect_progress' AND table_schema = 'public') THEN
+          CREATE TABLE prospect_progress (
+            id SERIAL PRIMARY KEY,
+            client_id INTEGER NOT NULL UNIQUE,
+            step1_date TIMESTAMP,
+            step2_date TIMESTAMP,
+            step3_date TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+          );
+        END IF;
       END $$;
 
       -- Back-fill clientStatus for existing terminated clients

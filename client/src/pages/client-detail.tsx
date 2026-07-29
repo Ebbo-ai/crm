@@ -18,6 +18,7 @@ import DocumentsTab from "@/components/tabs/documents-tab";
 import IssuesTab from "@/components/tabs/issues-tab";
 import PprTab from "@/components/tabs/ppr-tab";
 import CommunicationsTab from "@/components/tabs/communications-tab";
+import PipelineTab from "@/components/tabs/pipeline-tab";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -107,16 +108,6 @@ export default function ClientDetailPage() {
           </span>
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={() => generateDraftMutation.mutate()}
-            disabled={generateDraftMutation.isPending}
-            className="bg-[#0c6b59] hover:bg-[#08382f] text-white gap-2"
-            data-testid="button-generate-renewal-draft"
-          >
-            {generateDraftMutation.isPending
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
-              : <><FileText className="w-4 h-4" /> Generate Renewal Draft</>}
-          </Button>
           <Link href={`/clients/${clientId}/edit`}>
             <Button className="bg-[#1A5276] text-white gap-2" data-testid="button-edit-client">
               <Edit className="w-4 h-4" /> Edit Client
@@ -136,6 +127,7 @@ export default function ClientDetailPage() {
           <TabsTrigger value="ppr" data-testid="tab-ppr" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">PPR</TabsTrigger>
           <TabsTrigger value="communications" data-testid="tab-communications" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">Communications</TabsTrigger>
           <TabsTrigger value="banking" data-testid="tab-banking" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">Banking</TabsTrigger>
+          <TabsTrigger value="pipeline" data-testid="tab-pipeline" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">Pipeline</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
@@ -238,6 +230,10 @@ export default function ClientDetailPage() {
 
         <TabsContent value="communications">
           <CommunicationsTab clientId={clientId} />
+        </TabsContent>
+
+        <TabsContent value="pipeline">
+          <PipelineTab clientId={clientId} clientStatus={client.clientStatus ?? (client.isActive ? "ACTIVE" : "TERMINATED")} />
         </TabsContent>
 
         <TabsContent value="banking">
