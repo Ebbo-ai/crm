@@ -27,7 +27,7 @@ function LossRatioBadge({ value }: { value: string | null }) {
   );
 }
 
-function SurplusBadge({ value }: { value: string | null }) {
+function PlanPositionBadge({ value }: { value: string | null }) {
   if (value == null) return <span className="text-[#94A3B8]">—</span>;
   const amt = parseFloat(value);
   const color = amt >= 0 ? "text-[#22C55E]" : "text-[#EF4444]";
@@ -246,9 +246,9 @@ export default function PprTab({ clientId }: { clientId: number }) {
             </Card>
             <Card className="border-0 shadow-sm" data-testid="metric-surplus">
               <CardContent className="p-4">
-                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Surplus / Deficit</p>
-                <div className="text-xl"><SurplusBadge value={latest.ytdSurplusDeficit} /></div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">Cumulative to date</p>
+                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Plan Position</p>
+                <div className="text-xl"><PlanPositionBadge value={latest.ytdSurplusDeficit} /></div>
+                <p className="text-[10px] text-[#94A3B8] mt-1">As billed, cumulative</p>
               </CardContent>
             </Card>
           </div>
@@ -267,7 +267,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
                   <th className="px-4 py-2.5 text-left text-xs font-medium hidden sm:table-cell">Plan</th>
                   <th className="px-4 py-2.5 text-right text-xs font-medium">Monthly LR</th>
                   <th className="px-4 py-2.5 text-right text-xs font-medium">YTD LR</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-medium">Surplus / Deficit</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium">Plan Position (as billed)</th>
                 </tr>
               </thead>
               <tbody>
@@ -279,7 +279,7 @@ export default function PprTab({ clientId }: { clientId: number }) {
                     <td className="px-4 py-2.5 text-xs text-[#94A3B8] hidden sm:table-cell">{m.planName ?? "—"}</td>
                     <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.monthlyLossRatio} /></td>
                     <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.ytdLossRatio} /></td>
-                    <td className="px-4 py-2.5 text-right"><SurplusBadge value={m.ytdSurplusDeficit} /></td>
+                    <td className="px-4 py-2.5 text-right"><PlanPositionBadge value={m.ytdSurplusDeficit} /></td>
                   </tr>
                 ))}
               </tbody>

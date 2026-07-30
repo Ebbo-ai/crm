@@ -74,10 +74,13 @@ export const clients = pgTable("clients", {
   brokerEmail: text("broker_email"),
   bankingType: bankingTypeEnum("banking_type").notNull(),
   fundingType: fundingTypeEnum("funding_type").notNull(),
-  // Whether the employer funds claims only, or claims + admin fee
-  fundingBasis: fundingBasisEnum("funding_basis"),
+  // How the employer funds the account. Default: CLAIMS_PLUS_ADMIN (administrator draws all fees
+  // from the plan account, so admin is always funded in together with claims).
+  fundingBasis: fundingBasisEnum("funding_basis").notNull().default("CLAIMS_PLUS_ADMIN"),
   // Set to true when a month closes with enrollment but zero paid claims and no reason code on file
   zeroPayFlag: boolean("zero_paid_flag").notNull().default(false),
+  // Set to true when actual account_balance is on file and is materially below the billed position
+  underfundingFlag: boolean("underfunding_flag").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -381,6 +384,11 @@ export const planPerformanceFacts = pgTable("plan_performance_facts", {
   // For held months: the later month in which those claims were eventually released
   releaseMonth: integer("release_month"),
   releaseYear: integer("release_year"),
+
+  // Optional actual account balance at month end (supplied by the administrator for some groups).
+  // When present, the report shows billed plan position alongside the actual balance and the gap.
+  // When absent, the comparison is simply omitted — many groups will not have this figure.
+  accountBalance: decimal("account_balance", { precision: 14, scale: 2 }),
 
   // Provenance
   receivedDate: timestamp("received_date"),

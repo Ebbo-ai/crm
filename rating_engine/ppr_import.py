@@ -54,6 +54,9 @@ COL_MAP = {
     "reason_note":        "reason_note",
     "release_month":      "release_month",
     "release_year":       "release_year",
+    # Optional: actual account balance at month end, supplied for some groups.
+    # When present the report shows billed plan position alongside the real balance.
+    "account_balance":    "account_balance",
 }
 
 VALID_REASON_CODES = {
@@ -238,6 +241,8 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
             })
             continue
 
+        account_balance = _float_or_none(row.get("account_balance"))
+
         row_data = {
             "client_id":        client["id"],
             "plan_id":          plan["id"],
@@ -255,6 +260,9 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
             "reason_note":      reason_note,
             "release_month":    rel_month,
             "release_year":     rel_year,
+            # Optional actual account balance at month end (some administrator workbooks
+            # carry it; when present the report shows billed position vs real balance)
+            "account_balance":  account_balance,
             "received_date":    date.today().isoformat(),
             "is_restatement":   is_restatement,
             "prior_paid_claims":        _float_or_none(prior.get("paid_claims")) if prior else None,

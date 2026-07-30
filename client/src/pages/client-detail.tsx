@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -106,6 +106,24 @@ export default function ClientDetailPage() {
                 ? "Prospect"
                 : "Terminated"}
           </span>
+          {client.zeroPayFlag && (
+            <span
+              className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#F97316]/10 text-[#F97316] flex items-center gap-1"
+              title="One or more months have enrollment but zero paid claims with no reason code on file. Review before the next report cycle."
+              data-testid="badge-zero-pay-flag"
+            >
+              <AlertCircle className="w-3 h-3" /> Zero-Paid
+            </span>
+          )}
+          {client.underfundingFlag && (
+            <span
+              className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#EF4444]/10 text-[#EF4444] flex items-center gap-1"
+              title="The plan's actual account balance has fallen below the billed position. Money was invoiced but not deposited — review funding with the plan sponsor."
+              data-testid="badge-underfunding-flag"
+            >
+              <AlertCircle className="w-3 h-3" /> Underfunded
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           <Link href={`/clients/${clientId}/edit`}>

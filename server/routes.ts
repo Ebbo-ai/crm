@@ -1764,6 +1764,8 @@ export async function registerRoutes(
           reasonNote: row.reason_note ?? null,
           releaseMonth: row.release_month ?? null,
           releaseYear: row.release_year ?? null,
+          // Optional actual account balance at month end — null when not in the source file
+          accountBalance: row.account_balance != null ? String(row.account_balance) : null,
           receivedDate: row.received_date ? new Date(row.received_date) : new Date(),
           loadedBy: uploadedBy,
           supersededAt: null,
@@ -1774,6 +1776,15 @@ export async function registerRoutes(
                             (row.ee_child_count || 0) + (row.family_count || 0);
         if (totalEnroll > 0 && !row.paid_claims && !row.reason_code) {
           await storage.updateClient(row.client_id, { zeroPayFlag: true });
+        }
+
+        // Set underfunding_flag when actual account_balance is on file and is negative.
+        // A negative account balance means more was drawn from the account than the
+        // employer deposited — a clear collections signal parallel to zero_paid_flag.
+        // The report generator shows the full billed-position vs actual-balance
+        // comparison; the flag here surfaces the alert on the client record quickly.
+        if (row.account_balance != null && Number(row.account_balance) < 0) {
+          await storage.updateClient(row.client_id, { underfundingFlag: true });
         }
       }
 

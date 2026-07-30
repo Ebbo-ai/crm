@@ -135,7 +135,7 @@ function BatchImportDialog({ open, onClose }: { open: boolean; onClose: () => vo
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-sm text-[#94A3B8]">Upload the monthly ZIP file containing all client PPR Excel files. The app will automatically extract loss ratios and surplus/deficit figures.</p>
+            <p className="text-sm text-[#94A3B8]">Upload the monthly ZIP file containing all client PPR Excel files. The app will automatically extract loss ratios and plan position figures.</p>
             <div
               className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${dragOver ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
               onClick={() => fileRef.current?.click()}
@@ -749,7 +749,7 @@ export default function DashboardPage() {
                       <th className="px-3 py-2.5 text-left text-xs font-medium hidden sm:table-cell">Plan</th>
                       <th className="px-3 py-2.5 text-right text-xs font-medium">Monthly LR</th>
                       <th className="px-3 py-2.5 text-right text-xs font-medium">YTD LR</th>
-                      <th className="px-3 py-2.5 text-right text-xs font-medium">Surplus / Deficit</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-medium">Plan Position (as billed)</th>
                     </tr>
                   </thead>
                   <tbody>

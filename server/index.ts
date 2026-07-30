@@ -156,7 +156,9 @@ app.use((req, res, next) => {
           );
         END IF;
 
-        -- funding_basis enum (affects how account balance is calculated)
+        -- funding_basis enum: CLAIMS_PLUS_ADMIN is the only basis used in practice
+        -- (the administrator draws all fees from the plan account, so admin is always
+        -- funded in together with claims — never eroding the claims budget separately)
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'funding_basis') THEN
           CREATE TYPE funding_basis AS ENUM ('CLAIMS_ONLY', 'CLAIMS_PLUS_ADMIN');
         END IF;
@@ -311,6 +313,44 @@ app.use((req, res, next) => {
         END IF;
       END $$;
     `);
+
+    // Phase 2b: account_balance on facts, underfunding_flag on clients,
+    // and set CLAIMS_PLUS_ADMIN as the default + backfill for funding_basis.
+    // These are plain ALTER TABLE statements so they run outside the DO block.
+    await pool.query(`
+      DO $$ BEGIN
+        -- account_balance: optional actual bank balance at month end, supplied by the
+        -- administrator for groups whose workbooks carry it. When present, the report
+        -- shows billed plan position alongside the real balance and the gap.
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plan_performance_facts'
+                         AND column_name = 'account_balance') THEN
+          ALTER TABLE plan_performance_facts
+            ADD COLUMN account_balance DECIMAL(14, 2);
+        END IF;
+
+        -- underfunding_flag: set when an actual account_balance is on file and the
+        -- account is materially below the billed plan position (collections signal,
+        -- parallel to zero_paid_flag)
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients'
+                         AND column_name = 'underfunding_flag') THEN
+          ALTER TABLE clients
+            ADD COLUMN underfunding_flag BOOLEAN NOT NULL DEFAULT false;
+        END IF;
+      END $$;
+
+      -- Backfill: every client on the book uses CLAIMS_PLUS_ADMIN; set it explicitly
+      -- so the column is never NULL going forward.
+      UPDATE clients
+        SET funding_basis = 'CLAIMS_PLUS_ADMIN'
+        WHERE funding_basis IS NULL;
+
+      -- Make CLAIMS_PLUS_ADMIN the default for new clients.
+      ALTER TABLE clients
+        ALTER COLUMN funding_basis SET DEFAULT 'CLAIMS_PLUS_ADMIN';
+    `);
+
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
   } catch (err: any) {
     console.error("Startup migration error:", err.message);

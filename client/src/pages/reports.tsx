@@ -160,7 +160,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
           ${metric.monthlyLossRatio ? `<div style="font-size:11px;color:#94A3B8;margin-top:4px;">Monthly: ${fmtLossRatio(metric.monthlyLossRatio)}</div>` : ""}
         </div>
         <div style="padding:20px 22px;">
-          <div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:700;">YTD Surplus / Deficit</div>
+          <div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:700;">YTD Plan Position (as billed)</div>
           ${surplusDeficit ? `<div style="font-size:22px;font-weight:800;color:${surplusDeficit.positive ? "#22C55E" : "#EF4444"};">${surplusDeficit.text}</div>` : "<div style='font-size:15px;color:#94A3B8;'>—</div>"}
         </div>
       </div>
@@ -476,7 +476,7 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
                 )}
               </div>
               <div className="p-4">
-                <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">YTD Surplus / Deficit</p>
+                <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">YTD Plan Position (as billed)</p>
                 {surplusDeficit && (
                   <p className={`text-2xl font-extrabold ${surplusDeficit.positive ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
                     {surplusDeficit.text}
