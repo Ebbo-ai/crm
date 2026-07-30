@@ -15,6 +15,21 @@ export const clientStatusEnum = pgEnum("client_status", ["PROSPECT", "ACTIVE", "
 export const orthoEligibilityEnum = pgEnum("ortho_eligibility", ["NONE", "CHILDREN", "ALL"]);
 export const orthoMaxTypeEnum = pgEnum("ortho_max_type", ["SHARED_ANNUAL", "SEPARATE_LIFETIME"]);
 
+// Reason codes for held or revised PPR months (drives client-facing report wording)
+export const pprReasonCodeEnum = pgEnum("ppr_reason_code", [
+  "CLERICAL_CORRECTION",
+  "CLAIMS_HELD_FUNDING",       // claims held because client funding was not received
+  "CLAIMS_HELD_PROCESSING",    // claims held during administrator processing
+  "ENROLLMENT_RESTATEMENT",
+  "OTHER",                     // requires a non-empty reason_note (enforced by DB CHECK)
+]);
+
+// How the employer funds the account each month
+export const fundingBasisEnum = pgEnum("funding_basis", [
+  "CLAIMS_ONLY",        // employer funds projected claims amount only
+  "CLAIMS_PLUS_ADMIN",  // employer funds projected claims plus the administrative fee
+]);
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
@@ -58,6 +73,10 @@ export const clients = pgTable("clients", {
   brokerEmail: text("broker_email"),
   bankingType: bankingTypeEnum("banking_type").notNull(),
   fundingType: fundingTypeEnum("funding_type").notNull(),
+  // Whether the employer funds claims only, or claims + admin fee
+  fundingBasis: fundingBasisEnum("funding_basis"),
+  // Set to true when a month closes with enrollment but zero paid claims and no reason code on file
+  zeroPayFlag: boolean("zero_paid_flag").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -99,6 +118,9 @@ export const rateCards = pgTable("rate_cards", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull(),
   tier: tierEnum("tier").notNull(),
+  // effectiveDate lets prior months be valued at the rates actually in force
+  // rather than being retroactively restated when a group renews
+  effectiveDate: timestamp("effective_date"),
   baseAdminFee: decimal("base_admin_fee", { precision: 10, scale: 2 }).notNull(),
   spreadAdminFee: decimal("spread_admin_fee", { precision: 10, scale: 2 }).notNull(),
   networkFee: decimal("network_fee", { precision: 10, scale: 2 }).default("0.00"),
@@ -320,3 +342,56 @@ export const prospectProgress = pgTable("prospect_progress", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 export type ProspectProgress = typeof prospectProgress.$inferSelect;
+
+// ── Monthly plan performance facts ───────────────────────────────────────────
+// Append-only versioned table: one row per client/plan/calendar month per
+// revision.  The current (latest) version for each client/plan/month is the
+// row where superseded_at IS NULL.  When figures are revised a new row is
+// inserted and the prior row's superseded_at is stamped — never overwrite.
+//
+// DB-level constraints (enforced in migration SQL, not re-expressed here):
+//   • UNIQUE (client_id, plan_id, report_month, report_year) WHERE superseded_at IS NULL
+//   • CHECK  reason_code <> 'OTHER' OR (reason_note IS NOT NULL AND trim(reason_note) <> '')
+//   • CHECK  report_month BETWEEN 1 AND 12
+//   • CHECK  release_month BETWEEN 1 AND 12 (when not null)
+export const planPerformanceFacts = pgTable("plan_performance_facts", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  planId: integer("plan_id").notNull(),
+  reportMonth: integer("report_month").notNull(),    // 1–12
+  reportYear: integer("report_year").notNull(),
+  version: integer("version").notNull().default(1), // increments with each revision
+
+  // Enrollment by tier — mirrors the four tiers in rate_cards
+  eeCount: integer("ee_count"),
+  eeSpouseCount: integer("ee_spouse_count"),
+  eeChildCount: integer("ee_child_count"),
+  familyCount: integer("family_count"),
+
+  // Claims figures
+  submittedCharges: decimal("submitted_charges", { precision: 14, scale: 2 }),
+  paidClaims: decimal("paid_claims", { precision: 14, scale: 2 }),
+  claimCount: integer("claim_count"),
+
+  // Why a month was held or figures were changed; drives client-facing report wording
+  reasonCode: pprReasonCodeEnum("reason_code"),
+  reasonNote: text("reason_note"),  // required when reasonCode = 'OTHER'
+
+  // For held months: the later month in which those claims were eventually released
+  releaseMonth: integer("release_month"),
+  releaseYear: integer("release_year"),
+
+  // Provenance
+  receivedDate: timestamp("received_date"),
+  loadedBy: text("loaded_by").notNull(),
+
+  // Versioning: NULL = this is the current row; non-NULL = superseded on that timestamp
+  supersededAt: timestamp("superseded_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertPlanPerformanceFactsSchema = createInsertSchema(planPerformanceFacts).omit({
+  id: true, createdAt: true,
+});
+export type PlanPerformanceFacts = typeof planPerformanceFacts.$inferSelect;
+export type InsertPlanPerformanceFacts = z.infer<typeof insertPlanPerformanceFactsSchema>;
