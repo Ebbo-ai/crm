@@ -7,7 +7,7 @@ and PDF (for print/download). Holds no group data: all data arrives as a
 single JSON payload so the CRM can call this as a service.
 
 Cash model (locked 2026-07-30):
-    Net Account Position = Funded - Paid Claims - Administrative Fee
+    Plan Position (as billed) = Billed - Paid Claims - Administrative Fee
     where Funded = Projected Claims            (funding_basis="claims")
                  = Projected Claims + Admin    (funding_basis="claims_admin")
 
@@ -28,6 +28,15 @@ Usage:
 Render: WeasyPrint v69.
 
 Changelog (newest first):
+  2026-07-30  v1.3  Coverage is now a closed canonical list including combination
+                    plans (dental & vision; dental, vision & hearing) with alias
+                    normalisation, so one plan type cannot arrive spelled four ways.
+  2026-07-30  v1.2  Funding basis now defaults to claims+admin, which is how plans
+                    are actually billed. Under that basis admin is funded in and
+                    nets out, so position == projected - paid. Renamed "Net Account
+                    Position" to "Plan Position (as billed)" because it is not a bank
+                    balance: employers fund at their own discretion. Optional
+                    account_balance input shows the real gap when supplied.
   2026-07-30  v1.1  Reason codes, held/release month pairing with auto-generated
                     footnote, unexplained zero-paid alert, admin-fee footnote now
                     names program/marketing services.
@@ -35,7 +44,7 @@ Changelog (newest first):
                     outlier flagging, YTD reconciliation, plan-year awareness,
                     admin-fee footnote. Derived from the S455 Thomas template.
 """
-__version__ = "1.1"
+__version__ = "1.3"
 ENGINE = "generate_ppr.py"
 
 import json, sys, datetime as _dt
@@ -47,6 +56,46 @@ T = dict(ink="#16302b", green="#0c6b59", green_deep="#08382f", green_pale="#eaf2
          ok_bg="#e8f1ee", watch_bg="#fbf3e2", alert_bg="#f8ebeb")
 
 MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+# Canonical coverage values. Closed list, like the reason codes: a plan may bundle
+# more than one line of coverage under a single rate and a single claims stream
+# (dental & vision together is common; one group also carries hearing). Left as
+# free text, the same plan type gets spelled four different ways across the book.
+COVERAGES = ["Dental", "Vision", "Dental & Vision", "Dental, Vision & Hearing"]
+
+_COV_ALIASES = {
+    "dental": "Dental", "den": "Dental", "d": "Dental",
+    "vision": "Vision", "vis": "Vision", "v": "Vision",
+    "dental vision": "Dental & Vision", "den vis": "Dental & Vision",
+    "denvis": "Dental & Vision", "dv": "Dental & Vision",
+    "vision dental": "Dental & Vision",
+    "dental vision hearing": "Dental, Vision & Hearing",
+    "den vis hear": "Dental, Vision & Hearing",
+    "den vis hearing": "Dental, Vision & Hearing",
+    "dvh": "Dental, Vision & Hearing",
+}
+
+
+def normalize_coverage(value):
+    """Map a supplied coverage label onto the canonical list.
+
+    Returns (canonical_value, was_recognised). Unrecognised values are passed
+    through unchanged rather than guessed at, and flagged so they surface for a
+    human decision instead of silently becoming a fifth spelling.
+    """
+    if not value:
+        return "Dental", False
+    raw = str(value).strip()
+    if raw in COVERAGES:
+        return raw, True
+    key = raw.lower()
+    for ch in ("-", "_", "+", "/", ",", "&"):
+        key = key.replace(ch, " ")
+    key = " ".join(key.replace(" and ", " ").split())
+    if key in _COV_ALIASES:
+        return _COV_ALIASES[key], True
+    return raw, False
+
 
 # Fixed reason codes for a month that has been held, restated, or corrected.
 # Deliberately a closed list, not free text: it keeps footnote language consistent
@@ -103,7 +152,7 @@ def compute(plan):
     Only months carrying enrollment are 'active'.
     """
     TI = tiers_of(plan)
-    basis = plan.get("funding_basis", "claims")
+    basis = plan.get("funding_basis", "claims_admin")
     y0, m0 = (int(x) for x in plan["plan_year_start"].split("-"))
 
     rows, active = [], []
@@ -308,11 +357,11 @@ FOOT = ("Administrative Fee includes all plan overhead \u2014 third-party admini
         "compensation is included here and is not shown separately.")
 
 NOTE = ("Reflects claims paid and mailed as of month end; it does not include claims "
-        "incurred but not yet processed or paid. Net Account Position nets the "
-        "Administrative Fee against funding to show the true cash balance \u2014 a claims "
-        "surplus is not cash on hand. Ongoing adjustments (corrected or uncashed checks, "
-        "claims held pending employer funding, and enrollment corrections) will affect "
-        "actual outcomes.")
+        "incurred but not yet processed or paid. Plan Position is stated <b>as billed</b> "
+        "\u2014 it assumes each month was funded as invoiced and is not a statement of the "
+        "account's bank balance, which the plan sponsor controls and may fund at its own "
+        "discretion. Ongoing adjustments (corrected or uncashed checks, claims held pending "
+        "employer funding, and enrollment corrections) will affect actual outcomes.")
 
 CSS = """
 @page { size: letter landscape; margin: 0.45in 0.5in 0.55in 0.5in; }
@@ -329,7 +378,7 @@ body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: %(ink
 .chk { padding: 0 12px 6px; font-size: 7.5pt; color: %(muted)s; }
 .chk .bad { color: %(alert)s; font-weight: 600; }
 table { border-collapse: collapse; width: 100%%; }
-.grid th, .grid td { border: 1px solid %(rule)s; padding: 0.6px 4px; text-align: right;
+.grid th, .grid td { border: 1px solid %(rule)s; padding: 0.45px 4px; text-align: right;
                      white-space: nowrap; }
 .grid thead .grp th { background: %(green)s; color: #fff; text-align: center;
                       font-size: 7.2pt; letter-spacing: .4px; text-transform: uppercase;
@@ -358,7 +407,7 @@ table { border-collapse: collapse; width: 100%%; }
            padding: 3px 8px; letter-spacing: .3px; text-transform: uppercase; font-weight: 600; }
 .card .bd { padding: 0; }
 .kv { width: 100%%; font-size: 7.5pt; }
-.kv td { padding: 0.8px 7px; border-bottom: 1px solid #eceae2; }
+.kv td { padding: 0.6px 7px; border-bottom: 1px solid #eceae2; }
 .kv td.k { color: %(ink)s; }
 .kv td.v, .kv td.p, .kv td.d { text-align: right; white-space: nowrap; }
 .kv td.p { color: %(muted)s; }
@@ -392,12 +441,12 @@ def _fl_cls(f):
 
 def render_html(p, pre=None):
     rows, t = pre if pre is not None else compute(p)
-    basis = p.get("funding_basis","claims")
+    basis = p.get("funding_basis","claims_admin")
     basis_lbl = "Claims + Admin" if basis == "claims_admin" else "Claims only"
 
     # ---- header
     meta = [("Group ID", p.get("group_id","")), ("Plan", p.get("plan_name","")),
-            ("Coverage", p.get("coverage","Dental")), ("Plan Year", p.get("plan_year_label","")),
+            ("Coverage", normalize_coverage(p.get("coverage"))[0]), ("Plan Year", p.get("plan_year_label","")),
             ("Funding basis", basis_lbl), ("Data as of", p.get("data_as_of",""))]
     meta_h = "".join(f"<span><b>{_esc(k)}:</b> {_esc(v)}</span>" for k,v in meta if v)
 
@@ -415,8 +464,8 @@ def render_html(p, pre=None):
     grp_h = "".join(f'<th colspan="{c}">{n}</th>' for n,c in grp)
     lbls = ["Month"] + [t["label"] for t in TI] + ["Total","Admin<br/>Expense&nbsp;*",
             "Projected<br/>Claims","Submitted<br/>Charges","Paid<br/>Claims","# of<br/>Claims",
-            "Total Outlay<br/>(Claims+Admin)","Net Account<br/>Position",
-            "Cumulative<br/>Net Position","Loss Ratio<br/>Claims",
+            "Total Outlay<br/>(Claims+Admin)","Plan Position<br/>(as billed)",
+            "Cumulative<br/>Position","Loss Ratio<br/>Claims",
             "Loss Ratio<br/>Claims+Admin","Flag"]
     lbl_h = "".join(f"<th>{l}</th>" for l in lbls)
 
@@ -475,19 +524,28 @@ def render_html(p, pre=None):
         kv("Claims per Employee (annualized)", t["cpe"], pr.get("cpe"), _f2),
         kv("Paid Claims PEPM", t["pepm"], pr.get("pepm"), _money2),
         kv("Administrative Fee PEPM *", t["admin_pepm"], pr.get("admin_pepm"), _money2),
-        f'<tr class="tot"><td class="k">Net Account Position (cash)</td>'
+        f'<tr class="tot"><td class="k">Plan Position &mdash; YTD (as billed)</td>'
         f'<td class="v{" neg" if t["net"]<0 else ""}">{_money(t["net"])}</td>'
         f'<td class="p">&mdash;</td><td class="d">&mdash;</td></tr>',
-        kv("Projected Year-End Net Position", t["net_annual"], pr.get("net_position"), _money),
+        kv("Projected Year-End Position", t["net_annual"], pr.get("net_position"), _money),
     ]
 
     # ---- reconciliation
-    rec = [f'<tr><td class="k">Funded into account ({basis_lbl.lower()})</td>'
+    rec = [f'<tr><td class="k">Billed to the plan ({basis_lbl.lower()})</td>'
            f'<td class="v">{_money(t["funded"])}</td></tr>',
            f'<tr><td class="k">Less: Paid Claims</td><td class="v neg">{_money(-t["paid"])}</td></tr>',
            f'<tr><td class="k">Less: Administrative Fee *</td><td class="v neg">{_money(-t["admin"])}</td></tr>',
-           f'<tr class="tot"><td class="k">Net Account Position (cash)</td>'
+           f'<tr class="tot"><td class="k">Plan Position &mdash; as billed</td>'
            f'<td class="v{" neg" if t["net"]<0 else ""}">{_money(t["net"])}</td></tr>']
+    _bal = p.get("account_balance")
+    if _bal is not None:
+        _gapb = _bal - t["net"]
+        rec += [f'<tr class="hd"><td>Against the actual account</td><td class="v"></td></tr>',
+                f'<tr><td class="k">Account balance reported</td>'
+                f'<td class="v">{_money(_bal)}</td></tr>',
+                f'<tr><td class="k">Difference &mdash; billed but not deposited, '
+                f'or retained by the employer</td>'
+                f'<td class="v{" neg" if _gapb<0 else ""}">{_money(_gapb)}</td></tr>']
 
     gap = ""
     if t["lr_gap"] is not None and abs(t["lr_gap"]) >= 0.05:
@@ -515,6 +573,16 @@ def render_html(p, pre=None):
     else:
         notes_h = ""
 
+    if p.get("account_balance") is not None:
+        recon_note = ("Shows what was billed to the plan against what the account "
+                      "actually holds. Any difference is funding billed but not yet "
+                      "deposited, or funds the employer has chosen to retain.")
+    else:
+        recon_note = ("This is the plan's position <b>as billed</b>, not a bank balance. "
+                      "It assumes every month was funded as invoiced. Employers fund at "
+                      "their own discretion, so the account may hold more or less than "
+                      "this figure.")
+
     _t = _dt.date.today()
     stamp = (f'{ENGINE} v{__version__} &middot; rendered {MONTH_ABBR[_t.month-1]} {_t.day}, {_t.year}'
              f' &middot; data as of {_esc(p.get("data_as_of",""))}'
@@ -532,8 +600,7 @@ def render_html(p, pre=None):
     <table class="kv">{"".join(ytd)}</table></div></td>
   <td style="width:28%"><div class="card"><h3>Account Reconciliation &mdash; YTD</h3>
     <table class="kv">{"".join(rec)}</table>
-    <div class="read">A claims surplus is not cash on hand. This walks funding down to
-    the actual account balance after the Administrative Fee.</div></div></td>
+    <div class="read">{recon_note}</div></div></td>
   <td style="width:32%">{design_card}</td>
 </tr></tbody></table>
 {notes_h}

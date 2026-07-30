@@ -45,6 +45,13 @@ def _i(v):
     return int(round(_f(v)))
 
 
+try:
+    from generate_ppr import normalize_coverage
+except Exception:                                    # standalone fallback
+    def normalize_coverage(v):
+        return (str(v).strip() or "Dental"), bool(str(v).strip())
+
+
 # ------------------------------------------------------------------ read feed
 def read_feed(path):
     """Read the combined monthly feed. Accepts .csv or .xlsx."""
@@ -71,7 +78,8 @@ def read_feed(path):
         if not (gid and pid and mon): continue
         rec = dict(group_id=gid, plan_id=pid,
                    plan_name=str(r.get("plan_name") or "").strip(),
-                   coverage=str(r.get("coverage") or "Dental").strip(),
+                   coverage=normalize_coverage(r.get("coverage"))[0],
+                   coverage_ok=normalize_coverage(r.get("coverage"))[1],
                    month=mon,
                    submitted=_f(r.get("submitted_charges")),
                    paid=_f(r.get("paid_claims")),
@@ -102,6 +110,10 @@ def validate(rec, rates):
                  f'{proj:,.2f} - confirm catch-up batch vs keying error')
     if not sum(rec["enr"].values()):
         p.append(f'{rec["month"]}: no enrollment reported')
+    if not rec.get("coverage_ok"):
+        p.append(f'{rec["month"]}: coverage "{rec["coverage"]}" is not a recognised '
+                 f'value - expected one of Dental / Vision / Dental & Vision / '
+                 f'Dental, Vision & Hearing')
     unknown = set(rec["enr"]) - {t["key"] for t in rt["tiers"]}
     if unknown:
         p.append(f'{rec["month"]}: enrollment in tier(s) {sorted(unknown)} not in the '
