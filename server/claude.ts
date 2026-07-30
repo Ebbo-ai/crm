@@ -71,8 +71,15 @@ Return ONLY the JSON array, no other text.`;
 
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "[]";
     const parsed = JSON.parse(text.match(/\[.*\]/s)?.[0] ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    const result = Array.isArray(parsed) ? parsed : [];
+    if (result.length === 0) {
+      console.log("[claude] matchEmailToClients: no clients matched");
+    } else {
+      console.log(`[claude] matchEmailToClients: matched ${result.length} client(s) —`, result.map((r: MatchResult) => `#${r.clientId} (${r.confidence})`).join(", "));
+    }
+    return result;
+  } catch (err: any) {
+    console.error("[claude] matchEmailToClients error:", err?.message || String(err));
     return [];
   }
 }
@@ -126,7 +133,8 @@ Return ONLY the JSON object, no other text.`;
       summary: parsed.summary ?? "No summary generated.",
       actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems : [],
     };
-  } catch (err) {
+  } catch (err: any) {
+    console.error("[claude] processEmail error:", err?.message || String(err));
     return { summary: "Error processing email with AI.", actionItems: [] };
   }
 }

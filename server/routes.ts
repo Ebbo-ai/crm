@@ -1225,7 +1225,7 @@ export async function registerRoutes(
   }
 
   // ─── Mailgun inbound email webhook ─────────────────────────────────────────
-  app.post("/api/email/inbound", emailUpload.any(), (req, res) => {
+  app.post("/api/email/inbound", emailUpload.any(), async (req, res) => {
     // Verify Mailgun webhook signature if key is configured
     const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
     if (signingKey) {
@@ -1235,135 +1235,121 @@ export async function registerRoutes(
         hmac.update(timestamp + token);
         const computed = hmac.digest("hex");
         if (computed !== signature) {
-          console.error("Mailgun webhook: invalid signature");
+          console.error("[email-inbound] Invalid Mailgun signature — rejecting");
           return res.status(403).json({ message: "Invalid Mailgun signature" });
         }
       }
     }
 
-    // Respond immediately so Mailgun doesn't time out — process async in background
-    res.status(200).json({ ok: true });
-
-    // Capture everything from req synchronously before going async
     const body = req.body;
     const files = (req.files as Express.Multer.File[]) || [];
 
-    // Helper: race any promise against a timeout
-    function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-      return Promise.race([
-        promise,
-        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    try {
+      const sender: string = body.sender || body.from || "";
+      const subject: string = body.subject || "(no subject)";
+      const bodyText: string = body["body-plain"] || body["stripped-text"] || body.text || "";
+      const bodyHtml: string = body["body-html"] || body["stripped-html"] || "";
+
+      // Parse sender name and email
+      const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
+      const senderName = senderMatch[1]?.trim() || null;
+      const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
+      const senderDomain = senderEmail.split("@")[1] || null;
+      const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
+      const isInternal = senderDomain === internalDomain;
+
+      console.log(`[email-inbound] Received from ${senderEmail || "(unknown)"}, subject: "${subject}"`);
+
+      // ── STEP 1: Save the raw email immediately so it's never lost ──────────
+      const comm = await storage.createCommunication({
+        subject,
+        senderEmail: senderEmail || "unknown@unknown.com",
+        senderName,
+        senderDomain,
+        bodyText: bodyText.slice(0, 50000),
+        bodyHtml: bodyHtml.slice(0, 50000),
+        claudeSummary: "Processing…",
+        claudeActionItems: "[]",
+        isInternal,
+        isUnmatched: true,
+        source: "email",
+        rawPayload: JSON.stringify(body).slice(0, 10000),
+      });
+      console.log(`[email-inbound] Saved communication #${comm.id} — enriching with AI…`);
+
+      // ── STEP 2: Extract attachment text ────────────────────────────────────
+      const attachmentTexts: string[] = [];
+      const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
+      for (const file of files) {
+        try {
+          const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
+          attachmentTexts.push(text);
+          attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
+        } catch { /* skip unreadable attachments */ }
+      }
+      for (const att of attachmentMeta) {
+        await storage.createCommunicationAttachment({
+          communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
+          sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
+        });
+      }
+
+      // ── STEP 3: Claude enrichment (parallel) ───────────────────────────────
+      const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
+      const allClients = await storage.getClients();
+
+      const [matches, processed] = await Promise.all([
+        matchEmailToClients(fullText, allClients.map(c => ({
+          id: c.id, clientCode: c.clientCode, clientName: c.clientName,
+          brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
+          adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
+        }))),
+        processEmail(fullText, attachmentTexts),
       ]);
-    }
 
-    setImmediate(async () => {
-      try {
-        const sender: string = body.sender || body.from || "";
-        const subject: string = body.subject || "(no subject)";
-        const bodyText: string = body["body-plain"] || body["stripped-text"] || body.text || "";
-        const bodyHtml: string = body["body-html"] || body["stripped-html"] || "";
+      const matchSummary = matches.length === 0
+        ? "unmatched (no client found)"
+        : matches.map(m => `client #${m.clientId} (${m.confidence})`).join(", ");
+      console.log(`[email-inbound] #${comm.id} match result: ${matchSummary}`);
 
-        // Parse sender name and email
-        const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
-        const senderName = senderMatch[1]?.trim() || null;
-        const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
-        const senderDomain = senderEmail.split("@")[1] || null;
-        const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
-        const isInternal = senderDomain === internalDomain;
+      // ── STEP 4: Update record with Claude results ──────────────────────────
+      await storage.updateCommunication(comm.id, {
+        claudeSummary: processed.summary,
+        claudeActionItems: JSON.stringify(processed.actionItems),
+        isUnmatched: matches.length === 0,
+      });
 
-        console.log(`[email-inbound] Received from ${senderEmail || "(unknown)"}, subject: "${subject}"`);
-
-        // ── STEP 1: Save the raw email immediately so it's never lost ──────────
-        const comm = await storage.createCommunication({
-          subject,
-          senderEmail: senderEmail || "unknown@unknown.com",
-          senderName,
-          senderDomain,
-          bodyText: bodyText.slice(0, 50000),
-          bodyHtml: bodyHtml.slice(0, 50000),
-          claudeSummary: "Processing…",
-          claudeActionItems: "[]",
-          isInternal,
-          isUnmatched: true,
-          source: "email",
-          rawPayload: JSON.stringify(body).slice(0, 10000),
-        });
-        console.log(`[email-inbound] Saved communication #${comm.id} — enriching with AI…`);
-
-        // ── STEP 2: Extract attachment text ────────────────────────────────────
-        const attachmentTexts: string[] = [];
-        const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
-        for (const file of files) {
-          try {
-            const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
-            attachmentTexts.push(text);
-            attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
-          } catch { /* skip unreadable attachments */ }
-        }
-        for (const att of attachmentMeta) {
-          await storage.createCommunicationAttachment({
-            communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
-            sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
-          });
-        }
-
-        // ── STEP 3: Claude enrichment (with 30s timeout so it can't hang) ──────
-        const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
-        const allClients = await storage.getClients();
-
-        const [matches, processed] = await Promise.all([
-          withTimeout(
-            matchEmailToClients(fullText, allClients.map(c => ({
-              id: c.id, clientCode: c.clientCode, clientName: c.clientName,
-              brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
-              adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
-            }))),
-            30000,
-            [] as { clientId: number; confidence: "high" | "medium" | "low" }[]
-          ),
-          withTimeout(
-            processEmail(fullText, attachmentTexts),
-            30000,
-            { summary: "AI processing timed out.", actionItems: [] }
-          ),
-        ]);
-
-        // ── STEP 4: Update record with Claude results ──────────────────────────
-        await storage.updateCommunication(comm.id, {
-          claudeSummary: processed.summary,
-          claudeActionItems: JSON.stringify(processed.actionItems),
-          isUnmatched: matches.length === 0,
-        });
-
-        // ── STEP 5: Assign to clients and create tasks ─────────────────────────
-        if (matches.length > 0) {
-          await storage.assignCommunicationToClients(comm.id, matches);
-          for (const item of processed.actionItems) {
-            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-            for (const m of matches) {
-              await storage.createCommunicationTask({
-                communicationId: comm.id, clientId: m.clientId,
-                description: item.description,
-                dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-              });
-            }
-          }
-        } else {
-          for (const item of processed.actionItems) {
-            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+      // ── STEP 5: Assign to clients and create tasks ─────────────────────────
+      if (matches.length > 0) {
+        await storage.assignCommunicationToClients(comm.id, matches);
+        for (const item of processed.actionItems) {
+          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          for (const m of matches) {
             await storage.createCommunicationTask({
-              communicationId: comm.id, clientId: null,
+              communicationId: comm.id, clientId: m.clientId,
               description: item.description,
               dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
             });
           }
         }
-
-        console.log(`[email-inbound] Enriched #${comm.id} — matched ${matches.length} clients, ${processed.actionItems.length} tasks`);
-      } catch (err: any) {
-        console.error("[email-inbound] Error:", err?.message || err);
+      } else {
+        for (const item of processed.actionItems) {
+          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          await storage.createCommunicationTask({
+            communicationId: comm.id, clientId: null,
+            description: item.description,
+            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+          });
+        }
       }
-    });
+
+      console.log(`[email-inbound] Completed #${comm.id} — ${matchSummary}, ${processed.actionItems.length} action item(s)`);
+      return res.status(200).json({ ok: true });
+    } catch (err: any) {
+      console.error("[email-inbound] Fatal error processing webhook:", err?.message || err);
+      // Return 5xx so Mailgun's automatic retry fires instead of treating this as delivered
+      return res.status(500).json({ message: "Internal error processing email" });
+    }
   });
 
   // ─── Manual communication (paste/type) ─────────────────────────────────────
