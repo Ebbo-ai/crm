@@ -27,6 +27,23 @@ export const PLAN_TYPE_LABELS: Record<string, string> = {
   DENTAL_HEARING_VISION: "Dental / Hearing / Vision",
 };
 
+// Coverage type: how a plan is funded and reported (4 fixed values).
+// Combined plans share one rate and one claims stream — never split them into
+// separate dental and vision rows.
+export const PLAN_COVERAGE_TYPE_LABELS: Record<string, string> = {
+  DENTAL_ONLY:           "Dental only",
+  VISION_ONLY:           "Vision only",
+  DENTAL_VISION:         "Dental + Vision (combined)",
+  DENTAL_VISION_HEARING: "Dental + Vision + Hearing (combined)",
+};
+
+export const PLAN_COVERAGE_TYPE_OPTIONS = [
+  { value: "DENTAL_ONLY",           label: "Dental only" },
+  { value: "VISION_ONLY",           label: "Vision only" },
+  { value: "DENTAL_VISION",         label: "Dental + Vision (combined)" },
+  { value: "DENTAL_VISION_HEARING", label: "Dental + Vision + Hearing (combined)" },
+];
+
 export const PLAN_BASIS_LABELS: Record<string, string> = {
   PROCEDURE_BASED: "Procedure Based",
   DOLLAR_BASED: "Dollar Based",

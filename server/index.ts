@@ -351,6 +351,29 @@ app.use((req, res, next) => {
         ALTER COLUMN funding_basis SET DEFAULT 'CLAIMS_PLUS_ADMIN';
     `);
 
+    // Phase 2c: plan coverage type — four-value closed enum stored on each plan.
+    // Combined plans (dental+vision on one rate/claims stream) use DENTAL_VISION or
+    // DENTAL_VISION_HEARING and are never split into separate rows.
+    try {
+      await pool.query(`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'plan_coverage_type') THEN
+            CREATE TYPE plan_coverage_type AS ENUM (
+              'DENTAL_ONLY',
+              'VISION_ONLY',
+              'DENTAL_VISION',
+              'DENTAL_VISION_HEARING'
+            );
+          END IF;
+
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_name = 'plans' AND column_name = 'coverage_type') THEN
+            ALTER TABLE plans ADD COLUMN coverage_type plan_coverage_type;
+          END IF;
+        END $$;
+      `);
+    } catch (_) { /* already exists */ }
+
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
   } catch (err: any) {
     console.error("Startup migration error:", err.message);

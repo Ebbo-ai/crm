@@ -33,6 +33,8 @@ import csv
 import logging
 from datetime import date
 
+from ppr_coverage import normalize_coverage_type
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -57,6 +59,10 @@ COL_MAP = {
     # Optional: actual account balance at month end, supplied for some groups.
     # When present the report shows billed plan position alongside the real balance.
     "account_balance":    "account_balance",
+    # Optional: coverage type string from the administrator.  Will be normalised
+    # to a canonical value via normalize_coverage_type(); unrecognised values cause
+    # the row to be held for review rather than guessed at.
+    "coverage_type":      "coverage_type",
 }
 
 VALID_REASON_CODES = {
@@ -152,21 +158,33 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
         row = {COL_MAP.get(k, k): v for k, v in raw.items()}
         hold_reasons = []
 
-        client_code  = (row.get("client_code") or "").upper().strip()
-        plan_name    = (row.get("plan_name") or "").strip()
-        report_month = _int_or_none(row.get("report_month"))
-        report_year  = _int_or_none(row.get("report_year"))
-        ee           = _int_or_none(row.get("ee_count"))
-        ee_sp        = _int_or_none(row.get("ee_spouse_count"))
-        ee_ch        = _int_or_none(row.get("ee_child_count"))
-        fam          = _int_or_none(row.get("family_count"))
-        submitted    = _float_or_none(row.get("submitted_charges"))
-        paid         = _float_or_none(row.get("paid_claims"))
-        claim_cnt    = _int_or_none(row.get("claim_count"))
-        reason_code  = _str_or_none(row.get("reason_code"))
-        reason_note  = (row.get("reason_note") or "").strip() or None
-        rel_month    = _int_or_none(row.get("release_month"))
-        rel_year     = _int_or_none(row.get("release_year"))
+        client_code   = (row.get("client_code") or "").upper().strip()
+        plan_name     = (row.get("plan_name") or "").strip()
+        report_month  = _int_or_none(row.get("report_month"))
+        report_year   = _int_or_none(row.get("report_year"))
+        ee            = _int_or_none(row.get("ee_count"))
+        ee_sp         = _int_or_none(row.get("ee_spouse_count"))
+        ee_ch         = _int_or_none(row.get("ee_child_count"))
+        fam           = _int_or_none(row.get("family_count"))
+        submitted     = _float_or_none(row.get("submitted_charges"))
+        paid          = _float_or_none(row.get("paid_claims"))
+        claim_cnt     = _int_or_none(row.get("claim_count"))
+        reason_code   = _str_or_none(row.get("reason_code"))
+        reason_note   = (row.get("reason_note") or "").strip() or None
+        rel_month     = _int_or_none(row.get("release_month"))
+        rel_year      = _int_or_none(row.get("release_year"))
+
+        # coverage_type: normalise the incoming string if present; hold if unrecognised
+        raw_coverage  = (row.get("coverage_type") or "").strip() or None
+        coverage_type = None
+        if raw_coverage:
+            coverage_type = normalize_coverage_type(raw_coverage)
+            if coverage_type is None:
+                hold_reasons.append(
+                    f"Unrecognised coverage_type '{raw_coverage}'. "
+                    "Valid values: dental only, vision only, dental/vision, "
+                    "dental/vision/hearing (and common variations)."
+                )
 
         # ── Validation ───────────────────────────────────────────────────────
         client = client_lookup.get(client_code)
@@ -178,6 +196,17 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
             plan = plan_lookup.get((client["id"], plan_name.lower()))
             if not plan:
                 hold_reasons.append(f"Plan '{plan_name}' not found for {client_code}")
+
+        # If the file includes coverage_type and the plan already has one set,
+        # they must agree — a mismatch means the row belongs to the wrong plan
+        # or the file contains an error.
+        if plan and coverage_type and plan.get("coverage_type"):
+            if coverage_type != plan["coverage_type"]:
+                hold_reasons.append(
+                    f"coverage_type in file ('{coverage_type}') does not match "
+                    f"plan record ('{plan['coverage_type']}'). "
+                    "Update the plan's coverage type or correct the file."
+                )
 
         if report_month is None or not (1 <= report_month <= 12):
             hold_reasons.append("Invalid or missing report_month (must be 1–12)")
@@ -245,6 +274,7 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
 
         row_data = {
             "client_id":        client["id"],
+            "coverage_type":    coverage_type,
             "plan_id":          plan["id"],
             "report_month":     report_month,
             "report_year":      report_year,

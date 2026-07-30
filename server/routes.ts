@@ -306,6 +306,7 @@ export async function registerRoutes(
         deductible: plan.deductible,
         isArchived: false,
         planYear: plan.planYear + 1,
+        coverageType: plan.coverageType ?? null,
       });
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -1688,6 +1689,7 @@ export async function registerRoutes(
         plans: allPlans.map(p => ({
           id: p.id, client_id: p.clientId, plan_name: p.planName,
           effective_date: p.effectiveDate, plan_year: p.planYear,
+          coverage_type: p.coverageType ?? null,
         })),
         current_facts: allFacts.map(f => ({
           id: f.id, client_id: f.clientId, plan_id: f.planId,

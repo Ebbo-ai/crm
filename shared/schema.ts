@@ -5,6 +5,15 @@ import { z } from "zod";
 
 export const roleEnum = pgEnum("role", ["ADMIN", "STANDARD"]);
 export const planTypeEnum = pgEnum("plan_type", ["DENTAL", "VISION", "HEARING", "DENTAL_VISION", "HEARING_VISION", "DENTAL_HEARING_VISION"]);
+// Coverage type describes how a plan is *funded and reported*, not its clinical scope.
+// A combined plan (one rate, one claims stream) is ONE plan with DENTAL_VISION or
+// DENTAL_VISION_HEARING — never split into separate dental and vision rows.
+export const planCoverageTypeEnum = pgEnum("plan_coverage_type", [
+  "DENTAL_ONLY",
+  "VISION_ONLY",
+  "DENTAL_VISION",
+  "DENTAL_VISION_HEARING",
+]);
 export const planBasisEnum = pgEnum("plan_basis", ["PROCEDURE_BASED", "DOLLAR_BASED"]);
 export const tierEnum = pgEnum("tier", ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"]);
 export const bankingTypeEnum = pgEnum("banking_type", ["CLIENT_BANK", "NINETY_DEGREE_BANK"]);
@@ -107,6 +116,10 @@ export const plans = pgTable("plans", {
   orthoCoinsurancePercent: integer("ortho_coinsurance_percent"),
   orthoMaxType: orthoMaxTypeEnum("ortho_max_type").default("SHARED_ANNUAL"),
   orthoLifetimeMax: decimal("ortho_lifetime_max", { precision: 10, scale: 2 }),
+  // What lines of coverage this plan funds and reports on (closed list — see planCoverageTypeEnum).
+  // Combined plans (dental+vision on one rate/claims stream) are stored as DENTAL_VISION or
+  // DENTAL_VISION_HEARING; they are never split into separate dental and vision plan rows.
+  coverageType: planCoverageTypeEnum("coverage_type"),
   renewalDueMonthsBefore: integer("renewal_due_months_before").notNull().default(3),
   renewalRecipient: text("renewal_recipient").notNull().default("CLIENT"),
   isRenewalComplete: boolean("is_renewal_complete").notNull().default(false),

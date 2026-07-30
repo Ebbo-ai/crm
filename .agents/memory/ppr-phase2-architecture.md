@@ -41,9 +41,23 @@ Two stub files in `rating_engine/` define the interface the user's real files mu
 - Zero-paid flag: set on client when enrollment > 0 AND paid_claims = 0 AND no reason_code
 - Restatements: supersede old row (set superseded_at) then insert new row with version+1
 - Held rows are never silently dropped; stored in ppr_held_rows with hold_reasons[]
+- "Plan position (as billed)" is the correct term — never "surplus/deficit", "cash balance", or "bank balance"
+- account_balance is optional actual bank balance; when present report shows billed position vs real balance
+- underfunding_flag set when account_balance < 0; shown as badge on client detail header
+- Funding basis: ALL clients use CLAIMS_PLUS_ADMIN; column defaults to it; no client uses CLAIMS_ONLY
+
+## Coverage type (plan-level)
+
+- Stored in plans.coverage_type (plan_coverage_type enum, nullable)
+- Four values only: DENTAL_ONLY, VISION_ONLY, DENTAL_VISION, DENTAL_VISION_HEARING
+- Shared mapping in rating_engine/ppr_coverage.py — both import and report generator import from it
+- Combined plans (one rate, one claims stream) are ONE plan; never split into separate dental/vision rows
+- Import: if coverage_type in file is unrecognised → hold row; if it conflicts with plan's stored value → hold row
+- Plans passed to Flask import context include coverage_type field
 
 ## UI
 
 - /ppr-import page: drag-drop combined file → results with stat cards, restated delta table, held row accept/discard
 - ppr-tab.tsx: "Performance Report" section at top with plan year selector, View Report button, iframe dialog
 - Save to Documents stores PDF + generator version + "data current as of: YYYY-MM" in notes
+- Plan form: Coverage Type dropdown (4 options); shown in plan card subtitle

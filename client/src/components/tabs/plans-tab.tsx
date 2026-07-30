@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { PLAN_BASIS_LABELS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
+import { PLAN_BASIS_LABELS, PLAN_COVERAGE_TYPE_LABELS, PLAN_COVERAGE_TYPE_OPTIONS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
 import {
   Plus, ChevronDown, ChevronUp, Edit, RefreshCw, FileText, CalendarDays,
   CheckCircle2, Clock, Upload, Download, Trash2, Users, AlertTriangle
@@ -431,7 +431,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           <div className="min-w-0">
             <p className="text-sm font-semibold text-[#2C3E50] truncate">{plan.planName}</p>
             <p className="text-xs text-[#94A3B8]">
-              {format(effectiveDate, "MMM d, yyyy")} | {PLAN_BASIS_LABELS[plan.planBasis]} | Renews {format(nextRenewal, "MMM d, yyyy")}
+              {format(effectiveDate, "MMM d, yyyy")} | {PLAN_BASIS_LABELS[plan.planBasis]}{plan.coverageType ? ` | ${PLAN_COVERAGE_TYPE_LABELS[plan.coverageType] ?? plan.coverageType}` : ""} | Renews {format(nextRenewal, "MMM d, yyyy")}
             </p>
           </div>
         </div>
@@ -826,6 +826,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
   const isEdit = !!plan;
   const [form, setForm] = useState({
     planName: plan?.planName || "",
+    coverageType: plan?.coverageType || "",
     effectiveDate: plan?.effectiveDate ? format(parseLocalDate(plan.effectiveDate), "yyyy-MM-dd") : "",
     planBasis: plan?.planBasis || "PROCEDURE_BASED",
     preventivePercent: plan?.preventivePercent ?? 100,
@@ -885,6 +886,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     const isDollar = form.planBasis === "DOLLAR_BASED";
     mutation.mutate({
       planName: form.planName,
+      coverageType: form.coverageType || null,
       effectiveDate,
       planBasis: form.planBasis,
       preventivePercent: !isDollar ? Number(form.preventivePercent) : null,
@@ -919,6 +921,20 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
             <Label className="text-sm font-medium">Plan Name <span className="text-[#EF4444]">*</span></Label>
             <Input value={form.planName} onChange={e => setForm(f => ({ ...f, planName: e.target.value }))} data-testid="input-plan-name" />
             {errors.planName && <p className="text-xs text-[#EF4444] mt-1">{errors.planName}</p>}
+          </div>
+          <div>
+            <Label className="text-sm font-medium">Coverage Type</Label>
+            <Select value={form.coverageType} onValueChange={v => setForm(f => ({ ...f, coverageType: v }))}>
+              <SelectTrigger data-testid="select-coverage-type"><SelectValue placeholder="Select coverage type…" /></SelectTrigger>
+              <SelectContent>
+                {PLAN_COVERAGE_TYPE_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-[#94A3B8] mt-1">
+              Describes how this plan is funded and reported. A group with one rate covering both dental and vision is a single combined plan — do not create separate dental and vision entries for it.
+            </p>
           </div>
           <div>
             <Label className="text-sm font-medium">Effective Date <span className="text-[#EF4444]">*</span></Label>
