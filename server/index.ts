@@ -252,6 +252,65 @@ app.use((req, res, next) => {
         WHERE (is_active = false OR termination_date IS NOT NULL)
           AND client_status = 'ACTIVE';
     `);
+
+    // Phase 2: Import batches & held rows
+    // ALTER TYPE ... ADD VALUE cannot run inside a PL/pgSQL block, so it runs
+    // here at the top level.  CREATE TABLE statements go in a separate DO block.
+    try {
+      await pool.query(`ALTER TYPE document_category ADD VALUE IF NOT EXISTS 'PPR_REPORT'`);
+    } catch (_) { /* already exists */ }
+
+    await pool.query(`
+      DO $$ BEGIN
+        -- held_row_status enum for import staging
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'held_row_status') THEN
+          CREATE TYPE held_row_status AS ENUM ('PENDING', 'ACCEPTED', 'DISCARDED');
+        END IF;
+
+        -- ppr_import_batches: one row per combined monthly file received
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_name = 'ppr_import_batches' AND table_schema = 'public'
+        ) THEN
+          CREATE TABLE ppr_import_batches (
+            id            SERIAL PRIMARY KEY,
+            file_name     TEXT NOT NULL,
+            uploaded_by   TEXT NOT NULL,
+            uploaded_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+            rows_total    INTEGER NOT NULL DEFAULT 0,
+            rows_accepted INTEGER NOT NULL DEFAULT 0,
+            rows_unchanged INTEGER NOT NULL DEFAULT 0,
+            rows_restated INTEGER NOT NULL DEFAULT 0,
+            rows_held     INTEGER NOT NULL DEFAULT 0,
+            notes         TEXT
+          );
+        END IF;
+
+        -- ppr_held_rows: rows that failed validation, kept for later review
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_name = 'ppr_held_rows' AND table_schema = 'public'
+        ) THEN
+          CREATE TABLE ppr_held_rows (
+            id                  SERIAL PRIMARY KEY,
+            batch_id            INTEGER NOT NULL REFERENCES ppr_import_batches(id),
+            client_code         TEXT,
+            plan_name           TEXT,
+            report_month        INTEGER,
+            report_year         INTEGER,
+            raw_data            JSONB,
+            hold_reasons        JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status              held_row_status NOT NULL DEFAULT 'PENDING',
+            reviewed_at         TIMESTAMP,
+            reviewed_by         TEXT,
+            review_note         TEXT,
+            resolved_client_id  INTEGER,
+            resolved_plan_id    INTEGER,
+            created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+          );
+        END IF;
+      END $$;
+    `);
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
   } catch (err: any) {
     console.error("Startup migration error:", err.message);

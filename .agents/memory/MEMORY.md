@@ -1,2 +1,3 @@
 - [Rating Engine service](rating-engine-service.md) — internal Flask service on port 5001, WeasyPrint PDF confirmed working; no waitForPort in workflow config.
 - [Pipeline tracking architecture](pipeline-tracking.md) — renewal_progress (per plan, 7 steps) + prospect_progress (per client, 3 steps); stall = 14 days since clock_start; dashboard /api/dashboard/stalled; step4 revisions in JSONB.
+- [PPR Phase 2 Architecture](ppr-phase2-architecture.md) — monthly import pipeline + report gen; Python stubs define interface; Node layer owns all DB writes; admin_fee is single all-in figure, never broken out.

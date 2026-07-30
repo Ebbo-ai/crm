@@ -3,7 +3,7 @@ import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } 
 import {
   users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
   communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory,
-  renewalProgress, prospectProgress,
+  renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
@@ -19,6 +19,9 @@ import {
   type CommunicationAttachment, type InsertCommunicationAttachment,
   type CommunicationTask, type InsertCommunicationTask,
   type BrokerHistory,
+  type PlanPerformanceFacts, type InsertPlanPerformanceFacts,
+  type PprImportBatch, type InsertPprImportBatch,
+  type PprHeldRow, type InsertPprHeldRow,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -114,6 +117,26 @@ export interface IStorage {
   getProspectProgress(clientId: number): Promise<any | null>;
   upsertProspectProgress(clientId: number, data: Record<string, any>): Promise<any>;
   getStalledPipelines(): Promise<any[]>;
+
+  // ── Plan performance facts ──────────────────────────────────────────────────
+  insertPlanPerformanceFact(data: InsertPlanPerformanceFacts): Promise<PlanPerformanceFacts>;
+  supersedePlanPerformanceFact(id: number): Promise<void>;
+  getCurrentFactsForClient(clientId: number): Promise<PlanPerformanceFacts[]>;
+  getCurrentFactsForPlan(planId: number): Promise<PlanPerformanceFacts[]>;
+  getAllCurrentFacts(): Promise<PlanPerformanceFacts[]>;
+
+  getAllActivePlans(): Promise<Plan[]>;
+
+  // ── PPR import batches ──────────────────────────────────────────────────────
+  createPprImportBatch(data: InsertPprImportBatch): Promise<PprImportBatch>;
+  updatePprImportBatch(id: number, data: Partial<InsertPprImportBatch>): Promise<PprImportBatch | undefined>;
+  getPprImportBatches(): Promise<PprImportBatch[]>;
+  getPprImportBatch(id: number): Promise<PprImportBatch | undefined>;
+
+  // ── PPR held rows ───────────────────────────────────────────────────────────
+  createPprHeldRow(data: InsertPprHeldRow): Promise<PprHeldRow>;
+  getPprHeldRows(batchId?: number): Promise<PprHeldRow[]>;
+  updatePprHeldRow(id: number, data: Partial<PprHeldRow>): Promise<PprHeldRow | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -959,6 +982,94 @@ export class DatabaseStorage implements IStorage {
     }
 
     return result.sort((a, b) => b.daysOverdue - a.daysOverdue);
+  }
+
+  // ── Plan performance facts ──────────────────────────────────────────────────
+
+  async insertPlanPerformanceFact(data: InsertPlanPerformanceFacts): Promise<PlanPerformanceFacts> {
+    const [row] = await db.insert(planPerformanceFacts).values(data).returning();
+    return row;
+  }
+
+  async supersedePlanPerformanceFact(id: number): Promise<void> {
+    await db.update(planPerformanceFacts)
+      .set({ supersededAt: new Date() })
+      .where(eq(planPerformanceFacts.id, id));
+  }
+
+  async getCurrentFactsForClient(clientId: number): Promise<PlanPerformanceFacts[]> {
+    return db.select().from(planPerformanceFacts)
+      .where(and(eq(planPerformanceFacts.clientId, clientId), isNull(planPerformanceFacts.supersededAt)))
+      .orderBy(asc(planPerformanceFacts.reportYear), asc(planPerformanceFacts.reportMonth));
+  }
+
+  async getCurrentFactsForPlan(planId: number): Promise<PlanPerformanceFacts[]> {
+    return db.select().from(planPerformanceFacts)
+      .where(and(eq(planPerformanceFacts.planId, planId), isNull(planPerformanceFacts.supersededAt)))
+      .orderBy(asc(planPerformanceFacts.reportYear), asc(planPerformanceFacts.reportMonth));
+  }
+
+  async getAllCurrentFacts(): Promise<PlanPerformanceFacts[]> {
+    return db.select().from(planPerformanceFacts)
+      .where(isNull(planPerformanceFacts.supersededAt));
+  }
+
+  async getCurrentFactByKey(clientId: number, planId: number, month: number, year: number): Promise<PlanPerformanceFacts | null> {
+    const [row] = await db.select().from(planPerformanceFacts)
+      .where(and(
+        eq(planPerformanceFacts.clientId, clientId),
+        eq(planPerformanceFacts.planId, planId),
+        eq(planPerformanceFacts.reportMonth, month),
+        eq(planPerformanceFacts.reportYear, year),
+        isNull(planPerformanceFacts.supersededAt),
+      ));
+    return row ?? null;
+  }
+
+  async getAllActivePlans(): Promise<Plan[]> {
+    return db.select().from(plans).where(eq(plans.isArchived, false)).orderBy(asc(plans.clientId));
+  }
+
+  // ── PPR import batches ──────────────────────────────────────────────────────
+
+  async createPprImportBatch(data: InsertPprImportBatch): Promise<PprImportBatch> {
+    const [row] = await db.insert(pprImportBatches).values(data).returning();
+    return row;
+  }
+
+  async updatePprImportBatch(id: number, data: Partial<InsertPprImportBatch>): Promise<PprImportBatch | undefined> {
+    const [row] = await db.update(pprImportBatches).set(data).where(eq(pprImportBatches.id, id)).returning();
+    return row;
+  }
+
+  async getPprImportBatches(): Promise<PprImportBatch[]> {
+    return db.select().from(pprImportBatches).orderBy(desc(pprImportBatches.uploadedAt));
+  }
+
+  async getPprImportBatch(id: number): Promise<PprImportBatch | undefined> {
+    const [row] = await db.select().from(pprImportBatches).where(eq(pprImportBatches.id, id));
+    return row;
+  }
+
+  // ── PPR held rows ───────────────────────────────────────────────────────────
+
+  async createPprHeldRow(data: InsertPprHeldRow): Promise<PprHeldRow> {
+    const [row] = await db.insert(pprHeldRows).values(data).returning();
+    return row;
+  }
+
+  async getPprHeldRows(batchId?: number): Promise<PprHeldRow[]> {
+    if (batchId !== undefined) {
+      return db.select().from(pprHeldRows)
+        .where(eq(pprHeldRows.batchId, batchId))
+        .orderBy(asc(pprHeldRows.createdAt));
+    }
+    return db.select().from(pprHeldRows).orderBy(desc(pprHeldRows.createdAt));
+  }
+
+  async updatePprHeldRow(id: number, data: Partial<PprHeldRow>): Promise<PprHeldRow | undefined> {
+    const [row] = await db.update(pprHeldRows).set(data as any).where(eq(pprHeldRows.id, id)).returning();
+    return row;
   }
 }
 

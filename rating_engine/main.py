@@ -20,6 +20,8 @@ from generate_renewal import (
     validate, advisories, build_html, compute, load_config,
 )
 from weasyprint import HTML
+from ppr_import import process_file as ppr_process_file
+from ppr_report import generate as ppr_generate, GENERATOR_VERSION as PPR_GENERATOR_VERSION
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rating] %(message)s")
@@ -177,6 +179,85 @@ def test_pdf():
                          download_name="rating-engine-test.pdf")
     except Exception as exc:
         app.logger.exception("test-pdf: render failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# POST /parse-ppr-import
+# Accept a combined monthly PPR file (CSV or Excel) plus a lookup context,
+# return classified rows: accepted, unchanged, held.
+#
+# Body (JSON):
+#   file_b64   str   base64-encoded file bytes
+#   file_ext   str   "csv" | "xlsx" | "xls"
+#   context    dict  {clients, plans, current_facts}  — see ppr_import.py
+# ---------------------------------------------------------------------------
+
+@app.post("/parse-ppr-import")
+def parse_ppr_import():
+    body = request.get_json(force=True, silent=True) or {}
+    file_b64 = body.get("file_b64", "")
+    file_ext = body.get("file_ext", "csv")
+    context  = body.get("context", {})
+
+    if not file_b64:
+        return jsonify({"error": "file_b64 is required"}), 400
+
+    try:
+        file_bytes = base64.b64decode(file_b64)
+    except Exception as exc:
+        return jsonify({"error": f"Could not decode file_b64: {exc}"}), 400
+
+    try:
+        result = ppr_process_file(file_bytes, file_ext, context)
+        app.logger.info(
+            "parse-ppr-import: ext=%s accepted=%d unchanged=%d held=%d",
+            file_ext,
+            len(result.get("accepted", [])),
+            len(result.get("unchanged", [])),
+            len(result.get("held", [])),
+        )
+        return jsonify(result)
+    except Exception as exc:
+        app.logger.exception("parse-ppr-import failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-ppr-report
+# Accept a data payload plus output format, return HTML string or PDF as
+# base64.
+#
+# Body (JSON):
+#   payload        dict   see ppr_report.py interface docs
+#   output_format  str    "html" (default) | "pdf"
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-ppr-report")
+def generate_ppr_report():
+    body = request.get_json(force=True, silent=True) or {}
+    payload       = body.get("payload", {})
+    output_format = body.get("output_format", "html")
+
+    if output_format not in ("html", "pdf"):
+        return jsonify({"error": "output_format must be 'html' or 'pdf'"}), 400
+
+    try:
+        result = ppr_generate(payload, output_format)
+        app.logger.info(
+            "generate-ppr-report: client=%s format=%s",
+            payload.get("client", {}).get("client_code", "?"),
+            output_format,
+        )
+        if output_format == "html":
+            return jsonify({"html": result, "generator_version": PPR_GENERATOR_VERSION})
+        else:
+            return jsonify({
+                "pdf_b64": base64.b64encode(result).decode(),
+                "generator_version": PPR_GENERATOR_VERSION,
+            })
+    except Exception as exc:
+        app.logger.exception("generate-ppr-report failed")
         return jsonify({"error": str(exc)}), 500
 
 

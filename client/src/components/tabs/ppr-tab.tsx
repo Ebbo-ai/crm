@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet, Eye, X, Loader2 } from "lucide-react";
+import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet, Eye, X, Loader2, BarChart2, Printer, BookmarkPlus, ChevronDown } from "lucide-react";
 import { format } from "date-fns";
 
 function LossRatioBadge({ value }: { value: string | null }) {
@@ -69,12 +69,45 @@ export default function PprTab({ clientId }: { clientId: number }) {
   const [replaceTarget, setReplaceTarget] = useState<{ reportMonth: number; reportYear: number; fileType: "PDF" | "EXCEL" } | null>(null);
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null);
 
+  // Report viewer state
+  const [showReport, setShowReport] = useState(false);
+  const [reportPlanYear, setReportPlanYear] = useState<string>("");
+
   const { data: groups = [], isLoading } = useQuery<PprGroup[]>({
     queryKey: ["/api/clients", String(clientId), "ppr"],
   });
 
   const { data: metrics = [] } = useQuery<any[]>({
     queryKey: ["/api/clients", String(clientId), "ppr-metrics"],
+  });
+
+  const { data: planYearsData } = useQuery<{ planYears: number[]; defaultPlanYear: number }>({
+    queryKey: ["/api/clients", String(clientId), "ppr-report", "plan-years"],
+    queryFn: () => fetch(`/api/clients/${clientId}/ppr-report/plan-years`, { credentials: "include" }).then(r => r.json()),
+  });
+
+  const saveReportMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {};
+      const yr = reportPlanYear || planYearsData?.defaultPlanYear;
+      if (yr) body.planYear = Number(yr);
+      const res = await fetch(`/api/clients/${clientId}/ppr-report/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "documents"] });
+      toast({
+        title: "Report saved to Documents",
+        description: `Plan Year ${data.reportPlanYear} · generator v${data.generatorVersion}`,
+      });
+    },
+    onError: (err: any) => toast({ title: "Error saving report", description: err.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -91,8 +124,104 @@ export default function PprTab({ clientId }: { clientId: number }) {
 
   const latest = metrics[0] ?? null;
 
+  const availableYears: number[] = planYearsData?.planYears ?? [];
+  const defaultYear = planYearsData?.defaultPlanYear;
+  const selectedYear = reportPlanYear || (defaultYear ? String(defaultYear) : "");
+  const reportUrl = `/api/clients/${clientId}/ppr-report?format=html${selectedYear ? `&planYear=${selectedYear}` : ""}`;
+  const pdfUrl = `/api/clients/${clientId}/ppr-report?format=pdf${selectedYear ? `&planYear=${selectedYear}` : ""}`;
+
   return (
     <div data-testid="ppr-tab">
+      {/* ── Performance Report section ───────────────────────────────────────── */}
+      <div className="mb-6 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold text-[#1A5276]">Performance Report</h2>
+          <p className="text-xs text-[#94A3B8] mt-0.5">Generated from stored monthly facts — what prints matches what is displayed</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {availableYears.length > 1 && (
+            <Select value={selectedYear} onValueChange={setReportPlanYear}>
+              <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-report-plan-year">
+                <SelectValue placeholder="Plan year…" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableYears.map(y => (
+                  <SelectItem key={y} value={String(y)}>Plan Year {y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button
+            size="sm"
+            className="bg-[#1A5276] text-white gap-1.5 h-8 text-xs"
+            onClick={() => setShowReport(true)}
+            data-testid="button-view-ppr-report"
+          >
+            <BarChart2 className="w-3.5 h-3.5" />
+            View Report
+          </Button>
+        </div>
+      </div>
+
+      {/* Report viewer dialog */}
+      {showReport && (
+        <Dialog open onOpenChange={setShowReport}>
+          <DialogContent className="max-w-6xl w-[96vw] h-[92vh] flex flex-col p-0 gap-0" data-testid="ppr-report-dialog">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b bg-[#F0F4F8] rounded-t-lg flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <BarChart2 className="w-4 h-4 text-[#1A5276] flex-shrink-0" />
+                <span className="text-sm font-semibold text-[#1A5276]">
+                  Performance Report{selectedYear ? ` — Plan Year ${selectedYear}` : ""}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-[#2E86C1] hover:underline"
+                  data-testid="button-download-ppr-pdf"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download PDF
+                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => saveReportMutation.mutate()}
+                  disabled={saveReportMutation.isPending}
+                  data-testid="button-save-ppr-report"
+                >
+                  {saveReportMutation.isPending
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <BookmarkPlus className="w-3 h-3" />}
+                  Save to Documents
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setShowReport(false)}
+                  className="w-7 h-7"
+                  data-testid="button-close-ppr-report"
+                >
+                  <X className="w-4 h-4 text-[#94A3B8]" />
+                </Button>
+              </div>
+            </div>
+            {/* iframe */}
+            <div className="flex-1 overflow-hidden">
+              <iframe
+                key={reportUrl}
+                src={reportUrl}
+                title="Performance Report"
+                className="w-full h-full border-0"
+                data-testid="ppr-report-iframe"
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {/* Key Metrics Panel */}
       {latest && (
         <div className="mb-6">

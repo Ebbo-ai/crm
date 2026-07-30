@@ -9,7 +9,8 @@ export const planBasisEnum = pgEnum("plan_basis", ["PROCEDURE_BASED", "DOLLAR_BA
 export const tierEnum = pgEnum("tier", ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"]);
 export const bankingTypeEnum = pgEnum("banking_type", ["CLIENT_BANK", "NINETY_DEGREE_BANK"]);
 export const fundingTypeEnum = pgEnum("funding_type", ["REQUIRES_APPROVAL", "PROCESS_WITHOUT_APPROVAL"]);
-export const documentCategoryEnum = pgEnum("document_category", ["CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD", "RENEWAL_PROPOSAL", "OTHER"]);
+export const documentCategoryEnum = pgEnum("document_category", ["CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD", "RENEWAL_PROPOSAL", "PPR_REPORT", "OTHER"]);
+export const heldRowStatusEnum = pgEnum("held_row_status", ["PENDING", "ACCEPTED", "DISCARDED"]);
 export const issueStatusEnum = pgEnum("issue_status", ["ACTIVE", "RESOLVED"]);
 export const clientStatusEnum = pgEnum("client_status", ["PROSPECT", "ACTIVE", "TERMINATED"]);
 export const orthoEligibilityEnum = pgEnum("ortho_eligibility", ["NONE", "CHILDREN", "ALL"]);
@@ -395,3 +396,49 @@ export const insertPlanPerformanceFactsSchema = createInsertSchema(planPerforman
 });
 export type PlanPerformanceFacts = typeof planPerformanceFacts.$inferSelect;
 export type InsertPlanPerformanceFacts = z.infer<typeof insertPlanPerformanceFactsSchema>;
+
+// ── Monthly import batches ────────────────────────────────────────────────────
+// One record per combined file received from 90 Degree Benefits.
+export const pprImportBatches = pgTable("ppr_import_batches", {
+  id: serial("id").primaryKey(),
+  fileName: text("file_name").notNull(),
+  uploadedBy: text("uploaded_by").notNull(),
+  uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+  rowsTotal: integer("rows_total").notNull().default(0),
+  rowsAccepted: integer("rows_accepted").notNull().default(0),
+  rowsUnchanged: integer("rows_unchanged").notNull().default(0),
+  rowsRestated: integer("rows_restated").notNull().default(0),
+  rowsHeld: integer("rows_held").notNull().default(0),
+  notes: text("notes"),
+});
+
+// ── Held (failed-validation) rows from a monthly import ──────────────────────
+// Rows that failed import validation are stored here rather than silently
+// dropped.  After the administrator clarifies, a user can accept or discard
+// each held row.  Accepting a row writes it to plan_performance_facts.
+export const pprHeldRows = pgTable("ppr_held_rows", {
+  id: serial("id").primaryKey(),
+  batchId: integer("batch_id").notNull(),
+  clientCode: text("client_code"),
+  planName: text("plan_name"),
+  reportMonth: integer("report_month"),
+  reportYear: integer("report_year"),
+  // All values from the original file row — used when the row is later accepted
+  rawData: jsonb("raw_data").$type<Record<string, unknown>>(),
+  holdReasons: jsonb("hold_reasons").$type<string[]>().notNull().default([]),
+  status: heldRowStatusEnum("status").notNull().default("PENDING"),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: text("reviewed_by"),
+  reviewNote: text("review_note"),
+  // If the user overrides the client/plan on acceptance these are populated
+  resolvedClientId: integer("resolved_client_id"),
+  resolvedPlanId: integer("resolved_plan_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertPprImportBatchSchema = createInsertSchema(pprImportBatches).omit({ id: true, uploadedAt: true });
+export const insertPprHeldRowSchema = createInsertSchema(pprHeldRows).omit({ id: true, createdAt: true });
+export type PprImportBatch = typeof pprImportBatches.$inferSelect;
+export type InsertPprImportBatch = z.infer<typeof insertPprImportBatchSchema>;
+export type PprHeldRow = typeof pprHeldRows.$inferSelect;
+export type InsertPprHeldRow = z.infer<typeof insertPprHeldRowSchema>;

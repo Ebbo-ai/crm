@@ -1661,5 +1661,485 @@ export async function registerRoutes(
     }
   });
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Monthly PPR import + report
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // POST /api/ppr/monthly-import
+  // Upload combined monthly admin file (CSV or Excel), distribute rows to the
+  // right clients/plans, and return a detailed import summary.
+  app.post("/api/ppr/monthly-import", requireAuth, memUpload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+      const uploadedBy = (req.user as any).fullName;
+      const fileExt = path.extname(req.file.originalname).replace(".", "").toLowerCase() || "csv";
+      const fileB64 = req.file.buffer.toString("base64");
+
+      // Build lookup context for the parser
+      const [allClients, allPlans, allFacts] = await Promise.all([
+        storage.getClients(),
+        storage.getAllActivePlans(),
+        storage.getAllCurrentFacts(),
+      ]);
+
+      const context = {
+        clients: allClients.map(c => ({ id: c.id, client_code: c.clientCode, client_name: c.clientName })),
+        plans: allPlans.map(p => ({
+          id: p.id, client_id: p.clientId, plan_name: p.planName,
+          effective_date: p.effectiveDate, plan_year: p.planYear,
+        })),
+        current_facts: allFacts.map(f => ({
+          id: f.id, client_id: f.clientId, plan_id: f.planId,
+          report_month: f.reportMonth, report_year: f.reportYear,
+          version: f.version, paid_claims: f.paidClaims, submitted_charges: f.submittedCharges,
+        })),
+      };
+
+      const flaskRes = await fetch("http://127.0.0.1:5001/parse-ppr-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_b64: fileB64, file_ext: fileExt, context }),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      const parsed = await flaskRes.json() as any;
+      if (!flaskRes.ok) {
+        return res.status(500).json({ message: parsed.error || "Parser failed" });
+      }
+
+      const accepted: any[] = parsed.accepted || [];
+      const unchanged: any[] = parsed.unchanged || [];
+      const held: any[] = parsed.held || [];
+
+      // Create batch record (totals updated at the end)
+      const batch = await storage.createPprImportBatch({
+        fileName: req.file.originalname,
+        uploadedBy,
+        rowsTotal: accepted.length + unchanged.length + held.length,
+        rowsAccepted: 0, rowsUnchanged: 0, rowsRestated: 0, rowsHeld: 0,
+      });
+
+      let rowsAccepted = 0;
+      let rowsRestated = 0;
+      const restatedDetails: any[] = [];
+
+      for (const row of accepted) {
+        if (row.is_restatement) {
+          // Supersede the existing current row before inserting the new version
+          const existing = await storage.getCurrentFactByKey(
+            row.client_id, row.plan_id, row.report_month, row.report_year
+          );
+          if (existing) {
+            await storage.supersedePlanPerformanceFact(existing.id);
+            restatedDetails.push({
+              clientId: row.client_id, planId: row.plan_id,
+              reportMonth: row.report_month, reportYear: row.report_year,
+              priorPaidClaims: row.prior_paid_claims,
+              newPaidClaims: row.paid_claims,
+              priorSubmittedCharges: row.prior_submitted_charges,
+              newSubmittedCharges: row.submitted_charges,
+              reasonCode: row.reason_code,
+            });
+          }
+          rowsRestated++;
+        } else {
+          rowsAccepted++;
+        }
+
+        await storage.insertPlanPerformanceFact({
+          clientId: row.client_id,
+          planId: row.plan_id,
+          reportMonth: row.report_month,
+          reportYear: row.report_year,
+          version: row.version ?? 1,
+          eeCount: row.ee_count ?? null,
+          eeSpouseCount: row.ee_spouse_count ?? null,
+          eeChildCount: row.ee_child_count ?? null,
+          familyCount: row.family_count ?? null,
+          submittedCharges: row.submitted_charges != null ? String(row.submitted_charges) : null,
+          paidClaims: row.paid_claims != null ? String(row.paid_claims) : null,
+          claimCount: row.claim_count ?? null,
+          reasonCode: row.reason_code ?? null,
+          reasonNote: row.reason_note ?? null,
+          releaseMonth: row.release_month ?? null,
+          releaseYear: row.release_year ?? null,
+          receivedDate: row.received_date ? new Date(row.received_date) : new Date(),
+          loadedBy: uploadedBy,
+          supersededAt: null,
+        });
+
+        // Set zero_paid_flag when enrollment present but no claims and no reason
+        const totalEnroll = (row.ee_count || 0) + (row.ee_spouse_count || 0) +
+                            (row.ee_child_count || 0) + (row.family_count || 0);
+        if (totalEnroll > 0 && !row.paid_claims && !row.reason_code) {
+          await storage.updateClient(row.client_id, { zeroPayFlag: true });
+        }
+      }
+
+      // Store held rows for later review
+      for (const heldRow of held) {
+        await storage.createPprHeldRow({
+          batchId: batch.id,
+          clientCode: heldRow.client_code || null,
+          planName: heldRow.plan_name || null,
+          reportMonth: heldRow.report_month ?? null,
+          reportYear: heldRow.report_year ?? null,
+          rawData: heldRow.raw_data ?? {},
+          holdReasons: heldRow.hold_reasons ?? [],
+        });
+      }
+
+      // Finalise batch totals
+      await storage.updatePprImportBatch(batch.id, {
+        rowsTotal: rowsAccepted + rowsRestated + unchanged.length + held.length,
+        rowsAccepted,
+        rowsUnchanged: unchanged.length,
+        rowsRestated,
+        rowsHeld: held.length,
+      });
+
+      await storage.createAuditLog({
+        userId: (req.user as any).id, userName: uploadedBy,
+        action: "MONTHLY_IMPORT", entity: "ppr_import",
+        entityId: batch.id,
+        details: `Imported ${req.file.originalname}: ${rowsAccepted} new, ${unchanged.length} unchanged, ${rowsRestated} restated, ${held.length} held`,
+      });
+
+      res.json({
+        batchId: batch.id,
+        fileName: req.file.originalname,
+        rowsAccepted,
+        rowsUnchanged: unchanged.length,
+        rowsRestated,
+        rowsHeld: held.length,
+        restated: restatedDetails,
+        held,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/ppr/import-batches
+  app.get("/api/ppr/import-batches", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getPprImportBatches());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/ppr/held-rows
+  app.get("/api/ppr/held-rows", requireAuth, async (req, res) => {
+    try {
+      const batchId = req.query.batchId ? parseInt(req.query.batchId as string) : undefined;
+      res.json(await storage.getPprHeldRows(batchId));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PATCH /api/ppr/held-rows/:id — accept or discard a held row
+  app.patch("/api/ppr/held-rows/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { status, resolvedClientId, resolvedPlanId, reviewNote } = req.body;
+      const reviewedBy = (req.user as any).fullName;
+
+      if (!["ACCEPTED", "DISCARDED"].includes(status)) {
+        return res.status(400).json({ message: "status must be ACCEPTED or DISCARDED" });
+      }
+
+      const held = await storage.updatePprHeldRow(id, {
+        status,
+        reviewedAt: new Date(),
+        reviewedBy,
+        reviewNote: reviewNote || null,
+        resolvedClientId: resolvedClientId ?? null,
+        resolvedPlanId: resolvedPlanId ?? null,
+      });
+
+      if (!held) return res.status(404).json({ message: "Held row not found" });
+
+      // When accepting, write the row to plan_performance_facts
+      if (status === "ACCEPTED") {
+        const raw = held.rawData as any || {};
+        const clientId = resolvedClientId ?? null;
+        const planId   = resolvedPlanId ?? null;
+
+        if (!clientId || !planId) {
+          return res.status(400).json({
+            message: "resolvedClientId and resolvedPlanId are required to accept a held row"
+          });
+        }
+
+        // Supersede any existing current row for this month
+        const existing = await storage.getCurrentFactByKey(
+          clientId, planId, held.reportMonth!, held.reportYear!
+        );
+        if (existing) await storage.supersedePlanPerformanceFact(existing.id);
+
+        await storage.insertPlanPerformanceFact({
+          clientId,
+          planId,
+          reportMonth: held.reportMonth!,
+          reportYear: held.reportYear!,
+          version: existing ? (existing.version + 1) : 1,
+          eeCount: raw.ee_count != null ? parseInt(raw.ee_count) : null,
+          eeSpouseCount: raw.ee_spouse_count != null ? parseInt(raw.ee_spouse_count) : null,
+          eeChildCount: raw.ee_child_count != null ? parseInt(raw.ee_child_count) : null,
+          familyCount: raw.family_count != null ? parseInt(raw.family_count) : null,
+          submittedCharges: raw.submitted_charges != null ? String(raw.submitted_charges) : null,
+          paidClaims: raw.paid_claims != null ? String(raw.paid_claims) : null,
+          claimCount: raw.claim_count != null ? parseInt(raw.claim_count) : null,
+          reasonCode: raw.reason_code || null,
+          reasonNote: raw.reason_note || null,
+          releaseMonth: raw.release_month != null ? parseInt(raw.release_month) : null,
+          releaseYear: raw.release_year != null ? parseInt(raw.release_year) : null,
+          receivedDate: new Date(),
+          loadedBy: reviewedBy,
+          supersededAt: null,
+        });
+      }
+
+      res.json(held);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PPR Report generation
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Helper: build the report payload for a client + plan year
+  async function buildPprReportPayload(clientId: number, planYear?: number) {
+    const client = await storage.getClient(clientId);
+    if (!client) throw Object.assign(new Error("Client not found"), { status: 404 });
+
+    const clientPlans = (await storage.getPlans(clientId)).filter(p => !p.isArchived);
+    if (!clientPlans.length) throw Object.assign(new Error("No active plans for this client"), { status: 404 });
+
+    const allFacts = await storage.getCurrentFactsForClient(clientId);
+
+    // Determine the plan year to show
+    let reportPlanYear = planYear;
+    if (!reportPlanYear) {
+      if (allFacts.length > 0) {
+        reportPlanYear = Math.max(...allFacts.map(f => f.reportYear));
+      } else {
+        reportPlanYear = clientPlans[0].planYear;
+      }
+    }
+
+    const planPayloads: any[] = [];
+    for (const plan of clientPlans) {
+      const effDate = new Date(plan.effectiveDate);
+      const startMonth = effDate.getMonth() + 1; // 1-12
+      const planMonths: { month: number; year: number }[] = [];
+      for (let i = 0; i < 12; i++) {
+        let m = startMonth + i;
+        let y = reportPlanYear!;
+        if (m > 12) { m -= 12; y++; }
+        planMonths.push({ month: m, year: y });
+      }
+
+      const planFacts = allFacts.filter(f => f.planId === plan.id);
+      const cards = await storage.getRateCards(plan.id);
+
+      const monthsPayload = planMonths.map(({ month, year }) => {
+        const fact = planFacts.find(f => f.reportMonth === month && f.reportYear === year);
+
+        // Admin fee total: pick rate card effective for this month (or the latest)
+        let adminFeeTotal: number | null = null;
+        if (fact) {
+          const monthDate = new Date(year, month - 1, 1);
+          const tierTotals: Record<string, number> = {};
+          for (const tier of ["EE", "EE_SPOUSE", "EE_CHILD", "FAMILY"]) {
+            const valid = cards
+              .filter(rc => rc.tier === tier && (!rc.effectiveDate || new Date(rc.effectiveDate) <= monthDate))
+              .sort((a, b) => {
+                const da = a.effectiveDate ? new Date(a.effectiveDate).getTime() : 0;
+                const db = b.effectiveDate ? new Date(b.effectiveDate).getTime() : 0;
+                return db - da;
+              });
+            if (valid.length) tierTotals[tier] = parseFloat(valid[0].totalFee);
+          }
+
+          const ee   = fact.eeCount ?? 0;
+          const eesp = fact.eeSpouseCount ?? 0;
+          const eech = fact.eeChildCount ?? 0;
+          const fam  = fact.familyCount ?? 0;
+          const total = (ee * (tierTotals["EE"] ?? 0)) +
+                        (eesp * (tierTotals["EE_SPOUSE"] ?? 0)) +
+                        (eech * (tierTotals["EE_CHILD"] ?? 0)) +
+                        (fam  * (tierTotals["FAMILY"] ?? 0));
+          if (total > 0) adminFeeTotal = Math.round(total * 100) / 100;
+        }
+
+        return {
+          report_month: month, report_year: year,
+          ee_count: fact?.eeCount ?? null,
+          ee_spouse_count: fact?.eeSpouseCount ?? null,
+          ee_child_count: fact?.eeChildCount ?? null,
+          family_count: fact?.familyCount ?? null,
+          submitted_charges: fact?.submittedCharges != null ? parseFloat(fact.submittedCharges) : null,
+          paid_claims: fact?.paidClaims != null ? parseFloat(fact.paidClaims) : null,
+          claim_count: fact?.claimCount ?? null,
+          reason_code: fact?.reasonCode ?? null,
+          reason_note: fact?.reasonNote ?? null,
+          release_month: fact?.releaseMonth ?? null,
+          release_year: fact?.releaseYear ?? null,
+          admin_fee_total: adminFeeTotal,
+        };
+      });
+
+      planPayloads.push({
+        plan_id: plan.id, plan_name: plan.planName, plan_year: reportPlanYear,
+        effective_date: effDate.toISOString().split("T")[0],
+        deductible: plan.deductible != null ? parseFloat(String(plan.deductible)) : null,
+        preventive_percent: plan.preventivePercent ?? null,
+        corrective_percent: plan.correctivePercent ?? null,
+        restorative_percent: plan.restorativePercent ?? null,
+        annual_limit: plan.annualLimit != null ? parseFloat(String(plan.annualLimit)) : null,
+        months: monthsPayload,
+      });
+    }
+
+    const factsWithData = allFacts.filter(f => f.paidClaims != null);
+    let dataCurrentAsOf = "";
+    if (factsWithData.length > 0) {
+      const latest = [...factsWithData].sort(
+        (a, b) => (b.reportYear * 12 + b.reportMonth) - (a.reportYear * 12 + a.reportMonth)
+      )[0];
+      dataCurrentAsOf = `${latest.reportYear}-${String(latest.reportMonth).padStart(2, "0")}`;
+    }
+
+    return {
+      client: { client_code: client.clientCode, client_name: client.clientName, funding_basis: client.fundingBasis },
+      plans: planPayloads,
+      generated_at: new Date().toISOString(),
+      data_current_as_of: dataCurrentAsOf,
+      _meta: { reportPlanYear, client },
+    };
+  }
+
+  // GET /api/clients/:id/ppr-report/plan-years — available plan years for the selector
+  app.get("/api/clients/:id/ppr-report/plan-years", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const [clientPlans, allFacts] = await Promise.all([
+        storage.getPlans(clientId),
+        storage.getCurrentFactsForClient(clientId),
+      ]);
+      const activePlans = clientPlans.filter(p => !p.isArchived);
+      const fromPlans = new Set(activePlans.map(p => p.planYear));
+      const fromFacts = new Set(allFacts.map(f => f.reportYear));
+      const years = [...new Set([...fromPlans, ...fromFacts])].sort((a, b) => b - a);
+      const defaultYear = years[0] ?? (activePlans[0]?.planYear ?? new Date().getFullYear());
+      res.json({ planYears: years, defaultPlanYear: defaultYear });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/clients/:id/ppr-report?format=html|pdf[&planYear=YYYY]
+  app.get("/api/clients/:id/ppr-report", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const format    = (req.query.format as string) === "pdf" ? "pdf" : "html";
+      const planYear  = req.query.planYear ? parseInt(req.query.planYear as string) : undefined;
+
+      const { _meta, ...payload } = await buildPprReportPayload(clientId, planYear);
+      const { client } = _meta as any;
+
+      const flaskRes = await fetch("http://127.0.0.1:5001/generate-ppr-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload, output_format: format }),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      const result: any = await flaskRes.json();
+      if (!flaskRes.ok) return res.status(500).json({ message: result.error || "Report generation failed" });
+
+      if (format === "html") {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        // Allow iframes from the same origin
+        res.setHeader("X-Frame-Options", "SAMEORIGIN");
+        return res.send(result.html);
+      } else {
+        const pdfBytes = Buffer.from(result.pdf_b64, "base64");
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition",
+          `attachment; filename="${client.clientCode}-ppr-${(_meta as any).reportPlanYear}.pdf"`);
+        return res.send(pdfBytes);
+      }
+    } catch (err: any) {
+      if ((err as any).status === 404) return res.status(404).json({ message: err.message });
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/clients/:id/ppr-report/save
+  // Generate the PDF and archive it to the documents table
+  app.post("/api/clients/:id/ppr-report/save", requireAuth, async (req, res) => {
+    try {
+      const clientId  = parseInt(req.params.id);
+      const planYear  = req.body.planYear ? parseInt(req.body.planYear) : undefined;
+      const uploadedBy = (req.user as any).fullName;
+
+      const { _meta, ...payload } = await buildPprReportPayload(clientId, planYear);
+      const { reportPlanYear, client } = _meta as any;
+
+      const flaskRes = await fetch("http://127.0.0.1:5001/generate-ppr-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload, output_format: "pdf" }),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      const result: any = await flaskRes.json();
+      if (!flaskRes.ok) return res.status(500).json({ message: result.error || "Report generation failed" });
+
+      const pdfBytes = Buffer.from(result.pdf_b64, "base64");
+      const generatorVersion: string = result.generator_version || "unknown";
+      const timestamp = Date.now();
+
+      // Save PDF to disk under uploads/ppr-reports/<clientId>/
+      const dir = path.join(uploadDir, "ppr-reports", String(clientId));
+      fs.mkdirSync(dir, { recursive: true });
+      const fileName = `${client.clientCode}-ppr-${reportPlanYear}-${timestamp}.pdf`;
+      const filePath = path.join(dir, fileName);
+      fs.writeFileSync(filePath, pdfBytes);
+
+      // Archive as a document record
+      const doc = await storage.createDocument({
+        clientId,
+        planId: null,
+        documentName: `Performance Report — Plan Year ${reportPlanYear}`,
+        category: "PPR_REPORT",
+        filePath,
+        fileName,
+        version: generatorVersion,
+        notes: `Data current as of: ${payload.data_current_as_of || "N/A"}`,
+        uploadedBy,
+      });
+
+      await storage.createAuditLog({
+        userId: (req.user as any).id, userName: uploadedBy,
+        action: "GENERATE_PPR_REPORT", entity: "document",
+        entityId: doc.id,
+        details: `Saved PPR report for ${client.clientName} plan year ${reportPlanYear} (v${generatorVersion})`,
+      });
+
+      res.json({ document: doc, generatorVersion, reportPlanYear });
+    } catch (err: any) {
+      if ((err as any).status === 404) return res.status(404).json({ message: err.message });
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
