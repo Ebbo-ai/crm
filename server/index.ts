@@ -61,26 +61,14 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Idempotent startup migration: remove duplicate plans then enforce uniqueness
+  // Startup migrations: add missing columns, tables, and enums.
+  // The plans uniqueness constraint (client_id, plan_name, plan_year) is managed
+  // by the Drizzle schema and applied to production by the publish flow; it is not
+  // added here. Plan data is guaranteed unique by the constraint itself once in place.
   try {
     const { pool } = await import("./db");
     await pool.query(`
-      DELETE FROM plans
-      WHERE id IN (
-        SELECT MAX(id) FROM plans
-        WHERE is_archived = false
-        GROUP BY client_id, plan_name, plan_year
-        HAVING COUNT(*) > 1
-      );
       DO $$ BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'plans_client_name_year_unique'
-        ) THEN
-          ALTER TABLE plans
-            ADD CONSTRAINT plans_client_name_year_unique
-            UNIQUE (client_id, plan_name, plan_year);
-        END IF;
-
         -- client_status enum + column
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'client_status') THEN
           CREATE TYPE client_status AS ENUM ('PROSPECT', 'ACTIVE', 'TERMINATED');
