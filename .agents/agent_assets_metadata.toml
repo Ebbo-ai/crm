@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "UKKg4eLOfA190la3y9fPG"
+uri = "file://production_export.xlsx"
+type = "table"
+title = "Production Database Export — Clients, Plans, Rate Cards"
