@@ -28,6 +28,43 @@ function isLastDayOfMonth(date: Date): boolean {
   return next.getDate() === 1;
 }
 
+const emptyForm = {
+  clientCode: "",
+  clientName: "",
+  streetAddress: "",
+  suiteUnit: "",
+  city: "",
+  state: "",
+  zipCode: "",
+  industryType: "",
+  numberOfEmployees: "" as string | number,
+  anniversaryDate: "",
+  clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED",
+  terminationDate: "",
+  planType: "DENTAL",
+  networkActive: false,
+  dentalNetworkName: "Dentemax",
+  decisionMakerName: "",
+  decisionMakerTitle: "",
+  decisionMakerPhone: "",
+  decisionMakerEmail: "",
+  adminContactName: "",
+  adminContactTitle: "Admin Contact",
+  adminContactPhone: "",
+  adminContactEmail: "",
+  hasBroker: false,
+  brokerFirmName: "",
+  brokerContactName: "",
+  brokerPhone: "",
+  brokerEmail: "",
+  bankingType: "",
+  fundingType: "",
+  cobraAdministeredBy90d: false,
+  cobraFee: "1.00",
+  accountBalance: "",
+  accountBalanceAsOfDate: "",
+};
+
 export default function ClientFormPage() {
   const params = useParams<{ id?: string }>();
   const isEdit = !!params.id;
@@ -39,25 +76,17 @@ export default function ClientFormPage() {
     enabled: isEdit,
   });
 
-  const [form, setForm] = useState({
-    clientCode: "", clientName: "", streetAddress: "", suiteUnit: "", city: "", state: "", zipCode: "",
-    industryType: "", numberOfEmployees: 1, clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED", terminationDate: "",
-    planType: "DENTAL", networkActive: false, dentalNetworkName: "Dentemax",
-    decisionMakerName: "", decisionMakerTitle: "", decisionMakerPhone: "", decisionMakerEmail: "",
-    adminContactName: "", adminContactTitle: "Admin Contact", adminContactPhone: "", adminContactEmail: "",
-    hasBroker: false, brokerFirmName: "", brokerContactName: "", brokerPhone: "", brokerEmail: "",
-    bankingType: "CLIENT_BANK", fundingType: "REQUIRES_APPROVAL",
-  });
-
+  const [form, setForm] = useState(emptyForm);
   const [sameAsPrimary, setSameAsPrimary] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [codeChecking, setCodeChecking] = useState(false);
 
   useEffect(() => {
     if (existingClient && isEdit) {
-      const isSame = existingClient.adminContactName === existingClient.decisionMakerName
-        && existingClient.adminContactPhone === existingClient.decisionMakerPhone
-        && existingClient.adminContactEmail === existingClient.decisionMakerEmail;
+      const isSame =
+        existingClient.adminContactName === existingClient.decisionMakerName &&
+        existingClient.adminContactPhone === existingClient.decisionMakerPhone &&
+        existingClient.adminContactEmail === existingClient.decisionMakerEmail;
       setSameAsPrimary(isSame);
       setForm({
         clientCode: (existingClient.clientCode || "").replace(/^S-/, ""),
@@ -68,10 +97,18 @@ export default function ClientFormPage() {
         state: existingClient.state || "",
         zipCode: existingClient.zipCode || "",
         industryType: existingClient.industryType || "",
-        numberOfEmployees: existingClient.numberOfEmployees || 1,
-        clientStatus: (existingClient.clientStatus as "PROSPECT" | "ACTIVE" | "TERMINATED") ||
-          (existingClient.isActive === false || existingClient.terminationDate ? "TERMINATED" : "ACTIVE"),
-        terminationDate: existingClient.terminationDate ? existingClient.terminationDate.split("T")[0] : "",
+        numberOfEmployees: existingClient.numberOfEmployees ?? "",
+        anniversaryDate: existingClient.anniversaryDate
+          ? existingClient.anniversaryDate.split("T")[0]
+          : "",
+        clientStatus:
+          (existingClient.clientStatus as "PROSPECT" | "ACTIVE" | "TERMINATED") ||
+          (existingClient.isActive === false || existingClient.terminationDate
+            ? "TERMINATED"
+            : "ACTIVE"),
+        terminationDate: existingClient.terminationDate
+          ? existingClient.terminationDate.split("T")[0]
+          : "",
         planType: existingClient.planType || "DENTAL",
         networkActive: existingClient.networkActive ?? false,
         dentalNetworkName: existingClient.dentalNetworkName || "Dentemax",
@@ -88,12 +125,23 @@ export default function ClientFormPage() {
         brokerContactName: existingClient.brokerContactName || "",
         brokerPhone: existingClient.brokerPhone || "",
         brokerEmail: existingClient.brokerEmail || "",
-        bankingType: existingClient.bankingType || "CLIENT_BANK",
-        fundingType: existingClient.fundingType || "REQUIRES_APPROVAL",
+        bankingType: existingClient.bankingType || "",
+        fundingType: existingClient.fundingType || "",
+        cobraAdministeredBy90d: existingClient.cobraAdministeredBy90d ?? false,
+        cobraFee:
+          existingClient.cobraFee != null ? String(existingClient.cobraFee) : "1.00",
+        accountBalance:
+          existingClient.accountBalance != null
+            ? String(existingClient.accountBalance)
+            : "",
+        accountBalanceAsOfDate: existingClient.accountBalanceAsOfDate
+          ? existingClient.accountBalanceAsOfDate.split("T")[0]
+          : "",
       });
     }
   }, [existingClient, isEdit]);
 
+  // Keep admin contact in sync when "same as primary" is checked
   useEffect(() => {
     if (sameAsPrimary) {
       setForm(prev => ({
@@ -104,7 +152,13 @@ export default function ClientFormPage() {
         adminContactEmail: prev.decisionMakerEmail,
       }));
     }
-  }, [sameAsPrimary, form.decisionMakerName, form.decisionMakerTitle, form.decisionMakerPhone, form.decisionMakerEmail]);
+  }, [
+    sameAsPrimary,
+    form.decisionMakerName,
+    form.decisionMakerTitle,
+    form.decisionMakerPhone,
+    form.decisionMakerEmail,
+  ]);
 
   const mutation = useMutation({
     mutationFn: async (data: any) => {
@@ -128,36 +182,27 @@ export default function ClientFormPage() {
 
   const validate = () => {
     const errs: Record<string, string> = {};
+    // Only three fields are truly required
     if (!form.clientCode.trim()) errs.clientCode = "Client ID is required";
     else if (!/^\d{3}$/.test(form.clientCode)) errs.clientCode = "Enter a 3-digit number (e.g., 001)";
     if (!form.clientName.trim()) errs.clientName = "Client name is required";
-    if (!form.streetAddress.trim()) errs.streetAddress = "Street address is required";
-    if (!form.city.trim()) errs.city = "City is required";
-    if (!form.state) errs.state = "State is required";
-    if (!form.zipCode.trim()) errs.zipCode = "ZIP code is required";
-    else if (!/^\d{5}(-\d{4})?$/.test(form.zipCode)) errs.zipCode = "Invalid ZIP format (00000 or 00000-0000)";
-    if (!form.industryType.trim()) errs.industryType = "Industry type is required";
-    if (form.numberOfEmployees < 1) errs.numberOfEmployees = "Must have at least 1 employee";
-    if (!form.decisionMakerName.trim()) errs.decisionMakerName = "Name is required";
-    if (!form.decisionMakerTitle.trim()) errs.decisionMakerTitle = "Title is required";
-    if (!form.decisionMakerPhone.trim()) errs.decisionMakerPhone = "Phone is required";
-    if (!form.decisionMakerEmail.trim()) errs.decisionMakerEmail = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.decisionMakerEmail)) errs.decisionMakerEmail = "Invalid email";
-    if (!form.adminContactName.trim()) errs.adminContactName = "Name is required";
-    if (!form.adminContactTitle.trim()) errs.adminContactTitle = "Title is required";
-    if (!form.adminContactPhone.trim()) errs.adminContactPhone = "Phone is required";
-    if (!form.adminContactEmail.trim()) errs.adminContactEmail = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminContactEmail)) errs.adminContactEmail = "Invalid email";
-    if (form.hasBroker) {
-      if (!form.brokerFirmName.trim()) errs.brokerFirmName = "Broker firm name is required";
-      if (!form.brokerContactName.trim()) errs.brokerContactName = "Broker contact name is required";
-      if (!form.brokerPhone.trim()) errs.brokerPhone = "Broker phone is required";
-      if (!form.brokerEmail.trim()) errs.brokerEmail = "Broker email is required";
-      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.brokerEmail)) errs.brokerEmail = "Invalid email";
-    }
+    // planType always has a value from the select — no check needed
+
+    // Format checks — only when the field has a value
+    if (form.decisionMakerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.decisionMakerEmail))
+      errs.decisionMakerEmail = "Invalid email format";
+    if (form.adminContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminContactEmail))
+      errs.adminContactEmail = "Invalid email format";
+    if (form.brokerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.brokerEmail))
+      errs.brokerEmail = "Invalid email format";
+    if (form.zipCode && !/^\d{5}(-\d{4})?$/.test(form.zipCode))
+      errs.zipCode = "Invalid ZIP format (00000 or 00000-0000)";
+
+    // Termination date must be end-of-month
     if (form.clientStatus === "TERMINATED" && form.terminationDate) {
       const d = new Date(form.terminationDate + "T00:00:00");
-      if (!isLastDayOfMonth(d)) errs.terminationDate = "Termination date must be the last day of a calendar month";
+      if (!isLastDayOfMonth(d))
+        errs.terminationDate = "Termination date must be the last day of a calendar month";
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -184,8 +229,12 @@ export default function ClientFormPage() {
     }
     setCodeChecking(false);
 
-    const data: any = { ...form, clientCode: fullCode, numberOfEmployees: Number(form.numberOfEmployees) };
-    data.isActive = data.clientStatus === "ACTIVE"; // keep backward-compatible field in sync
+    const data: any = {
+      ...form,
+      clientCode: fullCode,
+      numberOfEmployees: form.numberOfEmployees !== "" ? Number(form.numberOfEmployees) : null,
+    };
+    data.isActive = data.clientStatus === "ACTIVE";
     if (data.clientStatus === "TERMINATED" && data.terminationDate) {
       data.terminationDate = new Date(data.terminationDate + "T00:00:00");
     } else {
@@ -198,6 +247,21 @@ export default function ClientFormPage() {
       data.brokerPhone = null;
       data.brokerEmail = null;
     }
+    // Nullify empty strings for optional fields
+    if (!data.bankingType) data.bankingType = null;
+    if (!data.fundingType) data.fundingType = null;
+    if (!data.anniversaryDate) data.anniversaryDate = null;
+    // Account balance only applies to 90 Degree bank
+    if (data.bankingType !== "NINETY_DEGREE_BANK") {
+      data.accountBalance = null;
+      data.accountBalanceAsOfDate = null;
+    } else {
+      data.accountBalance = data.accountBalance !== "" ? data.accountBalance : null;
+      data.accountBalanceAsOfDate = data.accountBalanceAsOfDate
+        ? new Date(data.accountBalanceAsOfDate + "T00:00:00")
+        : null;
+    }
+    if (!data.cobraAdministeredBy90d) data.cobraFee = null;
     mutation.mutate(data);
   };
 
@@ -215,6 +279,14 @@ export default function ClientFormPage() {
     </Label>
   );
 
+  const OptionalLabel = ({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) => (
+    <Label htmlFor={htmlFor} className="text-sm font-medium text-[#2C3E50]">
+      {children}
+    </Label>
+  );
+
+  const is90dBank = form.bankingType === "NINETY_DEGREE_BANK";
+
   return (
     <div data-testid="client-form-page">
       <div className="flex items-center gap-3 mb-6">
@@ -225,11 +297,14 @@ export default function ClientFormPage() {
           <h1 className="text-2xl font-bold text-[#1A5276]">
             {isEdit ? "Edit Client" : "Add New Client"}
           </h1>
-          <p className="text-sm text-[#94A3B8]">{isEdit ? "Update client information" : "Create a new client account"}</p>
+          <p className="text-sm text-[#94A3B8]">
+            Only Client ID, Client Name, and Plan Type are required. All other fields can be filled in later.
+          </p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl">
+        {/* ── Client Information ─────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Client Information</h2>
@@ -242,10 +317,7 @@ export default function ClientFormPage() {
                 <Input
                   id="clientCode"
                   value={form.clientCode}
-                  onChange={e => {
-                    const val = e.target.value.replace(/\D/g, "").slice(0, 3);
-                    updateField("clientCode", val);
-                  }}
+                  onChange={e => updateField("clientCode", e.target.value.replace(/\D/g, "").slice(0, 3))}
                   placeholder="001"
                   maxLength={3}
                   className="rounded-l-none"
@@ -261,50 +333,65 @@ export default function ClientFormPage() {
               <FieldError field="clientName" />
             </div>
             <div className="md:col-span-2">
-              <RequiredLabel htmlFor="streetAddress">Street Address</RequiredLabel>
+              <OptionalLabel htmlFor="streetAddress">Street Address</OptionalLabel>
               <Input id="streetAddress" value={form.streetAddress} onChange={e => updateField("streetAddress", e.target.value)} data-testid="input-street-address" />
-              <FieldError field="streetAddress" />
             </div>
             <div>
-              <Label htmlFor="suiteUnit" className="text-sm font-medium text-[#2C3E50]">Suite/Unit</Label>
+              <OptionalLabel htmlFor="suiteUnit">Suite/Unit</OptionalLabel>
               <Input id="suiteUnit" value={form.suiteUnit} onChange={e => updateField("suiteUnit", e.target.value)} data-testid="input-suite" />
             </div>
             <div>
-              <RequiredLabel htmlFor="city">City</RequiredLabel>
+              <OptionalLabel htmlFor="city">City</OptionalLabel>
               <Input id="city" value={form.city} onChange={e => updateField("city", e.target.value)} data-testid="input-city" />
-              <FieldError field="city" />
             </div>
             <div>
-              <RequiredLabel htmlFor="state">State</RequiredLabel>
+              <OptionalLabel htmlFor="state">State</OptionalLabel>
               <Select value={form.state} onValueChange={v => updateField("state", v)}>
                 <SelectTrigger data-testid="select-state"><SelectValue placeholder="Select state" /></SelectTrigger>
                 <SelectContent>
                   {US_STATES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <FieldError field="state" />
             </div>
             <div>
-              <RequiredLabel htmlFor="zipCode">ZIP Code</RequiredLabel>
+              <OptionalLabel htmlFor="zipCode">ZIP Code</OptionalLabel>
               <Input id="zipCode" value={form.zipCode} onChange={e => updateField("zipCode", e.target.value)} placeholder="00000" data-testid="input-zip" />
               <FieldError field="zipCode" />
             </div>
             <div>
-              <RequiredLabel htmlFor="industryType">Type of Industry</RequiredLabel>
+              <OptionalLabel htmlFor="industryType">Type of Industry</OptionalLabel>
               <Input id="industryType" value={form.industryType} onChange={e => updateField("industryType", e.target.value)} data-testid="input-industry" />
-              <FieldError field="industryType" />
             </div>
             <div>
-              <RequiredLabel htmlFor="numberOfEmployees">Number of Employees</RequiredLabel>
-              <Input id="numberOfEmployees" type="number" min={1} value={form.numberOfEmployees} onChange={e => updateField("numberOfEmployees", e.target.value)} data-testid="input-employees" />
-              <FieldError field="numberOfEmployees" />
+              <OptionalLabel htmlFor="numberOfEmployees">Number of Employees</OptionalLabel>
+              <Input
+                id="numberOfEmployees"
+                type="number"
+                min={0}
+                value={form.numberOfEmployees}
+                onChange={e => updateField("numberOfEmployees", e.target.value)}
+                placeholder="e.g. 250"
+                data-testid="input-employees"
+              />
+            </div>
+            <div>
+              <OptionalLabel htmlFor="anniversaryDate">Anniversary Date</OptionalLabel>
+              <Input
+                id="anniversaryDate"
+                type="date"
+                value={form.anniversaryDate}
+                onChange={e => updateField("anniversaryDate", e.target.value)}
+                data-testid="input-anniversary-date"
+              />
+              <p className="text-xs text-[#94A3B8] mt-1">Plan anniversary — drives renewal timing</p>
             </div>
           </CardContent>
         </Card>
 
+        {/* ── Plan Type ──────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Plan Type</h2>
+            <h2 className="text-lg font-semibold text-[#1A5276]">Plan Type <span className="text-[#EF4444]">*</span></h2>
           </CardHeader>
           <CardContent className="px-6 pb-6">
             <Select value={form.planType} onValueChange={v => updateField("planType", v)}>
@@ -316,6 +403,7 @@ export default function ClientFormPage() {
           </CardContent>
         </Card>
 
+        {/* ── Network ────────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Network</h2>
@@ -327,45 +415,48 @@ export default function ClientFormPage() {
             </div>
             {form.networkActive && (
               <div>
-                <Label htmlFor="dentalNetworkName" className="text-sm font-medium text-[#2C3E50]">Dental Network Name</Label>
+                <OptionalLabel htmlFor="dentalNetworkName">Dental Network Name</OptionalLabel>
                 <Input id="dentalNetworkName" value={form.dentalNetworkName} onChange={e => updateField("dentalNetworkName", e.target.value)} data-testid="input-network-name" />
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* ── Decision Maker ─────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Decision Maker (Primary Contact)</h2>
+            <p className="text-xs text-[#94A3B8] mt-0.5">All fields optional — enter whatever you have</p>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <RequiredLabel htmlFor="dmName">Full Name</RequiredLabel>
+              <OptionalLabel htmlFor="dmName">Full Name</OptionalLabel>
               <Input id="dmName" value={form.decisionMakerName} onChange={e => updateField("decisionMakerName", e.target.value)} data-testid="input-dm-name" />
-              <FieldError field="decisionMakerName" />
             </div>
             <div>
-              <RequiredLabel htmlFor="dmTitle">Title</RequiredLabel>
+              <OptionalLabel htmlFor="dmTitle">Title</OptionalLabel>
               <Input id="dmTitle" value={form.decisionMakerTitle} onChange={e => updateField("decisionMakerTitle", e.target.value)} data-testid="input-dm-title" />
-              <FieldError field="decisionMakerTitle" />
             </div>
             <div>
-              <RequiredLabel htmlFor="dmPhone">Phone</RequiredLabel>
+              <OptionalLabel htmlFor="dmPhone">Phone</OptionalLabel>
               <Input id="dmPhone" value={form.decisionMakerPhone} onChange={e => updateField("decisionMakerPhone", e.target.value)} onBlur={e => updateField("decisionMakerPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" data-testid="input-dm-phone" />
-              <FieldError field="decisionMakerPhone" />
             </div>
             <div>
-              <RequiredLabel htmlFor="dmEmail">Email</RequiredLabel>
+              <OptionalLabel htmlFor="dmEmail">Email</OptionalLabel>
               <Input id="dmEmail" type="email" value={form.decisionMakerEmail} onChange={e => updateField("decisionMakerEmail", e.target.value)} data-testid="input-dm-email" />
               <FieldError field="decisionMakerEmail" />
             </div>
           </CardContent>
         </Card>
 
+        {/* ── Admin Contact ──────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#1A5276]">Administrative Support Contact</h2>
+              <div>
+                <h2 className="text-lg font-semibold text-[#1A5276]">Administrative Support Contact</h2>
+                <p className="text-xs text-[#94A3B8] mt-0.5">All fields optional — enter whatever you have</p>
+              </div>
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="sameAsPrimary"
@@ -385,34 +476,32 @@ export default function ClientFormPage() {
                   }}
                   data-testid="checkbox-same-as-primary"
                 />
-                <Label htmlFor="sameAsPrimary" className="text-sm text-[#2C3E50] cursor-pointer">Same as Primary Contact</Label>
+                <Label htmlFor="sameAsPrimary" className="text-sm text-[#2C3E50] cursor-pointer">Same as Primary</Label>
               </div>
             </div>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <RequiredLabel htmlFor="acName">Full Name</RequiredLabel>
+              <OptionalLabel htmlFor="acName">Full Name</OptionalLabel>
               <Input id="acName" value={form.adminContactName} onChange={e => updateField("adminContactName", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-name" />
-              <FieldError field="adminContactName" />
             </div>
             <div>
-              <RequiredLabel htmlFor="acTitle">Title</RequiredLabel>
+              <OptionalLabel htmlFor="acTitle">Title</OptionalLabel>
               <Input id="acTitle" value={form.adminContactTitle} onChange={e => updateField("adminContactTitle", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-title" />
-              <FieldError field="adminContactTitle" />
             </div>
             <div>
-              <RequiredLabel htmlFor="acPhone">Phone</RequiredLabel>
+              <OptionalLabel htmlFor="acPhone">Phone</OptionalLabel>
               <Input id="acPhone" value={form.adminContactPhone} onChange={e => updateField("adminContactPhone", e.target.value)} onBlur={e => updateField("adminContactPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-phone" />
-              <FieldError field="adminContactPhone" />
             </div>
             <div>
-              <RequiredLabel htmlFor="acEmail">Email</RequiredLabel>
+              <OptionalLabel htmlFor="acEmail">Email</OptionalLabel>
               <Input id="acEmail" type="email" value={form.adminContactEmail} onChange={e => updateField("adminContactEmail", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-email" />
               <FieldError field="adminContactEmail" />
             </div>
           </CardContent>
         </Card>
 
+        {/* ── Broker ─────────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Broker</h2>
@@ -423,67 +512,142 @@ export default function ClientFormPage() {
               <Label className="text-sm text-[#2C3E50]">Has Broker</Label>
             </div>
             {form.hasBroker && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div>
-                  <RequiredLabel htmlFor="brokerFirmName">Broker Firm Name</RequiredLabel>
-                  <Input id="brokerFirmName" value={form.brokerFirmName} onChange={e => updateField("brokerFirmName", e.target.value)} data-testid="input-broker-firm" />
-                  <FieldError field="brokerFirmName" />
-                </div>
-                <div>
-                  <RequiredLabel htmlFor="brokerContactName">Broker Contact Name</RequiredLabel>
-                  <Input id="brokerContactName" value={form.brokerContactName} onChange={e => updateField("brokerContactName", e.target.value)} data-testid="input-broker-contact" />
-                  <FieldError field="brokerContactName" />
-                </div>
-                <div>
-                  <RequiredLabel htmlFor="brokerPhone">Phone</RequiredLabel>
-                  <Input id="brokerPhone" value={form.brokerPhone} onChange={e => updateField("brokerPhone", e.target.value)} onBlur={e => updateField("brokerPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" data-testid="input-broker-phone" />
-                  <FieldError field="brokerPhone" />
-                </div>
-                <div>
-                  <RequiredLabel htmlFor="brokerEmail">Email</RequiredLabel>
-                  <Input id="brokerEmail" type="email" value={form.brokerEmail} onChange={e => updateField("brokerEmail", e.target.value)} data-testid="input-broker-email" />
-                  <FieldError field="brokerEmail" />
+              <div className="space-y-3">
+                <p className="text-xs text-[#94A3B8]">Enter whatever you have — all broker fields are optional</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <OptionalLabel htmlFor="brokerFirmName">Broker Firm Name</OptionalLabel>
+                    <Input id="brokerFirmName" value={form.brokerFirmName} onChange={e => updateField("brokerFirmName", e.target.value)} data-testid="input-broker-firm" />
+                  </div>
+                  <div>
+                    <OptionalLabel htmlFor="brokerContactName">Broker Contact Name</OptionalLabel>
+                    <Input id="brokerContactName" value={form.brokerContactName} onChange={e => updateField("brokerContactName", e.target.value)} data-testid="input-broker-contact" />
+                  </div>
+                  <div>
+                    <OptionalLabel htmlFor="brokerPhone">Phone</OptionalLabel>
+                    <Input id="brokerPhone" value={form.brokerPhone} onChange={e => updateField("brokerPhone", e.target.value)} onBlur={e => updateField("brokerPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" data-testid="input-broker-phone" />
+                  </div>
+                  <div>
+                    <OptionalLabel htmlFor="brokerEmail">Email</OptionalLabel>
+                    <Input id="brokerEmail" type="email" value={form.brokerEmail} onChange={e => updateField("brokerEmail", e.target.value)} data-testid="input-broker-email" />
+                    <FieldError field="brokerEmail" />
+                  </div>
                 </div>
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* ── Banking, Funding & COBRA ───────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Banking & Funding</h2>
+            <h2 className="text-lg font-semibold text-[#1A5276]">Banking, Funding & COBRA</h2>
           </CardHeader>
-          <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <RequiredLabel htmlFor="bankingType">Banking</RequiredLabel>
-              <Select value={form.bankingType} onValueChange={v => updateField("bankingType", v)}>
-                <SelectTrigger data-testid="select-banking"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CLIENT_BANK">Client Bank Account</SelectItem>
-                  <SelectItem value="NINETY_DEGREE_BANK">90 Degree Bank Account</SelectItem>
-                </SelectContent>
-              </Select>
+          <CardContent className="px-6 pb-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <OptionalLabel htmlFor="bankingType">Who holds the bank account?</OptionalLabel>
+                <Select value={form.bankingType} onValueChange={v => updateField("bankingType", v)}>
+                  <SelectTrigger data-testid="select-banking"><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CLIENT_BANK">Employer / Client Bank Account</SelectItem>
+                    <SelectItem value="NINETY_DEGREE_BANK">90 Degree Benefits Bank Account</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <OptionalLabel htmlFor="fundingType">Funding Approval</OptionalLabel>
+                <Select value={form.fundingType} onValueChange={v => updateField("fundingType", v)}>
+                  <SelectTrigger data-testid="select-funding"><SelectValue placeholder="Select…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="REQUIRES_APPROVAL">Client Requires Approval</SelectItem>
+                    <SelectItem value="PROCESS_WITHOUT_APPROVAL">Process Without Approval</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div>
-              <RequiredLabel htmlFor="fundingType">Funding</RequiredLabel>
-              <Select value={form.fundingType} onValueChange={v => updateField("fundingType", v)}>
-                <SelectTrigger data-testid="select-funding"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="REQUIRES_APPROVAL">Client Requires Approval</SelectItem>
-                  <SelectItem value="PROCESS_WITHOUT_APPROVAL">Process Without Approval</SelectItem>
-                </SelectContent>
-              </Select>
+
+            {/* Account balance — only when 90 Degree holds the funds */}
+            {is90dBank && (
+              <div className="border-t pt-4">
+                <p className="text-sm font-medium text-[#2C3E50] mb-3">Account Balance</p>
+                <p className="text-xs text-[#94A3B8] mb-3">
+                  This is the actual bank account balance supplied by 90 Degree monthly. It is separate
+                  from the plan surplus or deficit — the account holds more than just claims funds, and
+                  admin fees are drawn from it, so the two numbers will legitimately differ. Leave blank
+                  between updates.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <OptionalLabel htmlFor="accountBalance">Account Balance ($)</OptionalLabel>
+                    <Input
+                      id="accountBalance"
+                      type="number"
+                      step="0.01"
+                      value={form.accountBalance}
+                      onChange={e => updateField("accountBalance", e.target.value)}
+                      placeholder="e.g. 12500.00"
+                      data-testid="input-account-balance"
+                    />
+                  </div>
+                  <div>
+                    <OptionalLabel htmlFor="accountBalanceAsOfDate">Balance As-Of Date</OptionalLabel>
+                    <Input
+                      id="accountBalanceAsOfDate"
+                      type="date"
+                      value={form.accountBalanceAsOfDate}
+                      onChange={e => updateField("accountBalanceAsOfDate", e.target.value)}
+                      data-testid="input-balance-as-of-date"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* COBRA */}
+            <div className="border-t pt-4">
+              <p className="text-sm font-medium text-[#2C3E50] mb-3">COBRA Administration</p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <Checkbox
+                    id="cobraAdministeredBy90d"
+                    checked={form.cobraAdministeredBy90d}
+                    onCheckedChange={v => updateField("cobraAdministeredBy90d", !!v)}
+                    data-testid="checkbox-cobra"
+                  />
+                  <Label htmlFor="cobraAdministeredBy90d" className="text-sm text-[#2C3E50] cursor-pointer">
+                    90 Degree Benefits administers COBRA for this client
+                  </Label>
+                </div>
+                {form.cobraAdministeredBy90d && (
+                  <div className="max-w-xs">
+                    <OptionalLabel htmlFor="cobraFee">COBRA Admin Fee ($/month)</OptionalLabel>
+                    <Input
+                      id="cobraFee"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.cobraFee}
+                      onChange={e => updateField("cobraFee", e.target.value)}
+                      placeholder="1.00"
+                      data-testid="input-cobra-fee"
+                    />
+                    <p className="text-xs text-[#94A3B8] mt-1">Standard rate is $1.00/month. Edit only if this client differs.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
 
+        {/* ── Account Status ─────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Account Status</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
             <div>
-              <RequiredLabel htmlFor="clientStatus">Status</RequiredLabel>
+              <OptionalLabel htmlFor="clientStatus">Status</OptionalLabel>
               <Select
                 value={form.clientStatus}
                 onValueChange={v => {
@@ -501,15 +665,23 @@ export default function ClientFormPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-[#94A3B8] mt-1">
-                {form.clientStatus === "PROSPECT" ? "Prospect clients are being quoted but have not yet signed." :
-                 form.clientStatus === "TERMINATED" ? "Terminated clients are retained for historical reference." :
-                 "Active clients are currently covered under a plan."}
+                {form.clientStatus === "PROSPECT"
+                  ? "Prospect clients are being quoted but have not yet signed."
+                  : form.clientStatus === "TERMINATED"
+                    ? "Terminated clients are retained for historical reference."
+                    : "Active clients are currently covered under a plan."}
               </p>
             </div>
             {form.clientStatus === "TERMINATED" && (
               <div>
-                <RequiredLabel htmlFor="terminationDate">Termination Date</RequiredLabel>
-                <Input id="terminationDate" type="date" value={form.terminationDate} onChange={e => updateField("terminationDate", e.target.value)} data-testid="input-termination-date" />
+                <OptionalLabel htmlFor="terminationDate">Termination Date</OptionalLabel>
+                <Input
+                  id="terminationDate"
+                  type="date"
+                  value={form.terminationDate}
+                  onChange={e => updateField("terminationDate", e.target.value)}
+                  data-testid="input-termination-date"
+                />
                 <p className="text-xs text-[#94A3B8] mt-1">Must be the last day of a calendar month</p>
                 <FieldError field="terminationDate" />
               </div>
@@ -518,8 +690,14 @@ export default function ClientFormPage() {
         </Card>
 
         <div className="flex items-center gap-3 pb-8">
-          <Button type="submit" disabled={mutation.isPending} className="bg-[#1A5276] text-white gap-2" data-testid="button-save">
-            <Save className="w-4 h-4" /> {mutation.isPending ? "Saving..." : "Save Client"}
+          <Button
+            type="submit"
+            disabled={mutation.isPending || codeChecking}
+            className="bg-[#1A5276] text-white gap-2"
+            data-testid="button-save"
+          >
+            <Save className="w-4 h-4" />
+            {mutation.isPending || codeChecking ? "Saving..." : "Save Client"}
           </Button>
           <Button type="button" variant="outline" onClick={() => navigate("/clients")} data-testid="button-cancel">
             Cancel

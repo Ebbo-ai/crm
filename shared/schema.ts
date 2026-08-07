@@ -55,34 +55,37 @@ export const clients = pgTable("clients", {
   id: serial("id").primaryKey(),
   clientCode: text("client_code").notNull().unique(),
   clientName: text("client_name").notNull().unique(),
-  streetAddress: text("street_address").notNull(),
+  // Address — all optional; partial records are valid during import
+  streetAddress: text("street_address"),
   suiteUnit: text("suite_unit"),
-  city: text("city").notNull(),
-  state: text("state").notNull(),
-  zipCode: text("zip_code").notNull(),
-  industryType: text("industry_type").notNull(),
-  numberOfEmployees: integer("number_of_employees").notNull(),
+  city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
+  industryType: text("industry_type"),
+  numberOfEmployees: integer("number_of_employees"),
   isActive: boolean("is_active").notNull().default(true),
   terminationDate: timestamp("termination_date"),
   clientStatus: clientStatusEnum("client_status").notNull().default("ACTIVE"),
   planType: planTypeEnum("plan_type").notNull(),
   networkActive: boolean("network_active").notNull().default(false),
   dentalNetworkName: text("dental_network_name").default("Dentemax"),
-  decisionMakerName: text("decision_maker_name").notNull(),
-  decisionMakerTitle: text("decision_maker_title").notNull(),
-  decisionMakerPhone: text("decision_maker_phone").notNull(),
-  decisionMakerEmail: text("decision_maker_email").notNull(),
-  adminContactName: text("admin_contact_name").notNull(),
-  adminContactTitle: text("admin_contact_title").notNull().default("Admin Contact"),
-  adminContactPhone: text("admin_contact_phone").notNull(),
-  adminContactEmail: text("admin_contact_email").notNull(),
+  // Contacts — all optional; save whatever we have and fill the rest later
+  decisionMakerName: text("decision_maker_name"),
+  decisionMakerTitle: text("decision_maker_title"),
+  decisionMakerPhone: text("decision_maker_phone"),
+  decisionMakerEmail: text("decision_maker_email"),
+  adminContactName: text("admin_contact_name"),
+  adminContactTitle: text("admin_contact_title").default("Admin Contact"),
+  adminContactPhone: text("admin_contact_phone"),
+  adminContactEmail: text("admin_contact_email"),
   hasBroker: boolean("has_broker").notNull().default(false),
   brokerFirmName: text("broker_firm_name"),
   brokerContactName: text("broker_contact_name"),
   brokerPhone: text("broker_phone"),
   brokerEmail: text("broker_email"),
-  bankingType: bankingTypeEnum("banking_type").notNull(),
-  fundingType: fundingTypeEnum("funding_type").notNull(),
+  // Banking & funding — optional; clients may be unknown at import time
+  bankingType: bankingTypeEnum("banking_type"),
+  fundingType: fundingTypeEnum("funding_type"),
   // How the employer funds the account. Default: CLAIMS_PLUS_ADMIN (administrator draws all fees
   // from the plan account, so admin is always funded in together with claims).
   fundingBasis: fundingBasisEnum("funding_basis").notNull().default("CLAIMS_PLUS_ADMIN"),
@@ -90,6 +93,23 @@ export const clients = pgTable("clients", {
   zeroPayFlag: boolean("zero_paid_flag").notNull().default(false),
   // Set to true when actual account_balance is on file and is materially below the billed position
   underfundingFlag: boolean("underfunding_flag").notNull().default(false),
+
+  // ── New fields ──────────────────────────────────────────────────────────
+  // Plan anniversary date — drives renewal timing
+  anniversaryDate: timestamp("anniversary_date"),
+
+  // COBRA administration by 90 Degree Benefits
+  cobraAdministeredBy90d: boolean("cobra_administered_by_90d").notNull().default(false),
+  // COBRA admin fee ($/member/month). Historically $1.00; editable per client.
+  cobraFee: decimal("cobra_fee", { precision: 10, scale: 2 }).default("1.00"),
+
+  // Account balance — only relevant when bankingType = NINETY_DEGREE_BANK.
+  // NOTE: this is the actual bank account balance, not the plan surplus/deficit.
+  // The two numbers legitimately differ: the account holds more than claims funds,
+  // and admin fees are drawn out of it, so do not calculate one from the other.
+  accountBalance: decimal("account_balance", { precision: 14, scale: 2 }),
+  accountBalanceAsOfDate: timestamp("account_balance_as_of_date"),
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -139,7 +159,8 @@ export const rateCards = pgTable("rate_cards", {
   // rather than being retroactively restated when a group renews
   effectiveDate: timestamp("effective_date"),
   baseAdminFee: decimal("base_admin_fee", { precision: 10, scale: 2 }).notNull(),
-  spreadAdminFee: decimal("spread_admin_fee", { precision: 10, scale: 2 }).notNull(),
+  // Simple's marketing and program fee. Previously named "spread admin fee".
+  simpleFee: decimal("simple_fee", { precision: 10, scale: 2 }).notNull(),
   networkFee: decimal("network_fee", { precision: 10, scale: 2 }).default("0.00"),
   brokerFee: decimal("broker_fee", { precision: 10, scale: 2 }).default("0.00"),
   totalAdminFee: decimal("total_admin_fee", { precision: 10, scale: 2 }).notNull(),

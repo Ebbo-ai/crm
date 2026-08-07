@@ -362,6 +362,58 @@ app.use((req, res, next) => {
       `);
     } catch (_) { /* already exists */ }
 
+    // Phase 3: client schema relaxation + new client fields + rate_cards rename.
+    await pool.query(`
+      DO $$ BEGIN
+        -- Relax NOT NULL on client fields that are now optional.
+        -- DROP NOT NULL is a no-op if the column is already nullable.
+        ALTER TABLE clients ALTER COLUMN street_address    DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN city              DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN state             DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN zip_code          DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN industry_type     DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN number_of_employees DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN decision_maker_name  DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN decision_maker_title DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN decision_maker_phone DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN decision_maker_email DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN admin_contact_name   DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN admin_contact_title  DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN admin_contact_phone  DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN admin_contact_email  DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN banking_type         DROP NOT NULL;
+        ALTER TABLE clients ALTER COLUMN funding_type         DROP NOT NULL;
+
+        -- New client fields
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'anniversary_date') THEN
+          ALTER TABLE clients ADD COLUMN anniversary_date TIMESTAMP;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'cobra_administered_by_90d') THEN
+          ALTER TABLE clients ADD COLUMN cobra_administered_by_90d BOOLEAN NOT NULL DEFAULT false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'cobra_fee') THEN
+          ALTER TABLE clients ADD COLUMN cobra_fee DECIMAL(10,2) DEFAULT 1.00;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'account_balance') THEN
+          ALTER TABLE clients ADD COLUMN account_balance DECIMAL(14,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'account_balance_as_of_date') THEN
+          ALTER TABLE clients ADD COLUMN account_balance_as_of_date TIMESTAMP;
+        END IF;
+
+        -- Rename spread_admin_fee → simple_fee on rate_cards
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'rate_cards' AND column_name = 'spread_admin_fee') THEN
+          ALTER TABLE rate_cards RENAME COLUMN spread_admin_fee TO simple_fee;
+        END IF;
+      END $$;
+    `);
+
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
   } catch (err: any) {
     console.error("Startup migration error:", err.message);

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Plus, Users, Building2, MapPin } from "lucide-react";
 import { PLAN_TYPE_LABELS } from "@/lib/constants";
+import { getClientCompleteness } from "@/lib/client-completeness";
 
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
@@ -134,10 +135,25 @@ export default function ClientsPage() {
                       <span className="text-xs font-medium text-[#2E86C1]">
                         {PLAN_TYPE_LABELS[client.planType] || client.planType}
                       </span>
-                      <span className="text-xs text-[#94A3B8]">
-                        {client.numberOfEmployees} employees
-                      </span>
+                      {client.numberOfEmployees != null && (
+                        <span className="text-xs text-[#94A3B8]">
+                          {client.numberOfEmployees} employees
+                        </span>
+                      )}
                     </div>
+                    {(() => {
+                      const comp = getClientCompleteness(client);
+                      if (comp.isComplete) return null;
+                      const color = comp.pct >= 75 ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : comp.pct >= 40 ? "bg-orange-50 text-orange-700 border-orange-200"
+                        : "bg-red-50 text-red-700 border-red-200";
+                      return (
+                        <div className={`mt-2 text-[11px] px-2 py-1 rounded border ${color} flex items-center gap-1`}>
+                          <span className="font-semibold">{comp.pct}% complete</span>
+                          <span className="opacity-70">— {comp.missing.length} field{comp.missing.length !== 1 ? "s" : ""} missing</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </CardContent>
               </Card>

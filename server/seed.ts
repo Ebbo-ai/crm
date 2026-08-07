@@ -142,10 +142,10 @@ export async function seedDatabase() {
   });
 
   await storage.upsertRateCards(plan1.id, [
-    { planId: plan1.id, tier: "EE", baseAdminFee: "8.50", spreadAdminFee: "3.25", networkFee: "2.00", brokerFee: "1.50", totalAdminFee: "13.75", totalFee: "15.25", expectedClaims: "32.00", monthlyPremium: "47.25" },
-    { planId: plan1.id, tier: "EE_CHILD", baseAdminFee: "14.00", spreadAdminFee: "5.50", networkFee: "3.50", brokerFee: "2.50", totalAdminFee: "23.00", totalFee: "25.50", expectedClaims: "55.00", monthlyPremium: "80.50" },
-    { planId: plan1.id, tier: "EE_SPOUSE", baseAdminFee: "16.00", spreadAdminFee: "6.00", networkFee: "4.00", brokerFee: "3.00", totalAdminFee: "26.00", totalFee: "29.00", expectedClaims: "62.00", monthlyPremium: "91.00" },
-    { planId: plan1.id, tier: "FAMILY", baseAdminFee: "22.00", spreadAdminFee: "8.50", networkFee: "5.50", brokerFee: "4.00", totalAdminFee: "36.00", totalFee: "40.00", expectedClaims: "85.00", monthlyPremium: "125.00" },
+    { planId: plan1.id, tier: "EE", baseAdminFee: "8.50", simpleFee: "3.25", networkFee: "2.00", brokerFee: "1.50", totalAdminFee: "13.75", totalFee: "15.25", expectedClaims: "32.00", monthlyPremium: "47.25" },
+    { planId: plan1.id, tier: "EE_CHILD", baseAdminFee: "14.00", simpleFee: "5.50", networkFee: "3.50", brokerFee: "2.50", totalAdminFee: "23.00", totalFee: "25.50", expectedClaims: "55.00", monthlyPremium: "80.50" },
+    { planId: plan1.id, tier: "EE_SPOUSE", baseAdminFee: "16.00", simpleFee: "6.00", networkFee: "4.00", brokerFee: "3.00", totalAdminFee: "26.00", totalFee: "29.00", expectedClaims: "62.00", monthlyPremium: "91.00" },
+    { planId: plan1.id, tier: "FAMILY", baseAdminFee: "22.00", simpleFee: "8.50", networkFee: "5.50", brokerFee: "4.00", totalAdminFee: "36.00", totalFee: "40.00", expectedClaims: "85.00", monthlyPremium: "125.00" },
   ]);
 
   await storage.createPlan({

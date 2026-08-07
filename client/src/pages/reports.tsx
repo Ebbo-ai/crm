@@ -107,7 +107,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
           <tr style="background:#F0F4F8;">
             <th style="text-align:left;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Tier</th>
             <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Base Admin</th>
-            <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Spread</th>
+            <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Simple Fee</th>
             <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Network</th>
             <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Broker Fee</th>
             <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Total Fee</th>
@@ -119,7 +119,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
             <tr style="border-bottom:1px solid #F1F5F9;">
               <td style="padding:7px 10px;font-weight:600;color:#2C3E50;">${TIER_LABELS[r.tier] ?? r.tier}</td>
               <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.baseAdminFee)}</td>
-              <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.spreadAdminFee)}</td>
+              <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.simpleFee)}</td>
               <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.networkFee)}</td>
               <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.brokerFee)}</td>
               <td style="padding:7px 10px;text-align:right;font-weight:600;color:#1A5276;">${formatCurrency(r.totalFee)}</td>
@@ -427,7 +427,7 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
                           <tr className="bg-[#F0F4F8]">
                             <th className="text-left px-3 py-2 font-semibold text-[#64748B]">Tier</th>
                             <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Base Admin</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Spread</th>
+                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Simple Fee</th>
                             <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Network</th>
                             <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Broker Fee</th>
                             <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Total Fee</th>
@@ -439,7 +439,7 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
                             <tr key={r.id} className="border-t border-gray-50">
                               <td className="px-3 py-2 font-semibold text-[#2C3E50]">{TIER_LABELS[r.tier] ?? r.tier}</td>
                               <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.baseAdminFee)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.spreadAdminFee)}</td>
+                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.simpleFee)}</td>
                               <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.networkFee)}</td>
                               <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.brokerFee)}</td>
                               <td className="px-3 py-2 text-right font-semibold text-[#1A5276]">{formatCurrency(r.totalFee)}</td>

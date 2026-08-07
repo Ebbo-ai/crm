@@ -528,7 +528,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                   <tbody>
                     {[
                       { key: "baseAdminFee", label: "Base Admin Fee" },
-                      { key: "spreadAdminFee", label: "Simple Marketing Fee" },
+                      { key: "simpleFee", label: "Simple Fee" },
                       ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee" }] : []),
                       { key: "brokerFee", label: client?.hasBroker ? "Broker Fee" : "Broker Fee — No Broker" },
                       { key: "totalAdminFee", label: "Total Admin Fee" },
@@ -1145,7 +1145,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, existingRates
   const tiers = ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"] as const;
   const feeFields = [
     { key: "baseAdminFee", label: "Base Admin Fee", required: true },
-    { key: "spreadAdminFee", label: "Simple Marketing Fee", required: true },
+    { key: "simpleFee", label: "Simple Fee", required: true },
     ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee", required: false }] : []),
     { key: "brokerFee", label: client?.hasBroker ? "Broker Fee" : "Broker Fee — No Broker", required: false },
     { key: "totalAdminFee", label: "Total Admin Fee", required: true },
@@ -1187,7 +1187,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, existingRates
       planId,
       tier,
       baseAdminFee: rates[tier].baseAdminFee || "0.00",
-      spreadAdminFee: rates[tier].spreadAdminFee || "0.00",
+      simpleFee: rates[tier].simpleFee || "0.00",
       networkFee: rates[tier].networkFee || "0.00",
       brokerFee: rates[tier].brokerFee || "0.00",
       totalAdminFee: rates[tier].totalAdminFee || "0.00",

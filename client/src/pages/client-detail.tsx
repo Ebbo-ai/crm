@@ -9,8 +9,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
+import { getClientCompleteness } from "@/lib/client-completeness";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import PlansTab from "@/components/tabs/plans-tab";
@@ -150,14 +151,56 @@ export default function ClientDetailPage() {
 
         <TabsContent value="profile">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Completeness indicator — shown only when profile is incomplete */}
+            {(() => {
+              const c = getClientCompleteness(client);
+              if (c.isComplete) return null;
+              return (
+                <div className="lg:col-span-2">
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Circle className="w-4 h-4 text-amber-500" />
+                        <span className="text-sm font-semibold text-amber-800">
+                          Profile {c.pct}% complete — {c.filled}/{c.total} fields filled
+                        </span>
+                      </div>
+                      <Link href={`/clients/${clientId}/edit`}>
+                        <Button size="sm" variant="outline" className="text-xs border-amber-300 text-amber-700 hover:bg-amber-100 h-7">
+                          Fill in missing fields
+                        </Button>
+                      </Link>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {c.missing.map(label => (
+                        <span key={label} className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-3 pt-5 px-6">
                 <h2 className="text-lg font-semibold text-[#1A5276]">Client Information</h2>
               </CardHeader>
               <CardContent className="px-6 pb-6 space-y-3">
-                <InfoRow label="Address" value={`${client.streetAddress}${client.suiteUnit ? `, ${client.suiteUnit}` : ""}, ${client.city}, ${client.state} ${client.zipCode}`} />
-                <InfoRow label="Industry" value={client.industryType} />
-                <InfoRow label="Employees" value={client.numberOfEmployees} />
+                {(client.streetAddress || client.city || client.state) && (
+                  <InfoRow label="Address" value={[
+                    client.streetAddress,
+                    client.suiteUnit,
+                    client.city && client.state ? `${client.city}, ${client.state}` : client.city || client.state,
+                    client.zipCode,
+                  ].filter(Boolean).join(" ")} />
+                )}
+                {client.industryType && <InfoRow label="Industry" value={client.industryType} />}
+                {client.numberOfEmployees != null && <InfoRow label="Employees" value={client.numberOfEmployees} />}
+                {client.anniversaryDate && (
+                  <InfoRow label="Anniversary Date" value={new Date(client.anniversaryDate).toLocaleDateString()} />
+                )}
                 <InfoRow label="Plan Type">
                   <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-[#2E86C1]/10 text-[#2E86C1]">
                     {PLAN_TYPE_LABELS[client.planType]}
@@ -175,28 +218,40 @@ export default function ClientDetailPage() {
               <CardContent className="px-6 pb-6 space-y-5">
                 <div>
                   <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Decision Maker</p>
-                  <p className="text-sm font-medium text-[#2C3E50]">{client.decisionMakerName}</p>
-                  <p className="text-xs text-[#94A3B8]">{client.decisionMakerTitle}</p>
+                  {client.decisionMakerName
+                    ? <p className="text-sm font-medium text-[#2C3E50]">{client.decisionMakerName}</p>
+                    : <p className="text-xs italic text-[#94A3B8]">Not on file</p>}
+                  {client.decisionMakerTitle && <p className="text-xs text-[#94A3B8]">{client.decisionMakerTitle}</p>}
                   <div className="flex flex-wrap gap-3 mt-1.5">
-                    <a href={`tel:${client.decisionMakerPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                      <Phone className="w-3 h-3" /> {client.decisionMakerPhone}
-                    </a>
-                    <a href={`mailto:${client.decisionMakerEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                      <Mail className="w-3 h-3" /> {client.decisionMakerEmail}
-                    </a>
+                    {client.decisionMakerPhone && (
+                      <a href={`tel:${client.decisionMakerPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Phone className="w-3 h-3" /> {client.decisionMakerPhone}
+                      </a>
+                    )}
+                    {client.decisionMakerEmail && (
+                      <a href={`mailto:${client.decisionMakerEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Mail className="w-3 h-3" /> {client.decisionMakerEmail}
+                      </a>
+                    )}
                   </div>
                 </div>
                 <div className="border-t pt-4">
                   <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Admin Contact</p>
-                  <p className="text-sm font-medium text-[#2C3E50]">{client.adminContactName}</p>
-                  <p className="text-xs text-[#94A3B8]">{client.adminContactTitle}</p>
+                  {client.adminContactName
+                    ? <p className="text-sm font-medium text-[#2C3E50]">{client.adminContactName}</p>
+                    : <p className="text-xs italic text-[#94A3B8]">Not on file</p>}
+                  {client.adminContactTitle && <p className="text-xs text-[#94A3B8]">{client.adminContactTitle}</p>}
                   <div className="flex flex-wrap gap-3 mt-1.5">
-                    <a href={`tel:${client.adminContactPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                      <Phone className="w-3 h-3" /> {client.adminContactPhone}
-                    </a>
-                    <a href={`mailto:${client.adminContactEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                      <Mail className="w-3 h-3" /> {client.adminContactEmail}
-                    </a>
+                    {client.adminContactPhone && (
+                      <a href={`tel:${client.adminContactPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Phone className="w-3 h-3" /> {client.adminContactPhone}
+                      </a>
+                    )}
+                    {client.adminContactEmail && (
+                      <a href={`mailto:${client.adminContactEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Mail className="w-3 h-3" /> {client.adminContactEmail}
+                      </a>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -211,20 +266,34 @@ export default function ClientDetailPage() {
                 <h2 className="text-lg font-semibold text-[#1A5276]">Banking & Funding</h2>
               </CardHeader>
               <CardContent className="px-6 pb-6 space-y-3">
-                <div className="flex items-center gap-3">
-                  <Landmark className="w-5 h-5 text-[#94A3B8]" />
-                  <div>
-                    <p className="text-xs text-[#94A3B8]">Banking Type</p>
-                    <p className="text-sm font-medium text-[#2C3E50]">{BANKING_TYPE_LABELS[client.bankingType]}</p>
+                {client.bankingType ? (
+                  <div className="flex items-center gap-3">
+                    <Landmark className="w-5 h-5 text-[#94A3B8]" />
+                    <div>
+                      <p className="text-xs text-[#94A3B8]">Banking Type</p>
+                      <p className="text-sm font-medium text-[#2C3E50]">{BANKING_TYPE_LABELS[client.bankingType] ?? client.bankingType}</p>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <CreditCard className="w-5 h-5 text-[#94A3B8]" />
-                  <div>
-                    <p className="text-xs text-[#94A3B8]">Funding Type</p>
-                    <p className="text-sm font-medium text-[#2C3E50]">{FUNDING_TYPE_LABELS[client.fundingType]}</p>
+                ) : (
+                  <p className="text-xs italic text-[#94A3B8]">Banking type not set</p>
+                )}
+                {client.fundingType && (
+                  <div className="flex items-center gap-3">
+                    <CreditCard className="w-5 h-5 text-[#94A3B8]" />
+                    <div>
+                      <p className="text-xs text-[#94A3B8]">Funding Type</p>
+                      <p className="text-sm font-medium text-[#2C3E50]">{FUNDING_TYPE_LABELS[client.fundingType] ?? client.fundingType}</p>
+                    </div>
                   </div>
-                </div>
+                )}
+                {client.cobraAdministeredBy90d && (
+                  <InfoRow label="COBRA Admin">
+                    <span className="text-sm text-[#2C3E50]">
+                      90 Degree Benefits
+                      {client.cobraFee != null && ` — $${parseFloat(client.cobraFee).toFixed(2)}/mo`}
+                    </span>
+                  </InfoRow>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -255,36 +324,94 @@ export default function ClientDetailPage() {
         </TabsContent>
 
         <TabsContent value="banking">
-          <Card className="border-0 shadow-sm">
-            <CardHeader className="pb-3 pt-5 px-6">
-              <h2 className="text-lg font-semibold text-[#1A5276]">Banking & Funding Summary</h2>
-            </CardHeader>
-            <CardContent className="px-6 pb-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex items-center gap-4 p-4 bg-[#F0F4F8] rounded-lg">
-                  <Landmark className="w-8 h-8 text-[#1A5276]" />
-                  <div>
-                    <p className="text-xs text-[#94A3B8]">Banking Type</p>
-                    <p className="text-base font-semibold text-[#2C3E50]">{BANKING_TYPE_LABELS[client.bankingType]}</p>
+          <div className="space-y-4">
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-3 pt-5 px-6">
+                <h2 className="text-lg font-semibold text-[#1A5276]">Banking & Funding Summary</h2>
+              </CardHeader>
+              <CardContent className="px-6 pb-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center gap-4 p-4 bg-[#F0F4F8] rounded-lg">
+                    <Landmark className="w-8 h-8 text-[#1A5276]" />
+                    <div>
+                      <p className="text-xs text-[#94A3B8]">Who Holds the Bank Account</p>
+                      <p className="text-base font-semibold text-[#2C3E50]">
+                        {client.bankingType
+                          ? (BANKING_TYPE_LABELS[client.bankingType] ?? client.bankingType)
+                          : <span className="text-[#94A3B8] font-normal text-sm italic">Not set</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 p-4 bg-[#F0F4F8] rounded-lg">
+                    <CreditCard className="w-8 h-8 text-[#1A5276]" />
+                    <div>
+                      <p className="text-xs text-[#94A3B8]">Funding Approval</p>
+                      <p className="text-base font-semibold text-[#2C3E50]">
+                        {client.fundingType
+                          ? (FUNDING_TYPE_LABELS[client.fundingType] ?? client.fundingType)
+                          : <span className="text-[#94A3B8] font-normal text-sm italic">Not set</span>}
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-4 p-4 bg-[#F0F4F8] rounded-lg">
-                  <CreditCard className="w-8 h-8 text-[#1A5276]" />
-                  <div>
-                    <p className="text-xs text-[#94A3B8]">Funding Type</p>
-                    <p className="text-base font-semibold text-[#2C3E50]">{FUNDING_TYPE_LABELS[client.fundingType]}</p>
+
+                {/* Account balance — only for 90 Degree bank clients */}
+                {client.bankingType === "NINETY_DEGREE_BANK" && (
+                  <div className="border rounded-lg p-4 space-y-2">
+                    <p className="text-sm font-semibold text-[#1A5276]">Account Balance</p>
+                    <p className="text-xs text-[#94A3B8]">
+                      This is the actual bank account balance as reported by 90 Degree Benefits — updated monthly.
+                      It is separate from the plan surplus or deficit shown on the PPR tab. The account holds
+                      more than just claims funds, and admin fees are drawn from it, so the two numbers
+                      legitimately differ.
+                    </p>
+                    {client.accountBalance != null ? (
+                      <div className="flex items-baseline gap-3 pt-1">
+                        <span className="text-2xl font-bold text-[#2C3E50]">
+                          ${parseFloat(client.accountBalance).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </span>
+                        {client.accountBalanceAsOfDate && (
+                          <span className="text-xs text-[#94A3B8]">
+                            as of {new Date(client.accountBalanceAsOfDate).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm italic text-[#94A3B8] pt-1">
+                        Balance not yet on file — updated monthly by 90 Degree Benefits
+                      </p>
+                    )}
                   </div>
+                )}
+
+                {/* COBRA */}
+                <div className="border rounded-lg p-4">
+                  <p className="text-sm font-semibold text-[#1A5276] mb-1">COBRA Administration</p>
+                  {client.cobraAdministeredBy90d ? (
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
+                      <span className="text-sm text-[#2C3E50]">
+                        Administered by 90 Degree Benefits
+                        {client.cobraFee != null
+                          ? ` — $${parseFloat(client.cobraFee).toFixed(2)}/member/month`
+                          : ""}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#94A3B8]">Not administered by 90 Degree Benefits</p>
+                  )}
                 </div>
-              </div>
-              <div className="mt-4">
-                <Link href={`/clients/${clientId}/edit`}>
-                  <Button variant="outline" size="sm" className="text-[#2E86C1] border-[#2E86C1]" data-testid="button-edit-banking">
-                    Edit Banking Settings
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
+
+                <div>
+                  <Link href={`/clients/${clientId}/edit`}>
+                    <Button variant="outline" size="sm" className="text-[#2E86C1] border-[#2E86C1]" data-testid="button-edit-banking">
+                      Edit Banking Settings
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
