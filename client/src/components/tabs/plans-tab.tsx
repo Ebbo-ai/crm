@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -153,6 +153,7 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
           planId={showRateForm}
           clientId={clientId}
           client={client}
+          plan={plans.find((p: any) => p.id === showRateForm)}
           existingRates={plans.find((p: any) => p.id === showRateForm)?.rateCards || []}
         />
       )}
@@ -512,49 +513,67 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           </div>
 
           {/* rate card table */}
-          {plan.rateCards?.length > 0 && (
-            <div className="mt-2 mb-4">
-              <h4 className="text-sm font-semibold text-[#1A5276] mb-2">Rate Card</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
-                  <thead>
-                    <tr className="bg-[#1A5276] text-white">
-                      <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
-                      {["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"].map(tier => (
-                        <th key={tier} className="px-3 py-2 text-right text-xs font-medium">{TIER_LABELS[tier]}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      { key: "baseAdminFee", label: "Base Admin Fee" },
-                      { key: "simpleFee", label: "Simple Fee" },
-                      ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee" }] : []),
-                      { key: "brokerFee", label: client?.hasBroker ? "Broker Fee" : "Broker Fee — No Broker" },
-                      { key: "totalAdminFee", label: "Total Admin Fee" },
-                      { key: "totalFee", label: "Total Fee" },
-                      { key: "expectedClaims", label: "Expected Claims" },
-                      { key: "monthlyPremium", label: "Monthly Premium", highlight: true },
-                    ].map((row, i) => (
-                      <tr key={row.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(row as any).highlight ? "font-bold" : ""}`}>
-                        <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${!client?.hasBroker && row.key === "brokerFee" ? "text-[#94A3B8] italic" : ""}`}>
-                          {row.label}
-                        </td>
-                        {["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"].map(tier => {
-                          const card = plan.rateCards.find((c: any) => c.tier === tier);
-                          return (
-                            <td key={tier} className={`px-3 py-2 text-right text-xs ${!client?.hasBroker && row.key === "brokerFee" ? "text-[#94A3B8]" : ""}`}>
-                              {card ? formatCurrency((card as any)[row.key]) : "-"}
-                            </td>
-                          );
-                        })}
+          {plan.rateCards?.length > 0 && (() => {
+            const sortedCards: any[] = [...plan.rateCards].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+            const hasBroker = plan.brokerMode && plan.brokerMode !== "NONE";
+            const rows = [
+              { key: "baseAdminFee", label: "Base Admin Fee" },
+              { key: "cobraFee", label: "COBRA Fee" },
+              { key: "simpleFee", label: "Simple Fee" },
+              ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee" }] : []),
+              ...(hasBroker ? [{ key: "brokerFee", label: "Broker Fee" }] : []),
+              { key: "totalAdminFee", label: "Total Admin Fee", subtotal: true },
+              { key: "expectedClaims", label: "Expected Claims" },
+              { key: "monthlyPremium", label: "Monthly Premium", highlight: true },
+            ];
+            return (
+              <div className="mt-2 mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-semibold text-[#1A5276]">Rate Card</h4>
+                  <div className="flex items-center gap-3 text-[10px] text-[#94A3B8]">
+                    {plan.feeBasis === "FIXED_MONTHLY" && <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5">Fixed Monthly</span>}
+                    {hasBroker && (
+                      <span>
+                        Broker: {plan.brokerMode === "PERCENT_OF_PREMIUM"
+                          ? `${(parseFloat(plan.brokerValue || "0") * 100).toFixed(0)}% of premium`
+                          : plan.brokerMode === "FLAT_PEPM"
+                            ? `$${parseFloat(plan.brokerValue || "0").toFixed(2)}/ee/mo`
+                            : `$${parseFloat(plan.brokerValue || "0").toFixed(2)}/mo fixed`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
+                    <thead>
+                      <tr className="bg-[#1A5276] text-white">
+                        <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
+                        {sortedCards.map((rc: any) => (
+                          <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
+                            {rc.tierLabel ?? TIER_LABELS[rc.tier] ?? rc.tier ?? `Tier ${rc.planTierId}`}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => (
+                        <tr key={row.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(row as any).highlight ? "font-bold" : ""}`}>
+                          <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                            {row.label}
+                          </td>
+                          {sortedCards.map((rc: any) => (
+                            <td key={rc.id} className={`px-3 py-2 text-right text-xs ${(row as any).highlight ? "font-bold text-[#1A5276]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                              {formatCurrency((rc as any)[row.key] ?? 0)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* renewal tracking section — 7-step pipeline */}
           {!archived && (
@@ -1140,120 +1159,402 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
 }
 
 // ---------- rate form dialog ----------
-function RateFormDialog({ open, onClose, planId, clientId, client, existingRates }: any) {
-  const { toast } = useToast();
-  const tiers = ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"] as const;
-  const feeFields = [
-    { key: "baseAdminFee", label: "Base Admin Fee", required: true },
-    { key: "simpleFee", label: "Simple Fee", required: true },
-    ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee", required: false }] : []),
-    { key: "brokerFee", label: client?.hasBroker ? "Broker Fee" : "Broker Fee — No Broker", required: false },
-    { key: "totalAdminFee", label: "Total Admin Fee", required: true },
-    { key: "totalFee", label: "Total Fee", required: true },
-    { key: "expectedClaims", label: "Expected Claims", required: true },
-    { key: "monthlyPremium", label: "Monthly Premium", required: true, highlight: true },
-  ];
 
-  const initRates = () => {
-    const rates: Record<string, Record<string, string>> = {};
-    tiers.forEach(tier => {
-      const existing = existingRates.find((r: any) => r.tier === tier);
-      rates[tier] = {};
-      feeFields.forEach(f => {
-        rates[tier][f.key] = existing ? String(existing[f.key] || "0.00") : "0.00";
+const COMMON_TIER_LABELS = [
+  "Employee Only",
+  "Employee + One",
+  "Employee + Spouse",
+  "Employee + Child",
+  "Employee + Family",
+];
+
+const BROKER_MODE_LABELS: Record<string, string> = {
+  NONE: "No broker compensation",
+  FLAT_PEPM: "Flat per employee / month",
+  FIXED_MONTHLY: "Fixed monthly (whole group)",
+  PERCENT_OF_PREMIUM: "Percent of premium",
+};
+
+function calcTierOutputs(
+  r: Record<string, string>,
+  brokerMode: string,
+  brokerPct: string,
+  brokerAmt: string,
+) {
+  const base = parseFloat(r.baseAdminFee || "0") || 0;
+  const cobra = parseFloat(r.cobraFee || "0") || 0;
+  const simple = parseFloat(r.simpleFee || "0") || 0;
+  const network = parseFloat(r.networkFee || "0") || 0;
+  const claims = parseFloat(r.expectedClaims || "0") || 0;
+
+  const bv = brokerMode === "PERCENT_OF_PREMIUM"
+    ? (parseFloat(brokerPct || "0") || 0) / 100
+    : (parseFloat(brokerAmt || "0") || 0);
+
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const adminSubtotal = r2(base + cobra + simple + network);
+  const preBrokerSubtotal = r2(adminSubtotal + claims);
+
+  let brokerFee = 0;
+  if (brokerMode === "FLAT_PEPM" || brokerMode === "FIXED_MONTHLY") {
+    brokerFee = bv;
+  } else if (brokerMode === "PERCENT_OF_PREMIUM" && bv > 0 && bv < 1) {
+    const premium = r2(preBrokerSubtotal / (1 - bv));
+    brokerFee = r2(premium - preBrokerSubtotal);
+  }
+
+  const totalAdminFee = r2(adminSubtotal + brokerFee);
+  const monthlyPremium = r2(totalAdminFee + claims);
+  return {
+    brokerFee: brokerFee.toFixed(2),
+    totalAdminFee: totalAdminFee.toFixed(2),
+    monthlyPremium: monthlyPremium.toFixed(2),
+  };
+}
+
+type TierRow = { id: string; label: string };
+type RateInputs = { baseAdminFee: string; cobraFee: string; simpleFee: string; networkFee: string; expectedClaims: string };
+
+function RateFormDialog({ open, onClose, planId, clientId, client, plan, existingRates }: any) {
+  const { toast } = useToast();
+
+  const defaultBase = () => {
+    const ct = plan?.coverageType;
+    if (ct === "VISION_ONLY") return "0.48";
+    if (ct === "DENTAL_VISION" || ct === "DENTAL_VISION_HEARING") return "2.53";
+    return "2.05";
+  };
+  const defaultCobra = () =>
+    client?.cobraAdministeredBy90d ? String(client?.cobraFee ?? "1.00") : "0.00";
+
+  const initAll = () => {
+    // Reconstruct tiers from existing rate cards
+    let tiers: TierRow[];
+    let rateMap: Record<string, RateInputs>;
+
+    if (existingRates && existingRates.length > 0) {
+      const sorted = [...existingRates].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+      const seen = new Set<string>();
+      tiers = [];
+      sorted.forEach((r: any) => {
+        const key = String(r.planTierId ?? r.tier ?? "?");
+        if (!seen.has(key)) {
+          seen.add(key);
+          tiers.push({ id: key, label: r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? "" });
+        }
       });
-    });
-    return rates;
+      rateMap = {};
+      sorted.forEach((r: any) => {
+        const key = String(r.planTierId ?? r.tier ?? "?");
+        rateMap[key] = {
+          baseAdminFee: String(r.baseAdminFee ?? defaultBase()),
+          cobraFee: String(r.cobraFee ?? defaultCobra()),
+          simpleFee: String(r.simpleFee ?? "0.00"),
+          networkFee: String(r.networkFee ?? "0.00"),
+          expectedClaims: String(r.expectedClaims ?? "0.00"),
+        };
+      });
+    } else {
+      const t0: TierRow = { id: "new_0", label: "Employee Only" };
+      tiers = [t0];
+      rateMap = { [t0.id]: { baseAdminFee: defaultBase(), cobraFee: defaultCobra(), simpleFee: "0.00", networkFee: "0.00", expectedClaims: "0.00" } };
+    }
+
+    const rawBrokerValue = parseFloat(plan?.brokerValue ?? "0") || 0;
+    const mode = plan?.brokerMode ?? "NONE";
+    return {
+      tiers,
+      rateMap,
+      brokerMode: mode,
+      brokerPct: mode === "PERCENT_OF_PREMIUM" ? String(rawBrokerValue * 100) : "",
+      brokerAmt: mode !== "PERCENT_OF_PREMIUM" ? rawBrokerValue.toFixed(2) : "",
+      feeBasis: plan?.feeBasis ?? "PEPM",
+    };
   };
 
-  const [rates, setRates] = useState(initRates);
+  const [localTiers, setLocalTiers] = useState<TierRow[]>([]);
+  const [rates, setRates] = useState<Record<string, RateInputs>>({});
+  const [brokerMode, setBrokerMode] = useState("NONE");
+  const [brokerPct, setBrokerPct] = useState("");
+  const [brokerAmt, setBrokerAmt] = useState("");
+  const [feeBasis, setFeeBasis] = useState("PEPM");
+
+  useEffect(() => {
+    if (open) {
+      const s = initAll();
+      setLocalTiers(s.tiers);
+      setRates(s.rateMap);
+      setBrokerMode(s.brokerMode);
+      setBrokerPct(s.brokerPct);
+      setBrokerAmt(s.brokerAmt);
+      setFeeBasis(s.feeBasis);
+    }
+  }, [open]);
+
+  const addTier = () => {
+    if (localTiers.length >= 4) return;
+    const newId = `new_${Date.now()}`;
+    setLocalTiers(prev => [...prev, { id: newId, label: "" }]);
+    setRates(prev => ({
+      ...prev,
+      [newId]: { baseAdminFee: defaultBase(), cobraFee: defaultCobra(), simpleFee: "0.00", networkFee: "0.00", expectedClaims: "0.00" },
+    }));
+  };
+
+  const removeTier = (tierId: string) => {
+    if (localTiers.length <= 1) return;
+    setLocalTiers(prev => prev.filter(t => t.id !== tierId));
+    setRates(prev => { const n = { ...prev }; delete n[tierId]; return n; });
+  };
+
+  const updateTierLabel = (tierId: string, label: string) => {
+    setLocalTiers(prev => prev.map(t => t.id === tierId ? { ...t, label } : t));
+  };
+
+  const updateRate = (tierId: string, field: keyof RateInputs, value: string) => {
+    setRates(prev => ({ ...prev, [tierId]: { ...(prev[tierId] || {}), [field]: value } as RateInputs }));
+  };
 
   const mutation = useMutation({
-    mutationFn: async (data: any[]) => {
-      const res = await apiRequest("POST", `/api/plans/${planId}/rates`, data);
+    mutationFn: async () => {
+      let saveBrokerValue: string;
+      if (brokerMode === "PERCENT_OF_PREMIUM") {
+        saveBrokerValue = ((parseFloat(brokerPct || "0") || 0) / 100).toFixed(4);
+      } else {
+        saveBrokerValue = (parseFloat(brokerAmt || "0") || 0).toFixed(4);
+      }
+
+      const payload = {
+        tiers: localTiers.map((t, i) => ({ label: t.label || `Tier ${i + 1}`, displayOrder: i })),
+        rates: localTiers.map((t, i) => ({
+          tierIndex: i,
+          baseAdminFee: rates[t.id]?.baseAdminFee ?? "0.00",
+          cobraFee: rates[t.id]?.cobraFee ?? "0.00",
+          simpleFee: rates[t.id]?.simpleFee ?? "0.00",
+          networkFee: rates[t.id]?.networkFee ?? "0.00",
+          expectedClaims: rates[t.id]?.expectedClaims ?? "0.00",
+        })),
+        brokerMode,
+        brokerValue: saveBrokerValue,
+        feeBasis,
+      };
+      const res = await apiRequest("POST", `/api/plans/${planId}/rates`, payload);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "plans"] });
-      toast({ title: "Rate cards saved successfully" });
+      toast({ title: "Rate cards saved" });
       onClose();
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cards = tiers.map(tier => ({
-      planId,
-      tier,
-      baseAdminFee: rates[tier].baseAdminFee || "0.00",
-      simpleFee: rates[tier].simpleFee || "0.00",
-      networkFee: rates[tier].networkFee || "0.00",
-      brokerFee: rates[tier].brokerFee || "0.00",
-      totalAdminFee: rates[tier].totalAdminFee || "0.00",
-      totalFee: rates[tier].totalFee || "0.00",
-      expectedClaims: rates[tier].expectedClaims || "0.00",
-      monthlyPremium: rates[tier].monthlyPremium || "0.00",
-    }));
-    mutation.mutate(cards);
+  // Input cell: editable
+  const FeeInput = ({ tierId, field }: { tierId: string; field: keyof RateInputs }) => (
+    <td className="px-1 py-1">
+      <div className="relative">
+        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+        <Input
+          value={rates[tierId]?.[field] ?? ""}
+          onChange={e => updateRate(tierId, field, e.target.value)}
+          className="h-8 pl-5 text-xs text-right"
+        />
+      </div>
+    </td>
+  );
+
+  // Calculated cell: read-only
+  const CalcCell = ({ tierId, field }: { tierId: string; field: "brokerFee" | "totalAdminFee" | "monthlyPremium" }) => {
+    const calc = calcTierOutputs(rates[tierId] || {}, brokerMode, brokerPct, brokerAmt);
+    return (
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-[#1A5276] bg-[#EBF5FB]">
+        ${parseFloat(calc[field]).toFixed(2)}
+      </td>
+    );
   };
+
+  const editableRows: Array<{ field: keyof RateInputs; label: string; show?: boolean }> = [
+    { field: "baseAdminFee", label: "90D Base Admin Fee" },
+    { field: "cobraFee", label: "COBRA Fee", show: client?.cobraAdministeredBy90d },
+    { field: "simpleFee", label: "Simple Fee" },
+    { field: "networkFee", label: "Network Fee", show: client?.networkActive },
+    { field: "expectedClaims", label: "Expected Claims" },
+  ];
+  const visibleEditable = editableRows.filter(r => r.show !== false);
+
+  const hasBrokerCalc = brokerMode !== "NONE";
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-[#1A5276]">Edit Rate Card</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="rate-form-table">
-              <thead>
-                <tr className="bg-[#1A5276] text-white">
-                  <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
-                  {tiers.map(tier => (
-                    <th key={tier} className="px-3 py-2 text-center text-xs font-medium">{TIER_LABELS[tier]}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {feeFields.map((field, i) => (
-                  <tr key={field.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(field as any).highlight ? "font-semibold" : ""}`}>
-                    <td className={`px-3 py-2 text-xs ${(field as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${!client?.hasBroker && field.key === "brokerFee" ? "text-[#94A3B8] italic" : ""}`}>
-                      {field.label}
-                    </td>
-                    {tiers.map(tier => (
-                      <td key={tier} className="px-1 py-1">
-                        <div className="relative">
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
-                          <Input
-                            value={rates[tier]?.[field.key] || ""}
-                            onChange={e => setRates(prev => ({
-                              ...prev,
-                              [tier]: { ...prev[tier], [field.key]: e.target.value },
-                            }))}
-                            className="h-8 pl-5 text-xs text-right"
-                            data-testid={`input-rate-${field.key}-${tier}`}
-                          />
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-3 p-3 bg-[#F0F4F8] rounded-md text-xs text-[#94A3B8] space-y-1">
-            <p>Total Admin Fee = Base Admin + Simple Marketing Fee + Network Fee (excludes Broker Fee)</p>
-            <p>Total Fee = Total Admin Fee + Broker Fee</p>
-            <p>Monthly Premium = Total Fee + Expected Claims</p>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <Button type="submit" disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-rates">
-              {mutation.isPending ? "Saving..." : "Save Rate Card"}
+
+        {/* ── TIERS SECTION ─────────────────────────────────────── */}
+        <div className="space-y-2 mb-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-[#1A5276]">Tiers ({localTiers.length}/4)</p>
+            <Button type="button" size="sm" variant="outline" onClick={addTier} disabled={localTiers.length >= 4} className="h-7 text-xs gap-1">
+              <Plus className="w-3 h-3" /> Add Tier
             </Button>
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
           </div>
-        </form>
+          {/* Common label suggestions */}
+          <div className="flex flex-wrap gap-1.5">
+            {COMMON_TIER_LABELS.map(label => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  // Apply to the first unlabelled tier, or do nothing if all are labelled
+                  const blank = localTiers.find(t => !t.label || t.label === label);
+                  if (blank) updateTierLabel(blank.id, label);
+                }}
+                className="text-[11px] px-2 py-0.5 rounded-full border border-[#2E86C1]/30 text-[#2E86C1] hover:bg-[#2E86C1]/10 cursor-pointer"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* Tier label inputs */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {localTiers.map((tier, idx) => (
+              <div key={tier.id} className="flex items-center gap-1">
+                <Input
+                  value={tier.label}
+                  onChange={e => updateTierLabel(tier.id, e.target.value)}
+                  placeholder={`Tier ${idx + 1} label`}
+                  className="h-8 text-xs"
+                />
+                {localTiers.length > 1 && (
+                  <button type="button" onClick={() => removeTier(tier.id)} className="text-[#94A3B8] hover:text-[#EF4444] flex-shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── PLAN SETTINGS ─────────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-3 bg-[#F8FAFC] rounded-lg border">
+          <div>
+            <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Fee Basis</Label>
+            <Select value={feeBasis} onValueChange={setFeeBasis}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PEPM">Per employee / month (standard)</SelectItem>
+                <SelectItem value="FIXED_MONTHLY">Fixed monthly — whole group</SelectItem>
+              </SelectContent>
+            </Select>
+            {feeBasis === "FIXED_MONTHLY" && (
+              <p className="text-[10px] text-amber-600 mt-1">Amounts below represent the total monthly charge for the group, not per employee.</p>
+            )}
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Broker Compensation</Label>
+            <Select value={brokerMode} onValueChange={v => { setBrokerMode(v); setBrokerPct(""); setBrokerAmt(""); }}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(BROKER_MODE_LABELS).map(([v, l]) => (
+                  <SelectItem key={v} value={v}>{l}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {brokerMode === "PERCENT_OF_PREMIUM" && (
+              <div className="flex items-center gap-1 mt-1.5">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="50"
+                  value={brokerPct}
+                  onChange={e => setBrokerPct(e.target.value)}
+                  placeholder="e.g. 8"
+                  className="h-7 text-xs w-24"
+                />
+                <span className="text-xs text-[#94A3B8]">% of premium (gross-up method)</span>
+              </div>
+            )}
+            {(brokerMode === "FLAT_PEPM" || brokerMode === "FIXED_MONTHLY") && (
+              <div className="flex items-center gap-1 mt-1.5">
+                <span className="text-xs text-[#94A3B8]">$</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={brokerAmt}
+                  onChange={e => setBrokerAmt(e.target.value)}
+                  placeholder="0.00"
+                  className="h-7 text-xs w-24"
+                />
+                <span className="text-xs text-[#94A3B8]">
+                  {brokerMode === "FLAT_PEPM" ? "per employee / month (same across all tiers)" : "per month for the whole group"}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── RATE TABLE ────────────────────────────────────────── */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="rate-form-table">
+            <thead>
+              <tr className="bg-[#1A5276] text-white">
+                <th className="px-3 py-2 text-left text-xs font-medium w-44">Fee Component</th>
+                {localTiers.map((t, i) => (
+                  <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
+                    {t.label || `Tier ${i + 1}`}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleEditable.map((row, i) => (
+                <tr key={row.field} className={i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"}>
+                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">{row.label}</td>
+                  {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field={row.field} />)}
+                </tr>
+              ))}
+
+              {/* Separator row */}
+              <tr className="bg-[#F0F4F8]">
+                <td colSpan={localTiers.length + 1} className="px-3 py-1 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                  Calculated — read only
+                </td>
+              </tr>
+
+              {hasBrokerCalc && (
+                <tr className="bg-white">
+                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Broker Fee</td>
+                  {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="brokerFee" />)}
+                </tr>
+              )}
+              <tr className="bg-[#F0F4F8]">
+                <td className="px-3 py-1.5 text-xs font-semibold text-[#1A5276]">Total Admin Fee</td>
+                {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="totalAdminFee" />)}
+              </tr>
+              <tr className="bg-white font-bold border-l-4 border-[#F5A623]">
+                <td className="px-3 py-2 text-xs font-bold text-[#1A5276] border-l-4 border-[#F5A623]">Monthly Premium</td>
+                {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="monthlyPremium" />)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Formula reminder */}
+        <div className="mt-2 p-2 bg-[#F0F4F8] rounded text-[10px] text-[#94A3B8] space-y-0.5">
+          <p>Admin Fee = Base Admin + COBRA Fee + Simple Fee + Network Fee</p>
+          <p>Total Admin Fee = Admin Fee + Broker Fee &nbsp;·&nbsp; Monthly Premium = Total Admin Fee + Expected Claims</p>
+          {brokerMode === "PERCENT_OF_PREMIUM" && <p className="text-[#2E86C1]">Broker % uses gross-up: Premium = (Admin + Claims) ÷ (1 − rate). Broker fee derived from rounded premium so totals always balance exactly.</p>}
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-rates">
+            {mutation.isPending ? "Saving..." : "Save Rate Card"}
+          </Button>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

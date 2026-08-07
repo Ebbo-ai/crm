@@ -15,7 +15,7 @@ export const planCoverageTypeEnum = pgEnum("plan_coverage_type", [
   "DENTAL_VISION_HEARING",
 ]);
 export const planBasisEnum = pgEnum("plan_basis", ["PROCEDURE_BASED", "DOLLAR_BASED"]);
-export const tierEnum = pgEnum("tier", ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"]);
+export const tierEnum = pgEnum("tier", ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"]); // legacy — replaced by plan_tiers table
 export const bankingTypeEnum = pgEnum("banking_type", ["CLIENT_BANK", "NINETY_DEGREE_BANK"]);
 export const fundingTypeEnum = pgEnum("funding_type", ["REQUIRES_APPROVAL", "PROCESS_WITHOUT_APPROVAL"]);
 export const documentCategoryEnum = pgEnum("document_category", ["CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD", "RENEWAL_PROPOSAL", "PPR_REPORT", "OTHER"]);
@@ -114,6 +114,16 @@ export const clients = pgTable("clients", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Per-plan tier definitions. Each plan has 1–4 tiers with free-text labels.
+// Replaces the fixed `tierEnum`; rate cards reference plan_tiers.id instead.
+export const planTiers = pgTable("plan_tiers", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull(),
+  label: text("label").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const plans = pgTable("plans", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull(),
@@ -145,6 +155,13 @@ export const plans = pgTable("plans", {
   isRenewalComplete: boolean("is_renewal_complete").notNull().default(false),
   renewalCompletedDate: timestamp("renewal_completed_date"),
   renewalCompletedBy: text("renewal_completed_by"),
+  // Broker compensation — set per plan (brokers request what they want per plan)
+  // mode: NONE | FLAT_PEPM | FIXED_MONTHLY | PERCENT_OF_PREMIUM
+  brokerMode: text("broker_mode").notNull().default("NONE"),
+  // For FLAT_PEPM / FIXED_MONTHLY: dollar amount. For PERCENT_OF_PREMIUM: rate (0.08 = 8%).
+  brokerValue: decimal("broker_value", { precision: 10, scale: 4 }).default("0.0000"),
+  // PEPM = per employee per month (default). FIXED_MONTHLY = single flat amount for the whole group.
+  feeBasis: text("fee_basis").notNull().default("PEPM"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
@@ -154,18 +171,28 @@ export const plans = pgTable("plans", {
 export const rateCards = pgTable("rate_cards", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull(),
-  tier: tierEnum("tier").notNull(),
+  // planTierId references plan_tiers.id — the per-plan free-text tier definition.
+  // Nullable for backward compat; all new inserts set this. Old rows also have tier set.
+  planTierId: integer("plan_tier_id"),
+  // tier is the legacy fixed enum; retained so old rows still decode. New rows leave it null.
+  tier: tierEnum("tier"),
   // effectiveDate lets prior months be valued at the rates actually in force
   // rather than being retroactively restated when a group renews
   effectiveDate: timestamp("effective_date"),
   baseAdminFee: decimal("base_admin_fee", { precision: 10, scale: 2 }).notNull(),
+  // COBRA admin fee for this tier (from client.cobraFee when COBRA is active, else 0).
+  cobraFee: decimal("cobra_fee", { precision: 10, scale: 2 }).notNull().default("0.00"),
   // Simple's marketing and program fee. Previously named "spread admin fee".
   simpleFee: decimal("simple_fee", { precision: 10, scale: 2 }).notNull(),
   networkFee: decimal("network_fee", { precision: 10, scale: 2 }).default("0.00"),
+  // Calculated from plan.brokerMode + plan.brokerValue; never entered per-tier.
   brokerFee: decimal("broker_fee", { precision: 10, scale: 2 }).default("0.00"),
+  // totalAdminFee = adminSubtotal + brokerFee (adminSubtotal = base+cobra+simple+network)
   totalAdminFee: decimal("total_admin_fee", { precision: 10, scale: 2 }).notNull(),
-  totalFee: decimal("total_fee", { precision: 10, scale: 2 }).notNull(),
+  // totalFee: retired — was a duplicate of monthlyPremium. Kept nullable for backward compat.
+  totalFee: decimal("total_fee", { precision: 10, scale: 2 }),
   expectedClaims: decimal("expected_claims", { precision: 10, scale: 2 }).notNull(),
+  // monthlyPremium = totalAdminFee + expectedClaims (always matches)
   monthlyPremium: decimal("monthly_premium", { precision: 10, scale: 2 }).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -303,6 +330,7 @@ export const insertCommunicationTaskSchema = createInsertSchema(communicationTas
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPlanTierSchema = createInsertSchema(planTiers).omit({ id: true, createdAt: true });
 export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
@@ -315,6 +343,8 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
+export type PlanTier = typeof planTiers.$inferSelect;
+export type InsertPlanTier = z.infer<typeof insertPlanTierSchema>;
 export type Plan = typeof plans.$inferSelect;
 export type InsertPlan = z.infer<typeof insertPlanSchema>;
 export type RateCard = typeof rateCards.$inferSelect;

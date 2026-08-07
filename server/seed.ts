@@ -141,12 +141,24 @@ export async function seedDatabase() {
     planYear: 2025,
   });
 
-  await storage.upsertRateCards(plan1.id, [
-    { planId: plan1.id, tier: "EE", baseAdminFee: "8.50", simpleFee: "3.25", networkFee: "2.00", brokerFee: "1.50", totalAdminFee: "13.75", totalFee: "15.25", expectedClaims: "32.00", monthlyPremium: "47.25" },
-    { planId: plan1.id, tier: "EE_CHILD", baseAdminFee: "14.00", simpleFee: "5.50", networkFee: "3.50", brokerFee: "2.50", totalAdminFee: "23.00", totalFee: "25.50", expectedClaims: "55.00", monthlyPremium: "80.50" },
-    { planId: plan1.id, tier: "EE_SPOUSE", baseAdminFee: "16.00", simpleFee: "6.00", networkFee: "4.00", brokerFee: "3.00", totalAdminFee: "26.00", totalFee: "29.00", expectedClaims: "62.00", monthlyPremium: "91.00" },
-    { planId: plan1.id, tier: "FAMILY", baseAdminFee: "22.00", simpleFee: "8.50", networkFee: "5.50", brokerFee: "4.00", totalAdminFee: "36.00", totalFee: "40.00", expectedClaims: "85.00", monthlyPremium: "125.00" },
-  ]);
+  // Seed rate cards using new per-plan tier system.
+  // Broker: FLAT_PEPM $1.50/ee/mo; fee basis: PEPM.
+  await storage.upsertTiersAndRates(
+    plan1.id,
+    [
+      { label: "Employee Only", displayOrder: 0 },
+      { label: "Employee + One",  displayOrder: 1 },
+      { label: "Employee + Child", displayOrder: 2 },
+      { label: "Employee + Family", displayOrder: 3 },
+    ],
+    [
+      { tierIndex: 0, baseAdminFee: "8.50",  cobraFee: "0.00", simpleFee: "3.25", networkFee: "2.00", expectedClaims: "32.00" },
+      { tierIndex: 1, baseAdminFee: "16.00", cobraFee: "0.00", simpleFee: "6.00", networkFee: "4.00", expectedClaims: "62.00" },
+      { tierIndex: 2, baseAdminFee: "14.00", cobraFee: "0.00", simpleFee: "5.50", networkFee: "3.50", expectedClaims: "55.00" },
+      { tierIndex: 3, baseAdminFee: "22.00", cobraFee: "0.00", simpleFee: "8.50", networkFee: "5.50", expectedClaims: "85.00" },
+    ],
+    { brokerMode: "FLAT_PEPM", brokerValue: "1.5000", feeBasis: "PEPM" },
+  );
 
   await storage.createPlan({
     clientId: client2.id,

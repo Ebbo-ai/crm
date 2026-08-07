@@ -262,7 +262,29 @@ export async function registerRoutes(
   app.post("/api/plans/:planId/rates", requireAuth, async (req, res) => {
     try {
       const planId = parseInt(req.params.planId);
-      const cards = req.body.map((card: any) => ({ ...card, planId }));
+      const body = req.body;
+
+      // New format: { tiers, rates, brokerMode, brokerValue, feeBasis }
+      if (body && Array.isArray(body.tiers)) {
+        const result = await storage.upsertTiersAndRates(
+          planId,
+          body.tiers,
+          body.rates,
+          { brokerMode: body.brokerMode ?? "NONE", brokerValue: body.brokerValue ?? "0.0000", feeBasis: body.feeBasis ?? "PEPM" },
+        );
+        await storage.createAuditLog({
+          userId: (req.user as any).id,
+          userName: (req.user as any).fullName,
+          action: "updated",
+          entity: "rate_cards",
+          entityId: planId,
+          details: `Updated ${result.tiers.length} tiers / ${result.rates.length} rate cards for plan #${planId}`,
+        });
+        return res.json(result);
+      }
+
+      // Legacy array format (backward compat with old seed data)
+      const cards = (Array.isArray(body) ? body : []).map((card: any) => ({ ...card, planId }));
       const result = await storage.upsertRateCards(planId, cards);
       await storage.createAuditLog({
         userId: (req.user as any).id,

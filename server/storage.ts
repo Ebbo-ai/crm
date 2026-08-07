@@ -1,13 +1,14 @@
 import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
 import {
-  users, clients, plans, rateCards, documents, issues, pprUploads, pprMetrics, auditLogs,
+  users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs,
   communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
   type Plan, type InsertPlan,
+  type PlanTier,
   type RateCard, type InsertRateCard,
   type Document, type InsertDocument,
   type Issue, type InsertIssue,
@@ -43,7 +44,9 @@ export interface IStorage {
   updatePlan(id: number, data: Partial<InsertPlan>): Promise<Plan | undefined>;
   getActivePlanCount(clientId: number): Promise<number>;
 
-  getRateCards(planId: number): Promise<RateCard[]>;
+  getPlanTiers(planId: number): Promise<PlanTier[]>;
+  getRateCards(planId: number): Promise<any[]>;
+  upsertTiersAndRates(planId: number, tierDefs: {label: string; displayOrder: number}[], rateInputs: any[], planUpdates: {brokerMode: string; brokerValue: string; feeBasis: string}): Promise<{tiers: any[]; rates: any[]}>;
   upsertRateCards(planId: number, cards: InsertRateCard[]): Promise<RateCard[]>;
 
   getDocuments(clientId: number, category?: string): Promise<Document[]>;
@@ -234,10 +237,103 @@ export class DatabaseStorage implements IStorage {
     return result?.count ?? 0;
   }
 
-  async getRateCards(planId: number): Promise<RateCard[]> {
-    return db.select().from(rateCards).where(eq(rateCards.planId, planId));
+  async getPlanTiers(planId: number): Promise<PlanTier[]> {
+    return db.select().from(planTiers)
+      .where(eq(planTiers.planId, planId))
+      .orderBy(asc(planTiers.displayOrder));
   }
 
+  async getRateCards(planId: number): Promise<any[]> {
+    const [cards, tiers] = await Promise.all([
+      db.select().from(rateCards).where(eq(rateCards.planId, planId)),
+      db.select().from(planTiers).where(eq(planTiers.planId, planId)).orderBy(asc(planTiers.displayOrder)),
+    ]);
+    const tierMap = new Map(tiers.map(t => [t.id, t]));
+    return cards
+      .map(c => ({
+        ...c,
+        tierLabel: c.planTierId != null ? (tierMap.get(c.planTierId)?.label ?? null) : null,
+        displayOrder: c.planTierId != null ? (tierMap.get(c.planTierId)?.displayOrder ?? 99) : 99,
+      }))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  /**
+   * Atomic replacement of a plan's tiers + rate cards + broker settings.
+   * Calculation (brokerFee, totalAdminFee, monthlyPremium) is performed server-side
+   * so the DB is always the source of truth for derived values.
+   */
+  async upsertTiersAndRates(
+    planId: number,
+    tierDefs: { label: string; displayOrder: number }[],
+    rateInputs: Array<{ tierIndex: number; baseAdminFee: string; cobraFee: string; simpleFee: string; networkFee: string; expectedClaims: string }>,
+    planUpdates: { brokerMode: string; brokerValue: string; feeBasis: string },
+  ): Promise<{ tiers: PlanTier[]; rates: any[] }> {
+    // 1. Delete rate cards first (they reference plan_tiers via plan_tier_id)
+    await db.delete(rateCards).where(eq(rateCards.planId, planId));
+    // 2. Delete old plan tiers
+    await db.delete(planTiers).where(eq(planTiers.planId, planId));
+    // 3. Insert new tiers
+    const newTiers = tierDefs.length > 0
+      ? await db.insert(planTiers).values(tierDefs.map(t => ({ ...t, planId }))).returning()
+      : [];
+
+    // 4. Calculate and insert rate cards
+    const bv = parseFloat(planUpdates.brokerValue || "0") || 0;
+    const mode = planUpdates.brokerMode;
+
+    function r2(n: number) { return Math.round(n * 100) / 100; }
+
+    const cardValues = rateInputs.map(r => {
+      const tier = newTiers[r.tierIndex];
+      if (!tier) return null;
+      const base = parseFloat(r.baseAdminFee || "0") || 0;
+      const cobra = parseFloat(r.cobraFee || "0") || 0;
+      const simple = parseFloat(r.simpleFee || "0") || 0;
+      const network = parseFloat(r.networkFee || "0") || 0;
+      const claims = parseFloat(r.expectedClaims || "0") || 0;
+
+      const adminSubtotal = r2(base + cobra + simple + network);
+      const preBrokerSubtotal = r2(adminSubtotal + claims);
+
+      let brokerFee = 0;
+      if (mode === "FLAT_PEPM" || mode === "FIXED_MONTHLY") {
+        brokerFee = bv;
+      } else if (mode === "PERCENT_OF_PREMIUM" && bv > 0 && bv < 1) {
+        const premium = r2(preBrokerSubtotal / (1 - bv));
+        brokerFee = r2(premium - preBrokerSubtotal);
+      }
+
+      const totalAdminFee = r2(adminSubtotal + brokerFee);
+      const monthlyPremium = r2(totalAdminFee + claims);
+
+      return {
+        planId,
+        planTierId: tier.id,
+        baseAdminFee: r.baseAdminFee,
+        cobraFee: r.cobraFee,
+        simpleFee: r.simpleFee,
+        networkFee: r.networkFee || "0.00",
+        brokerFee: brokerFee.toFixed(2),
+        totalAdminFee: totalAdminFee.toFixed(2),
+        expectedClaims: r.expectedClaims,
+        monthlyPremium: monthlyPremium.toFixed(2),
+      };
+    }).filter(Boolean) as any[];
+
+    const newCards = cardValues.length > 0
+      ? await db.insert(rateCards).values(cardValues).returning()
+      : [];
+
+    // 5. Update plan broker settings
+    await db.update(plans)
+      .set({ brokerMode: mode, brokerValue: planUpdates.brokerValue, feeBasis: planUpdates.feeBasis, updatedAt: new Date() })
+      .where(eq(plans.id, planId));
+
+    return { tiers: newTiers, rates: newCards };
+  }
+
+  /** Legacy method kept for seed.ts compat. New code uses upsertTiersAndRates. */
   async upsertRateCards(planId: number, cards: InsertRateCard[]): Promise<RateCard[]> {
     await db.delete(rateCards).where(eq(rateCards.planId, planId));
     if (cards.length === 0) return [];

@@ -362,6 +362,107 @@ app.use((req, res, next) => {
       `);
     } catch (_) { /* already exists */ }
 
+    // Phase 4: per-plan tiers, broker mode, fee basis.
+    await pool.query(`
+      DO $$ BEGIN
+        -- plan_tiers table
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+                       WHERE table_name = 'plan_tiers' AND table_schema = 'public') THEN
+          CREATE TABLE plan_tiers (
+            id SERIAL PRIMARY KEY,
+            plan_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            display_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+          );
+        END IF;
+
+        -- rate_cards: plan_tier_id column
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'rate_cards' AND column_name = 'plan_tier_id') THEN
+          ALTER TABLE rate_cards ADD COLUMN plan_tier_id INTEGER;
+        END IF;
+
+        -- rate_cards: cobra_fee column
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'rate_cards' AND column_name = 'cobra_fee') THEN
+          ALTER TABLE rate_cards ADD COLUMN cobra_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00;
+        END IF;
+
+        -- rate_cards: make tier nullable (replaced by plan_tier_id)
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'rate_cards' AND column_name = 'tier'
+                     AND is_nullable = 'NO') THEN
+          ALTER TABLE rate_cards ALTER COLUMN tier DROP NOT NULL;
+        END IF;
+
+        -- rate_cards: make total_fee nullable (retired; monthlyPremium holds the same value)
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'rate_cards' AND column_name = 'total_fee'
+                     AND is_nullable = 'NO') THEN
+          ALTER TABLE rate_cards ALTER COLUMN total_fee DROP NOT NULL;
+        END IF;
+
+        -- plans: broker_mode
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'broker_mode') THEN
+          ALTER TABLE plans ADD COLUMN broker_mode TEXT NOT NULL DEFAULT 'NONE';
+        END IF;
+
+        -- plans: broker_value
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'broker_value') THEN
+          ALTER TABLE plans ADD COLUMN broker_value DECIMAL(10,4) DEFAULT 0.0000;
+        END IF;
+
+        -- plans: fee_basis
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'fee_basis') THEN
+          ALTER TABLE plans ADD COLUMN fee_basis TEXT NOT NULL DEFAULT 'PEPM';
+        END IF;
+
+        -- Data migration: create plan_tiers rows from existing rate_cards tier enum values.
+        -- EE_SPOUSE is relabelled to "Employee + One" (it was mislabelled; it covers a spouse
+        -- OR a child, making "Employee + One" the accurate label).
+        INSERT INTO plan_tiers (plan_id, label, display_order)
+        SELECT DISTINCT
+          rc.plan_id,
+          CASE rc.tier::text
+            WHEN 'EE'        THEN 'Employee Only'
+            WHEN 'EE_CHILD'  THEN 'Employee + Child'
+            WHEN 'EE_SPOUSE' THEN 'Employee + One'
+            WHEN 'FAMILY'    THEN 'Employee + Family'
+            ELSE rc.tier::text
+          END,
+          CASE rc.tier::text
+            WHEN 'EE'        THEN 0
+            WHEN 'EE_CHILD'  THEN 1
+            WHEN 'EE_SPOUSE' THEN 2
+            WHEN 'FAMILY'    THEN 3
+            ELSE 99
+          END
+        FROM rate_cards rc
+        WHERE rc.tier IS NOT NULL
+          AND rc.plan_tier_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM plan_tiers pt WHERE pt.plan_id = rc.plan_id);
+
+        -- Map rate_cards.plan_tier_id back from the old tier enum values.
+        UPDATE rate_cards rc
+        SET plan_tier_id = pt.id
+        FROM plan_tiers pt
+        WHERE pt.plan_id = rc.plan_id
+          AND rc.plan_tier_id IS NULL
+          AND rc.tier IS NOT NULL
+          AND pt.label = CASE rc.tier::text
+            WHEN 'EE'        THEN 'Employee Only'
+            WHEN 'EE_CHILD'  THEN 'Employee + Child'
+            WHEN 'EE_SPOUSE' THEN 'Employee + One'
+            WHEN 'FAMILY'    THEN 'Employee + Family'
+            ELSE rc.tier::text
+          END;
+      END $$;
+    `);
+
     // Phase 3: client schema relaxation + new client fields + rate_cards rename.
     await pool.query(`
       DO $$ BEGIN
