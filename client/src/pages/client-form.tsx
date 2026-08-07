@@ -184,7 +184,7 @@ export default function ClientFormPage() {
     const errs: Record<string, string> = {};
     // Only three fields are truly required
     if (!form.clientCode.trim()) errs.clientCode = "Client ID is required";
-    else if (!/^\d{3}$/.test(form.clientCode)) errs.clientCode = "Enter a 3-digit number (e.g., 001)";
+    else if (!/^\d+$/.test(form.clientCode)) errs.clientCode = "Client ID must be digits only (e.g., 20, 111, 455)";
     if (!form.clientName.trim()) errs.clientName = "Client name is required";
     // planType always has a value from the select — no check needed
 
@@ -317,14 +317,14 @@ export default function ClientFormPage() {
                 <Input
                   id="clientCode"
                   value={form.clientCode}
-                  onChange={e => updateField("clientCode", e.target.value.replace(/\D/g, "").slice(0, 3))}
-                  placeholder="001"
-                  maxLength={3}
+                  onChange={e => updateField("clientCode", e.target.value.replace(/\D/g, ""))}
+                  placeholder="e.g. 20, 111, 455"
+                  maxLength={8}
                   className="rounded-l-none"
                   data-testid="input-client-code"
                 />
               </div>
-              <p className="text-xs text-[#94A3B8] mt-1">Format: S-XXX (enter 3 digits)</p>
+              <p className="text-xs text-[#94A3B8] mt-1">Digits only — enter what 90 Degree assigned (e.g. 20 → S-20, 111 → S-111)</p>
               <FieldError field="clientCode" />
             </div>
             <div>
