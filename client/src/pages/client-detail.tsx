@@ -99,6 +99,22 @@ export default function ClientDetailPage() {
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
+  // The renewal report is the document that completes a renewal. It tells 90
+  // Degree Benefits what to change in their claims system for the new plan year,
+  // and it files itself against the renewal it came from.
+  const renewalReportMutation = useMutation({
+    mutationFn: async (renewalId: number) => {
+      const res = await apiRequest("POST", `/api/renewals/${renewalId}/report/save`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "documents"] });
+      setActiveTab("documents");
+      toast({ title: "Renewal report generated", description: "The PDF is now in the Documents tab." });
+    },
+    onError: (err: any) => toast({ title: "Generation failed", description: err.message, variant: "destructive" }),
+  });
+
   // Accepted option is per plan — a multi-plan client can accept a different
   // tier on each plan within the same renewal.
   const planOptionMutation = useMutation({
@@ -315,6 +331,8 @@ export default function ClientDetailPage() {
               const warning = getRenewalTimingWarning(openRenewal, client);
               const proposalDue = getProposalDueDate(client, openRenewal?.planYear);
               const currentStepIdx = step ? RENEWAL_PIPELINE_STEPS.indexOf(step) : -1;
+              // Without an accepted option there is nothing for the report to say.
+              const hasAcceptedOption = (openRenewal?.planOptions ?? []).some((o: any) => o.acceptedOption);
               return (
                 <Card className="border-0 shadow-sm lg:col-span-2">
                   <CardHeader className="pb-3 pt-5 px-6">
@@ -387,6 +405,22 @@ export default function ClientDetailPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs gap-1"
+                          onClick={() => renewalReportMutation.mutate(openRenewal.id)}
+                          disabled={!hasAcceptedOption || renewalReportMutation.isPending}
+                          title={hasAcceptedOption
+                            ? "Generate the document telling 90 Degree Benefits what to change"
+                            : "Record an accepted option on at least one plan first"}
+                          data-testid="button-renewal-report"
+                        >
+                          {renewalReportMutation.isPending
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <FileText className="h-3.5 w-3.5" />}
+                          Renewal Report
+                        </Button>
                       </div>
                     </div>
 

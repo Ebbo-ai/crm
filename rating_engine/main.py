@@ -22,6 +22,10 @@ from generate_renewal import (
 from weasyprint import HTML
 from ppr_import import process_file as ppr_process_file
 from ppr_report import generate as ppr_generate, GENERATOR_VERSION as PPR_GENERATOR_VERSION
+from renewal_report import (
+    generate as renewal_report_generate,
+    GENERATOR_VERSION as RENEWAL_REPORT_VERSION,
+)
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rating] %(message)s")
@@ -258,6 +262,41 @@ def generate_ppr_report():
             })
     except Exception as exc:
         app.logger.exception("generate-ppr-report failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-renewal-report
+# The document sent to 90 Degree Benefits once a renewal is accepted. Unlike
+# every other document this service renders, it breaks out broker compensation
+# as its own line. That is intentional; see renewal_report.py.
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-renewal-report")
+def generate_renewal_report():
+    body = request.get_json(force=True, silent=True) or {}
+    payload       = body.get("payload", {})
+    output_format = body.get("output_format", "html")
+
+    if output_format not in ("html", "pdf"):
+        return jsonify({"error": "output_format must be 'html' or 'pdf'"}), 400
+
+    try:
+        result = renewal_report_generate(payload, output_format)
+        app.logger.info(
+            "generate-renewal-report: client=%s plan_year=%s format=%s",
+            payload.get("client", {}).get("group_number", "?"),
+            payload.get("client", {}).get("plan_year", "?"),
+            output_format,
+        )
+        if output_format == "html":
+            return jsonify({"html": result, "generator_version": RENEWAL_REPORT_VERSION})
+        return jsonify({
+            "pdf_b64": base64.b64encode(result).decode(),
+            "generator_version": RENEWAL_REPORT_VERSION,
+        })
+    except Exception as exc:
+        app.logger.exception("generate-renewal-report failed")
         return jsonify({"error": str(exc)}), 500
 
 

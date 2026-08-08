@@ -68,3 +68,8 @@ shared/
 - Success Green: #22C55E
 - Error Red: #EF4444
 - Background: #F0F4F8
+
+## User Preferences
+
+- **No em dashes or en dashes in generated documents or outgoing text.** Use short, plain, declarative sentences. This applies to every document the app generates.
+- **Broker compensation is never broken out on anything client facing.** On proposals, plan performance reports and employee handouts it is folded into a single combined administrative fee. The one deliberate exception is the renewal report sent to 90 Degree Benefits, where every component must be listed separately so they can set up billing.

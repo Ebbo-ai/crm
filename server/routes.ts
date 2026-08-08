@@ -97,6 +97,290 @@ function getAnniversaryForPlanYear(anniversaryDate: Date, planYear: number): Dat
   return d;
 }
 
+/* ── Renewal report ──────────────────────────────────────────────────────────
+ * The document sent to 90 Degree Benefits once a client accepts their renewal.
+ * It tells them exactly what to change in their claims system for the new year.
+ *
+ * IMPORTANT: this is the ONE document that breaks broker compensation out as its
+ * own line. Everywhere else it is folded into a single combined administrative
+ * fee, because those documents are client facing. 90 Degree Benefits sets up the
+ * billing, so they need every component separately. Do not "fix" this file by
+ * applying the client facing suppression rule used elsewhere.
+ *
+ * Current vs new comes from the year-specific plan rows. Plans are unique on
+ * (client_id, plan_name, plan_year), so the row for the renewal's plan year is
+ * the "new" side and the most recent earlier year is the "current" side.
+ */
+
+const ORTHO_ELIGIBILITY_LABELS: Record<string, string> = {
+  NONE: "None", CHILDREN: "Children only", ALL: "All members",
+};
+const ORTHO_MAX_TYPE_LABELS: Record<string, string> = {
+  SHARED_ANNUAL: "Shared with annual maximum", SEPARATE_LIFETIME: "Separate lifetime maximum",
+};
+const PLAN_BASIS_LABELS: Record<string, string> = {
+  PROCEDURE_BASED: "Procedure based", DOLLAR_BASED: "Dollar based",
+};
+
+/** Decimal columns come back as strings. Empty and null both mean "not recorded". */
+function dec(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function labelOf(map: Record<string, string>, v: any): string | null {
+  if (v == null) return null;
+  return map[String(v)] ?? String(v);
+}
+
+type TierEntry = { label: string; card: any };
+
+/**
+ * Tiers in display order, each with its rate card. Tiers are matched between
+ * plan years by position rather than by label, so that a relabelled tier still
+ * lines up with its predecessor instead of reading as one added and one removed.
+ */
+async function loadTierEntries(plan: any | null): Promise<TierEntry[]> {
+  if (!plan) return [];
+  const [tiers, cards] = await Promise.all([
+    storage.getPlanTiers(plan.id),
+    storage.getRateCards(plan.id),
+  ]);
+  if (tiers.length) {
+    return [...tiers]
+      .sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
+      .map((t: any) => ({
+        label: t.label,
+        card: cards.find((c: any) => c.planTierId === t.id) ?? null,
+      }));
+  }
+  // Legacy plans predate plan_tiers and carry the fixed tier enum on the card.
+  return cards.map((c: any, i: number) => ({ label: c.tier ?? `Tier ${i + 1}`, card: c }));
+}
+
+/** Every fee component, broken out. See the note at the top of this section. */
+function feeComponents(card: any | null) {
+  if (!card) return null;
+  return {
+    base_admin_fee: dec(card.baseAdminFee),
+    cobra_fee: dec(card.cobraFee),
+    simple_fee: dec(card.simpleFee),
+    network_fee: dec(card.networkFee),
+    broker_fee: dec(card.brokerFee),
+    total_admin_fee: dec(card.totalAdminFee),
+    expected_claims: dec(card.expectedClaims),
+    monthly_premium: dec(card.monthlyPremium),
+  };
+}
+
+/**
+ * Charges billed as one flat monthly amount for the whole group rather than per
+ * employee. Two distinct cases land here:
+ *   - feeBasis FIXED_MONTHLY: the whole administrative fee is a group charge.
+ *   - brokerMode FIXED_MONTHLY on a PEPM plan: only broker compensation is.
+ * The second case is easy to miss and matters a lot. upsertTiersAndRates
+ * deliberately writes $0 broker onto every tier row for that mode and keeps the
+ * real amount on the plan record, so without this block the report would tell
+ * 90 Degree Benefits the broker is paid nothing.
+ */
+function groupCharges(plan: any | null) {
+  if (!plan) return null;
+  const flatFee = plan.feeBasis === "FIXED_MONTHLY";
+  const flatBroker = plan.brokerMode === "FIXED_MONTHLY";
+  if (!flatFee && !flatBroker) return null;
+
+  const broker = flatBroker ? dec(plan.brokerValue) : null;
+  if (!flatFee) {
+    // Per employee plan: the tier rates stand, only the broker is a group charge.
+    return {
+      base_admin_fee: null, simple_fee: null, network_fee: null,
+      broker_fee: broker, total_admin_fee: null,
+    };
+  }
+  const adminOnly = dec(plan.flatMonthlyFee);
+  return {
+    base_admin_fee: dec(plan.flat90DBFee),
+    simple_fee: dec(plan.flatSimpleFee),
+    network_fee: dec(plan.flatNetworkFee),
+    broker_fee: broker ?? 0,
+    // flatMonthlyFee is admin only and excludes broker, so add it back here.
+    total_admin_fee: adminOnly == null && broker == null ? null : (adminOnly ?? 0) + (broker ?? 0),
+  };
+}
+
+/** How broker compensation is calculated. brokerValue holds 0.08 to mean 8%. */
+function brokerInfo(plan: any | null) {
+  if (!plan) return null;
+  const mode = plan.brokerMode ?? "NONE";
+  const raw = dec(plan.brokerValue);
+  return {
+    mode,
+    percent: mode === "PERCENT_OF_PREMIUM" && raw != null ? Math.round(raw * 1000000) / 10000 : null,
+    amount: mode === "FLAT_PEPM" || mode === "FIXED_MONTHLY" ? raw : null,
+  };
+}
+
+/** Plan design fields, raw. The renderer decides what counts as "no change". */
+function designRows(cur: any | null, nw: any | null) {
+  const f = (p: any | null, get: (p: any) => any) => (p ? get(p) : null);
+  return [
+    { label: "Annual maximum", kind: "money", current: f(cur, p => dec(p.annualLimit)), new: f(nw, p => dec(p.annualLimit)) },
+    { label: "Deductible", kind: "money", current: f(cur, p => dec(p.deductible)), new: f(nw, p => dec(p.deductible)) },
+    { label: "Preventive coinsurance", kind: "percent", current: f(cur, p => p.preventivePercent), new: f(nw, p => p.preventivePercent) },
+    { label: "Corrective coinsurance", kind: "percent", current: f(cur, p => p.correctivePercent), new: f(nw, p => p.correctivePercent) },
+    { label: "Restorative coinsurance", kind: "percent", current: f(cur, p => p.restorativePercent), new: f(nw, p => p.restorativePercent) },
+    { label: "Orthodontia eligibility", kind: "text", current: f(cur, p => labelOf(ORTHO_ELIGIBILITY_LABELS, p.orthoEligibility)), new: f(nw, p => labelOf(ORTHO_ELIGIBILITY_LABELS, p.orthoEligibility)) },
+    { label: "Orthodontia coinsurance", kind: "percent", current: f(cur, p => p.orthoCoinsurancePercent), new: f(nw, p => p.orthoCoinsurancePercent) },
+    { label: "Orthodontia maximum type", kind: "text", current: f(cur, p => labelOf(ORTHO_MAX_TYPE_LABELS, p.orthoMaxType)), new: f(nw, p => labelOf(ORTHO_MAX_TYPE_LABELS, p.orthoMaxType)) },
+    { label: "Orthodontia lifetime maximum", kind: "money", current: f(cur, p => dec(p.orthoLifetimeMax)), new: f(nw, p => dec(p.orthoLifetimeMax)) },
+    { label: "Assignment of benefits", kind: "bool", current: f(cur, p => p.assignmentOfBenefits), new: f(nw, p => p.assignmentOfBenefits) },
+    { label: "Plan design notes", kind: "text", current: f(cur, p => p.planNotes), new: f(nw, p => p.planNotes) },
+  ];
+}
+
+/**
+ * Build the report payload for one renewal. Throws with a `status` property so
+ * the route can map it to the right HTTP code.
+ */
+async function buildRenewalReportPayload(renewalId: number) {
+  const [renewal] = await db.select().from(renewals).where(eq(renewals.id, renewalId)).limit(1);
+  if (!renewal) throw Object.assign(new Error("Renewal not found"), { status: 404 });
+
+  const client = await storage.getClient(renewal.clientId);
+  if (!client) throw Object.assign(new Error("Client not found"), { status: 404 });
+
+  const options = await db.select().from(renewalPlanOptions)
+    .where(eq(renewalPlanOptions.renewalId, renewalId));
+  const accepted = options.filter(o => o.acceptedOption);
+  if (!accepted.length) {
+    throw Object.assign(
+      new Error("No plan on this renewal has an accepted option recorded, so there is nothing to report."),
+      { status: 400 },
+    );
+  }
+
+  // Archived plans are kept in scope on purpose. A prior plan year is routinely
+  // archived once it is superseded, and excluding it would erase the "current"
+  // side of the comparison. Only the new year's plan is required to be active.
+  const allPlans = await storage.getPlans(client.id);
+  const notices: string[] = [];
+  const planPayloads: any[] = [];
+
+  for (const opt of accepted) {
+    const optPlan = allPlans.find(p => p.id === opt.planId) ?? await storage.getPlan(opt.planId);
+    if (!optPlan) {
+      notices.push(`An accepted option references plan ${opt.planId}, which no longer exists.`);
+      continue;
+    }
+
+    // Pair the plan across years by name. Unique on (client, name, year).
+    const family = allPlans.filter(p => p.planName === optPlan.planName);
+    const newPlan = family.find(p => p.planYear === renewal.planYear && !p.isArchived) ?? null;
+    const priorPlan = family
+      .filter(p => p.planYear < renewal.planYear)
+      .sort((a, b) => b.planYear - a.planYear)[0] ?? null;
+
+    const name = optPlan.planName;
+    if (!newPlan) {
+      notices.push(
+        `${name}: there is no plan record for plan year ${renewal.planYear}. ` +
+        `Set it up so the new rates and design can be reported.`,
+      );
+    }
+    if (!priorPlan) {
+      notices.push(`${name}: no earlier plan year is on record, so no comparison could be made.`);
+    }
+
+    const [priorTiers, newTiers] = await Promise.all([
+      loadTierEntries(priorPlan),
+      loadTierEntries(newPlan),
+    ]);
+
+    const tierRows: any[] = [];
+    const len = Math.max(priorTiers.length, newTiers.length);
+    for (let i = 0; i < len; i++) {
+      const c = priorTiers[i] ?? null;
+      const n = newTiers[i] ?? null;
+      tierRows.push({
+        current_label: c?.label ?? null,
+        new_label: n?.label ?? null,
+        current: feeComponents(c?.card ?? null),
+        new: feeComponents(n?.card ?? null),
+      });
+      // Tier changes are the main thing 90 Degree needs flagged.
+      if (priorPlan && newPlan) {
+        if (c && n && c.label !== n.label) {
+          notices.push(`${name}: tier "${c.label}" was relabelled to "${n.label}".`);
+        } else if (!c && n) {
+          notices.push(`${name}: tier "${n.label}" was added.`);
+        } else if (c && !n) {
+          notices.push(`${name}: tier "${c.label}" was removed.`);
+        }
+      }
+    }
+
+    if (priorPlan && newPlan && priorPlan.planBasis !== newPlan.planBasis) {
+      notices.push(
+        `${name}: plan basis changed from ${labelOf(PLAN_BASIS_LABELS, priorPlan.planBasis)} ` +
+        `to ${labelOf(PLAN_BASIS_LABELS, newPlan.planBasis)}.`,
+      );
+    }
+    if (priorPlan && newPlan && priorPlan.feeBasis !== newPlan.feeBasis) {
+      notices.push(
+        `${name}: billing basis changed from ${priorPlan.feeBasis} to ${newPlan.feeBasis}.`,
+      );
+    }
+
+    const subject = newPlan ?? optPlan;
+    planPayloads.push({
+      plan_name: name,
+      accepted_option: opt.acceptedOption,
+      fee_basis: subject.feeBasis ?? "PEPM",
+      has_prior: !!priorPlan,
+      has_new: !!newPlan,
+      prior_plan_year: priorPlan?.planYear ?? null,
+      new_plan_year: newPlan?.planYear ?? null,
+      design: designRows(priorPlan, newPlan),
+      broker: { current: brokerInfo(priorPlan), new: brokerInfo(newPlan) },
+      tiers: tierRows,
+      group_charges: { current: groupCharges(priorPlan), new: groupCharges(newPlan) },
+    });
+  }
+
+  const anniversary = client.anniversaryDate
+    ? getAnniversaryForPlanYear(new Date(client.anniversaryDate), renewal.planYear)
+    : null;
+
+  return {
+    client: {
+      client_name: client.clientName,
+      group_number: client.clientCode ?? null,
+      plan_year: renewal.planYear,
+      anniversary_date: anniversary ? anniversary.toISOString().split("T")[0] : null,
+    },
+    plans: planPayloads,
+    notices,
+    generated_at: new Date().toISOString(),
+    _meta: { client, renewal },
+  };
+}
+
+/** Render the payload through the rating engine service. */
+async function renderRenewalReport(payload: any, format: "html" | "pdf") {
+  const res = await fetch("http://127.0.0.1:5001/generate-renewal-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload, output_format: format }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const result: any = await res.json();
+  if (!res.ok) {
+    throw Object.assign(new Error(result.error || "Renewal report generation failed"), { status: 500 });
+  }
+  return result;
+}
+
 /**
  * Opens the renewal record for a client's upcoming plan year once it is due to
  * start, and returns the currently open renewal (or null if none is open yet).
@@ -433,6 +717,79 @@ export async function registerRoutes(
       res.json(saved);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/renewals/:id/report?format=html|pdf — preview or download
+  app.get("/api/renewals/:id/report", requireAuth, async (req, res) => {
+    try {
+      const renewalId = parseInt(String(req.params.id));
+      const format = String(req.query.format) === "pdf" ? "pdf" : "html";
+
+      const { _meta, ...payload } = await buildRenewalReportPayload(renewalId);
+      const { client, renewal } = _meta as any;
+      const result = await renderRenewalReport(payload, format);
+
+      if (format === "html") {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("X-Frame-Options", "SAMEORIGIN");
+        return res.send(result.html);
+      }
+      const pdfBytes = Buffer.from(result.pdf_b64, "base64");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition",
+        `attachment; filename="${client.clientCode || client.id}-renewal-report-${renewal.planYear}.pdf"`);
+      return res.send(pdfBytes);
+    } catch (err: any) {
+      res.status(err.status || 500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/renewals/:id/report/save — generate the PDF and file it against
+  // the renewal it came from, the same way proposals and signed forms are.
+  app.post("/api/renewals/:id/report/save", requireAuth, async (req, res) => {
+    try {
+      const renewalId = parseInt(String(req.params.id));
+      const uploadedBy = (req.user as any).fullName;
+
+      const { _meta, ...payload } = await buildRenewalReportPayload(renewalId);
+      const { client, renewal } = _meta as any;
+      const result = await renderRenewalReport(payload, "pdf");
+
+      const pdfBytes = Buffer.from(result.pdf_b64, "base64");
+      const generatorVersion: string = result.generator_version || "unknown";
+
+      const dir = path.join(uploadDir, "renewal-reports", String(client.id));
+      fs.mkdirSync(dir, { recursive: true });
+      const fileName = `${client.clientCode || client.id}-renewal-report-${renewal.planYear}-${Date.now()}.pdf`;
+      const filePath = path.join(dir, fileName);
+      fs.writeFileSync(filePath, pdfBytes);
+
+      const doc = await storage.createDocument({
+        clientId: client.id,
+        planId: null,
+        renewalId,
+        documentName: `Renewal Report, Plan Year ${renewal.planYear}`,
+        category: "RENEWAL_PROPOSAL",
+        filePath,
+        fileName,
+        version: generatorVersion,
+        notes: "For 90 Degree Benefits. Lists every fee component separately, including broker compensation. Not for the client or broker.",
+        uploadedBy,
+      });
+
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: uploadedBy,
+        action: "GENERATE_RENEWAL_REPORT",
+        entity: "document",
+        entityId: doc.id,
+        details: `Generated renewal report for ${client.clientName} plan year ${renewal.planYear} (v${generatorVersion})`,
+      });
+
+      res.json({ document: doc, generatorVersion });
+    } catch (err: any) {
+      res.status(err.status || 500).json({ message: err.message });
     }
   });
 
