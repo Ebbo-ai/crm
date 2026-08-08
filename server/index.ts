@@ -463,6 +463,20 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // Phase 6: Assignment of Benefits flag + plan design notes field.
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'assignment_of_benefits') THEN
+          ALTER TABLE plans ADD COLUMN assignment_of_benefits BOOLEAN NOT NULL DEFAULT TRUE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'plan_notes') THEN
+          ALTER TABLE plans ADD COLUMN plan_notes TEXT;
+        END IF;
+      END $$;
+    `);
+
     // Phase 5: Fixed Monthly flat fee on plans + drop retired total_fee column.
     await pool.query(`
       DO $$ BEGIN

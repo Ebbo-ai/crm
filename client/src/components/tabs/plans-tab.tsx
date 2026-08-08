@@ -512,6 +512,21 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
             )}
           </div>
 
+          {/* assignment of benefits + plan notes */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-2">
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${plan.assignmentOfBenefits !== false ? "bg-green-50 text-green-700" : "bg-[#F0F4F8] text-[#94A3B8]"}`}>
+                {plan.assignmentOfBenefits !== false ? "✓ Assignment of Benefits" : "✗ No Assignment of Benefits"}
+              </span>
+            </div>
+          </div>
+          {plan.planNotes && (
+            <div className="mt-1 mb-3 p-3 bg-amber-50 border border-amber-100 rounded-md">
+              <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider mb-1">Plan Design Notes</p>
+              <p className="text-sm text-[#2C3E50] whitespace-pre-wrap">{plan.planNotes}</p>
+            </div>
+          )}
+
           {/* rate card table */}
           {plan.rateCards?.length > 0 && (() => {
             const sortedCards: any[] = [...plan.rateCards].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
@@ -909,6 +924,8 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     orthoCoinsurancePercent: plan?.orthoCoinsurancePercent ?? "",
     orthoMaxType: (plan?.orthoMaxType ?? "SHARED_ANNUAL") as "SHARED_ANNUAL" | "SEPARATE_LIFETIME",
     orthoLifetimeMax: plan?.orthoLifetimeMax ?? "",
+    assignmentOfBenefits: plan?.assignmentOfBenefits ?? true,
+    planNotes: plan?.planNotes || "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -971,6 +988,8 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
       orthoCoinsurancePercent: form.orthoEligibility !== "NONE" && form.orthoCoinsurancePercent !== "" ? Number(form.orthoCoinsurancePercent) : null,
       orthoMaxType: form.orthoEligibility !== "NONE" ? form.orthoMaxType : "SHARED_ANNUAL",
       orthoLifetimeMax: form.orthoEligibility !== "NONE" && form.orthoMaxType === "SEPARATE_LIFETIME" && form.orthoLifetimeMax ? String(form.orthoLifetimeMax) : null,
+      assignmentOfBenefits: form.assignmentOfBenefits,
+      planNotes: form.planNotes.trim() || null,
     });
   };
 
@@ -1156,6 +1175,37 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                 )}
               </>
             )}
+          </div>
+
+          {/* assignment of benefits + plan notes */}
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 bg-[#F0F4F8] rounded-md border">
+              <input
+                type="checkbox"
+                id="aob-checkbox"
+                checked={form.assignmentOfBenefits}
+                onChange={e => setForm(f => ({ ...f, assignmentOfBenefits: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#1A5276] focus:ring-[#1A5276]"
+                data-testid="input-assignment-of-benefits"
+              />
+              <div>
+                <label htmlFor="aob-checkbox" className="text-sm font-medium cursor-pointer">Assignment of Benefits</label>
+                <p className="text-xs text-[#94A3B8] mt-0.5">
+                  When checked, claims are paid directly to the provider. When unchecked, the member pays out of pocket and seeks reimbursement. This appears on member-facing documents.
+                </p>
+              </div>
+            </div>
+            <div>
+              <Label className="text-sm font-medium">Plan Design Notes</Label>
+              <textarea
+                value={form.planNotes}
+                onChange={e => setForm(f => ({ ...f, planNotes: e.target.value }))}
+                placeholder="Optional — use for plan quirks that don't fit the structured fields above. E.g. separate employee vs. dependent annual maximums, LASIK exclusions, unusual deductible structures. These notes appear on client-facing documents."
+                rows={4}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-y"
+                data-testid="input-plan-notes"
+              />
+            </div>
           </div>
 
           {/* renewal settings */}

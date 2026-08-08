@@ -165,6 +165,12 @@ export const plans = pgTable("plans", {
   // For FIXED_MONTHLY plans only: the flat admin fee charged for the whole group per month.
   // PEPM plans leave this null — their admin fee is calculated per-tier × headcount.
   flatMonthlyFee: decimal("flat_monthly_fee", { precision: 10, scale: 2 }),
+  // Whether claims are assigned directly to providers (true = provider is paid; false = member pays and seeks reimbursement).
+  // Defaults true — the majority of plans assign benefits. Varies per plan even within a single client.
+  assignmentOfBenefits: boolean("assignment_of_benefits").notNull().default(true),
+  // Free-text notes for plan design details that don't fit structured fields.
+  // Renders on all client-facing documents (PPR, employee handout). Not internal-only.
+  planNotes: text("plan_notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({

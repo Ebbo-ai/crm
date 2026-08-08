@@ -164,7 +164,16 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
           </div>
         </div>
         <div style="padding:12px 18px;">
+          <div style="display:flex;gap:16px;margin-bottom:10px;font-size:11px;color:#64748B;">
+            <span>${plan.assignmentOfBenefits !== false
+              ? "<span style='color:#16A34A;font-weight:600;'>✓ Assignment of Benefits</span>"
+              : "<span style='color:#94A3B8;'>✗ No Assignment of Benefits</span>"}</span>
+          </div>
           ${ratesTable}
+          ${plan.planNotes ? `<div style="margin-top:12px;padding:10px 14px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;">
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#92400E;margin-bottom:5px;">Plan Design Notes</div>
+            <div style="font-size:11px;color:#2C3E50;white-space:pre-wrap;">${plan.planNotes}</div>
+          </div>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -433,16 +442,22 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
             <div className="border border-gray-100 border-t-0 rounded-b-md overflow-hidden divide-y divide-gray-50">
               {activePlans.map((plan: any) => (
                 <div key={plan.id} className="p-4">
-                  <div className="flex justify-between items-center mb-3">
+                  <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-[#1A5276]">{plan.planName}</span>
                       <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">Year {plan.planYear}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${plan.assignmentOfBenefits !== false ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {plan.assignmentOfBenefits !== false ? "✓ AOB" : "✗ No AOB"}
+                      </span>
                     </div>
                     <div className="text-[10px] text-[#94A3B8]">
                       Effective: {fmtDate(plan.effectiveDate, { month: "long", day: "numeric", year: "numeric" })}
                       &nbsp;·&nbsp; {PLAN_BASIS_LABELS[plan.planBasis] ?? plan.planBasis}
                     </div>
                   </div>
+                  {plan.planNotes && (
+                    <div className="mb-3 p-2 bg-amber-50 border border-amber-100 rounded text-xs text-[#2C3E50] whitespace-pre-wrap">{plan.planNotes}</div>
+                  )}
                   {(plan.rateCards ?? []).length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
