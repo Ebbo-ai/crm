@@ -239,6 +239,52 @@ function designRows(cur: any | null, nw: any | null) {
   ];
 }
 
+/** Join names for prose: `"A"`, `"A" or "B"`, `"A", "B" or "C"`. */
+function orList(names: string[]) {
+  const q = names.map(n => `"${n}"`);
+  if (q.length <= 1) return q[0] ?? "";
+  return `${q.slice(0, -1).join(", ")} or ${q[q.length - 1]}`;
+}
+
+/**
+ * Work out which plan names gained or lost a counterpart between the prior plan
+ * year and the renewal year.
+ *
+ * Plans are paired across years by name, because rate_cards is the only source
+ * of the fee component split. That pairing cannot tell a renamed plan apart
+ * from a genuinely new one: both simply fail to match. Only one of them is
+ * correct to render as all new, so neither is guessed at. Both sides are
+ * surfaced and a person decides before the report goes out.
+ *
+ * The two sides are deliberately asymmetric:
+ *   dropped  names carried in the immediately preceding plan year on record and
+ *            absent from the renewal year. Scoped to that one year so a plan
+ *            discontinued three years ago is not raised again every renewal.
+ *   added    names in the renewal year with no plan of that name in ANY earlier
+ *            year. Matches how the prior plan is looked up, so a plan that
+ *            skipped a year is not misreported as new.
+ */
+function planNameDrift(allPlans: any[], renewalYear: number) {
+  const earlier = allPlans.filter(p => p.planYear < renewalYear);
+  const priorYear = earlier.length ? Math.max(...earlier.map(p => p.planYear)) : null;
+  const priorYearPlans = priorYear === null ? [] : allPlans.filter(p => p.planYear === priorYear);
+  const newYearPlans = allPlans.filter(p => p.planYear === renewalYear && !p.isArchived);
+
+  const newNames = new Set(newYearPlans.map(p => p.planName));
+  const everEarlier = new Set(earlier.map(p => p.planName));
+
+  return {
+    priorYear,
+    newYearPlans,
+    dropped: Array.from(new Set(
+      priorYearPlans.map(p => p.planName).filter(n => !newNames.has(n)),
+    )),
+    added: Array.from(new Set(
+      newYearPlans.map(p => p.planName).filter(n => !everEarlier.has(n)),
+    )),
+  };
+}
+
 /**
  * Build the report payload for one renewal. Throws with a `status` property so
  * the route can map it to the right HTTP code.
@@ -267,6 +313,16 @@ async function buildRenewalReportPayload(renewalId: number) {
   const notices: string[] = [];
   const planPayloads: any[] = [];
 
+  const drift = planNameDrift(allPlans, renewal.planYear);
+  const firstYearOnRecord = drift.priorYear === null;
+  if (firstYearOnRecord) {
+    notices.push(
+      `This is the first plan year on record for ${client.clientName}, so there is nothing ` +
+      `to compare against. Every value in this report is new.`,
+    );
+  }
+  const reportedNames = new Set<string>();
+
   for (const opt of accepted) {
     const optPlan = allPlans.find(p => p.id === opt.planId) ?? await storage.getPlan(opt.planId);
     if (!optPlan) {
@@ -282,14 +338,31 @@ async function buildRenewalReportPayload(renewalId: number) {
       .sort((a, b) => b.planYear - a.planYear)[0] ?? null;
 
     const name = optPlan.planName;
+    reportedNames.add(name);
     if (!newPlan) {
       notices.push(
         `${name}: there is no plan record for plan year ${renewal.planYear}. ` +
         `Set it up so the new rates and design can be reported.`,
       );
     }
-    if (!priorPlan) {
-      notices.push(`${name}: no earlier plan year is on record, so no comparison could be made.`);
+    // A plan with no earlier namesake is rendered as all new. That is right for
+    // a genuinely new plan and wrong for a renamed one, and the pairing cannot
+    // tell them apart, so say so instead of letting it pass silently.
+    // When this is the client's first plan year, the absence of a comparison is
+    // already stated once at the top. Repeating it per plan is noise, and the
+    // plan section carries its own note anyway.
+    const unmatchedNew = !priorPlan && !firstYearOnRecord;
+    if (unmatchedNew) {
+      notices.push(
+        `${name}: no plan of this name exists in any earlier plan year, so it is reported as ` +
+        `entirely new. ` +
+        (drift.dropped.length
+          ? `${orList(drift.dropped)} was carried in ${drift.priorYear} and has no counterpart ` +
+            `this year. If this plan is that plan renamed, the report treats a rename as a new ` +
+            `plan and none of its values are a like for like comparison. Confirm which it is ` +
+            `before sending.`
+          : `Confirm it is a new plan and not a rename before sending.`),
+      );
     }
 
     const [priorTiers, newTiers] = await Promise.all([
@@ -339,6 +412,8 @@ async function buildRenewalReportPayload(renewalId: number) {
       fee_basis: subject.feeBasis ?? "PEPM",
       has_prior: !!priorPlan,
       has_new: !!newPlan,
+      unmatched_new: unmatchedNew,
+      rename_candidates: unmatchedNew ? drift.dropped : [],
       prior_plan_year: priorPlan?.planYear ?? null,
       new_plan_year: newPlan?.planYear ?? null,
       design: designRows(priorPlan, newPlan),
@@ -346,6 +421,31 @@ async function buildRenewalReportPayload(renewalId: number) {
       tiers: tierRows,
       group_charges: { current: groupCharges(priorPlan), new: groupCharges(newPlan) },
     });
+  }
+
+  // The loop above only visits plans with an accepted option, so a plan that
+  // existed last year and lost its name match would otherwise never be reached
+  // and would drop out of the report without a word. 90 Degree Benefits has to
+  // be told whether it is going away or just called something else now.
+  for (const gone of drift.dropped) {
+    notices.push(
+      `${gone}: carried in plan year ${drift.priorYear} and there is no plan of that name in ` +
+      `${renewal.planYear}. ` +
+      (drift.added.length
+        ? `Either it was renamed to ${orList(drift.added)}, or it is being discontinued. ` +
+          `Tell 90 Degree Benefits which, because the two need opposite handling.`
+        : `Confirm whether it is being discontinued and tell 90 Degree Benefits if so.`),
+    );
+  }
+
+  // A rename candidate the reader cannot find a section for is worse than no
+  // candidate at all, so account for new year plans this report does not cover.
+  for (const p of drift.newYearPlans) {
+    if (reportedNames.has(p.planName)) continue;
+    notices.push(
+      `${p.planName}: on record for plan year ${renewal.planYear} but no option has been ` +
+      `accepted for it, so this report does not cover it.`,
+    );
   }
 
   const anniversary = client.anniversaryDate

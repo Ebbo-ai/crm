@@ -51,9 +51,31 @@ acceptedRates` is unconstrained JSONB that is null in practice. So "current vs
 new" is built by pairing plans **by name across plan years** (plans are unique on
 client, name, year), not from anything stored on the renewal itself.
 
-Consequence: a plan renamed between years cannot be paired, and the roll-forward
-endpoint copies only a subset of fields, so a rolled-forward plan shows almost
-everything as changed. Both are reported as notices rather than guessed at.
+Consequence: the roll-forward endpoint copies only a subset of fields, so a
+rolled-forward plan shows almost everything as changed. Reported as a notice
+rather than guessed at.
+
+## Name pairing cannot tell a rename from a new plan
+
+A renamed plan and a genuinely new plan both simply fail to match, and only one of
+them is correct to render as all new. **Never guess which.** Surface both sides
+and let a person decide before the report goes out.
+
+**Why:** rendering a rename as a brand new plan silently ships a document whose
+every "changed" value is a false comparison, and 90DB acts on it.
+
+**How to apply:** the two unmatched sets are deliberately asymmetric.
+- *Dropped* (lost its counterpart) is scoped to the **immediately preceding plan
+  year on record only**, so a plan discontinued three years ago is not raised
+  again at every renewal.
+- *Added* (no counterpart) is checked against **any earlier year**, matching how
+  the prior plan is looked up, so a plan that skipped a year is not misreported
+  as new.
+
+Also remember the build loop iterates **accepted renewal options**, which only
+ever live on new-year plans. Anything that needs flagging on the prior-year side,
+or on new-year plans with no accepted option, has to be handled outside that loop
+or it never gets visited at all.
 
 ## Style
 

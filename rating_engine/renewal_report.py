@@ -51,6 +51,13 @@ Expected interface (must be preserved in any replacement):
         fee_basis        str          PEPM | FIXED_MONTHLY
         has_prior        bool         is there a prior plan year to compare to
         has_new          bool         does the new plan year exist yet
+        unmatched_new    bool         the client has earlier plan years on
+                                      record but none carries this plan name,
+                                      so this may be a rename rather than a new
+                                      plan and the two cannot be told apart
+        rename_candidates list of str prior year plan names left without a
+                                      counterpart, the possible other half of a
+                                      rename. Empty unless unmatched_new
         prior_plan_year  int | None
         new_plan_year    int | None
         design           list of design rows (see below)
@@ -178,6 +185,14 @@ def _same(a, b) -> bool:
         return abs(float(a) - float(b)) < 0.0001
     except (TypeError, ValueError):
         return str(a).strip() == str(b).strip()
+
+
+def _or_list(names: list) -> str:
+    """Join names for prose: "A", "A" or "B", "A", "B" or "C"."""
+    q = [f'"{_plain(n)}"' for n in names]
+    if len(q) <= 1:
+        return q[0] if q else ""
+    return ", ".join(q[:-1]) + " or " + q[-1]
 
 
 def _broker_basis_phrase(b: dict | None) -> str:
@@ -370,6 +385,22 @@ def _plan_section(plan: dict) -> str:
         warn = (
             '<p class="warn">There is no plan record for the new plan year yet. '
             "The new values below cannot be reported until it is set up.</p>"
+        )
+    elif plan.get("unmatched_new"):
+        # Plans are paired across years by name. A renamed plan and a genuinely
+        # new plan both fail to match, and only one of them is correct to show
+        # as all new, so the reader is told rather than left to assume.
+        cands = plan.get("rename_candidates") or []
+        tail = (
+            f"{_or_list(cands)} was carried last plan year and has no counterpart this year. "
+            "If this plan is that plan under a new name, nothing below is a like for like "
+            "comparison. Confirm before sending."
+            if cands
+            else "Confirm this is a new plan and not a rename before sending."
+        )
+        warn = (
+            '<p class="warn">No plan of this name exists in any earlier plan year, so '
+            f"everything below is reported as new. {_esc(tail)}</p>"
         )
     elif not plan.get("has_prior"):
         warn = (
