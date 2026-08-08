@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
-import { PLAN_BASIS_LABELS, PLAN_COVERAGE_TYPE_LABELS, PLAN_COVERAGE_TYPE_OPTIONS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
+import { PLAN_BASIS_LABELS, PLAN_COVERAGE_TYPE_LABELS, PLAN_COVERAGE_TYPE_OPTIONS, STANDARD_TIER_DESCRIPTIONS, STANDARD_TIER_LABELS, TIER_LABELS, formatCurrency, parseLocalDate } from "@/lib/constants";
 import {
   Plus, ChevronDown, ChevronUp, Edit, RefreshCw, FileText, CalendarDays,
   CheckCircle2, Clock, Upload, Download, Trash2, Users, AlertTriangle
@@ -1271,13 +1271,11 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
 
 // ---------- rate form dialog ----------
 
-const COMMON_TIER_LABELS = [
-  "Employee Only",
-  "Employee + One",
-  "Employee + Spouse",
-  "Employee + Child",
-  "Employee + Family",
-];
+/** Sentinel for the dropdown entry that reveals the free text field. */
+const CUSTOM_TIER = "__custom__";
+
+const isStandardTier = (label: string) =>
+  (STANDARD_TIER_LABELS as readonly string[]).includes(label);
 
 const BROKER_MODE_LABELS: Record<string, string> = {
   NONE: "No broker compensation",
@@ -1323,7 +1321,10 @@ function calcTierOutputs(
   };
 }
 
-type TierRow = { id: string; label: string };
+// `custom` is held separately rather than derived from the label, because a tier
+// where Custom has just been picked has an empty label and would otherwise snap
+// straight back to the dropdown before anything could be typed into it.
+type TierRow = { id: string; label: string; custom: boolean };
 type RateInputs = { baseAdminFee: string; cobraFee: string; simpleFee: string; networkFee: string; expectedClaims: string };
 
 function RateFormDialog({ open, onClose, planId, clientId, client, plan, existingRates }: any) {
@@ -1351,7 +1352,8 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         const key = String(r.planTierId ?? r.tier ?? "?");
         if (!seen.has(key)) {
           seen.add(key);
-          tiers.push({ id: key, label: r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? "" });
+          const label = r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? "";
+          tiers.push({ id: key, label, custom: !!label && !isStandardTier(label) });
         }
       });
       rateMap = {};
@@ -1366,7 +1368,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         };
       });
     } else {
-      const t0: TierRow = { id: "new_0", label: "Employee Only" };
+      const t0: TierRow = { id: "new_0", label: "EE", custom: false };
       tiers = [t0];
       rateMap = { [t0.id]: { baseAdminFee: defaultBase(), cobraFee: defaultCobra(), simpleFee: "0.00", networkFee: "0.00", expectedClaims: "0.00" } };
     }
@@ -1417,7 +1419,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
   const addTier = () => {
     if (localTiers.length >= 4) return;
     const newId = `new_${Date.now()}`;
-    setLocalTiers(prev => [...prev, { id: newId, label: "" }]);
+    setLocalTiers(prev => [...prev, { id: newId, label: "", custom: false }]);
     setRates(prev => ({
       ...prev,
       [newId]: { baseAdminFee: defaultBase(), cobraFee: defaultCobra(), simpleFee: "0.00", networkFee: "0.00", expectedClaims: "0.00" },
@@ -1432,6 +1434,18 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
 
   const updateTierLabel = (tierId: string, label: string) => {
     setLocalTiers(prev => prev.map(t => t.id === tierId ? { ...t, label } : t));
+  };
+
+  const chooseStandardTier = (tierId: string, label: string) => {
+    setLocalTiers(prev => prev.map(t => t.id === tierId ? { ...t, label, custom: false } : t));
+  };
+
+  const chooseCustomTier = (tierId: string) => {
+    // Clear a standard label so the free text field starts empty. A label that
+    // was already custom is kept so reopening the dialog does not wipe it.
+    setLocalTiers(prev => prev.map(t =>
+      t.id === tierId ? { ...t, custom: true, label: isStandardTier(t.label) ? "" : t.label } : t,
+    ));
   };
 
   const updateRate = (tierId: string, field: keyof RateInputs, value: string) => {
@@ -1532,40 +1546,58 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
               <Plus className="w-3 h-3" /> Add Tier
             </Button>
           </div>
-          {/* Common label suggestions */}
-          <div className="flex flex-wrap gap-1.5">
-            {COMMON_TIER_LABELS.map(label => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => {
-                  // Apply to the first unlabelled tier, or do nothing if all are labelled
-                  const blank = localTiers.find(t => !t.label || t.label === label);
-                  if (blank) updateTierLabel(blank.id, label);
-                }}
-                className="text-[11px] px-2 py-0.5 rounded-full border border-[#2E86C1]/30 text-[#2E86C1] hover:bg-[#2E86C1]/10 cursor-pointer"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {/* Tier label inputs */}
+          <p className="text-[11px] text-[#64748B]">
+            Use the standard labels wherever they fit, so plans stay comparable across
+            years and clients. Pick Custom only for a genuinely different structure.
+          </p>
+          {/* Tier label pickers. Standard labels are the default path; Custom
+              reveals a free text field for structures the standard set cannot
+              express, such as a family tier split by dependent count. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {localTiers.map((tier, idx) => (
-              <div key={tier.id} className="flex items-center gap-1">
-                <Input
-                  value={tier.label}
-                  onChange={e => updateTierLabel(tier.id, e.target.value)}
-                  placeholder={`Tier ${idx + 1} label`}
-                  className="h-8 text-xs"
-                />
-                {localTiers.length > 1 && (
-                  <button type="button" onClick={() => removeTier(tier.id)} className="text-[#94A3B8] hover:text-[#EF4444] flex-shrink-0">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
+            {localTiers.map((tier, idx) => {
+              const selectValue = tier.custom
+                ? CUSTOM_TIER
+                : (isStandardTier(tier.label) ? tier.label : "");
+              return (
+                <div key={tier.id} className="space-y-1">
+                  <div className="flex items-center gap-1">
+                    <Select
+                      value={selectValue}
+                      onValueChange={v =>
+                        v === CUSTOM_TIER ? chooseCustomTier(tier.id) : chooseStandardTier(tier.id, v)
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs" data-testid={`select-tier-${idx}`}>
+                        <SelectValue placeholder={`Tier ${idx + 1} label`} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STANDARD_TIER_LABELS.map(label => (
+                          <SelectItem key={label} value={label}>
+                            <span className="font-semibold">{label}</span>
+                            <span className="text-[#64748B] ml-2">{STANDARD_TIER_DESCRIPTIONS[label]}</span>
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={CUSTOM_TIER}>Custom...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {localTiers.length > 1 && (
+                      <button type="button" onClick={() => removeTier(tier.id)} className="text-[#94A3B8] hover:text-[#EF4444] flex-shrink-0">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  {tier.custom && (
+                    <Input
+                      value={tier.label}
+                      onChange={e => updateTierLabel(tier.id, e.target.value)}
+                      placeholder="Custom label"
+                      className="h-8 text-xs"
+                      data-testid={`input-tier-custom-${idx}`}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 

@@ -146,10 +146,10 @@ export async function seedDatabase() {
   await storage.upsertTiersAndRates(
     plan1.id,
     [
-      { label: "Employee Only", displayOrder: 0 },
-      { label: "Employee + One",  displayOrder: 1 },
-      { label: "Employee + Child", displayOrder: 2 },
-      { label: "Employee + Family", displayOrder: 3 },
+      { label: "EE", displayOrder: 0 },
+      { label: "EE+1", displayOrder: 1 },
+      { label: "EE+CH", displayOrder: 2 },
+      { label: "EE+FAM", displayOrder: 3 },
     ],
     [
       { tierIndex: 0, baseAdminFee: "8.50",  cobraFee: "0.00", simpleFee: "3.25", networkFee: "2.00", expectedClaims: "32.00" },

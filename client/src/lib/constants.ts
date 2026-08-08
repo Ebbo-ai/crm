@@ -49,11 +49,38 @@ export const PLAN_BASIS_LABELS: Record<string, string> = {
   DOLLAR_BASED: "Dollar Based",
 };
 
+/**
+ * The house standard for tier labels, used across every client.
+ *
+ * Consistency is the point. The variation in the older data came from different
+ * people typing whatever was quickest, which made plans hard to compare across
+ * years. These are offered as a dropdown so picking a standard label is the
+ * default path and typing something else takes deliberate effort.
+ *
+ * EE+1 is not a duplicate of EE+SP. It means employee plus one other person,
+ * spouse or child, which some employers price as a single add-on tier without
+ * distinguishing which.
+ */
+export const STANDARD_TIER_LABELS = ["EE", "EE+SP", "EE+CH", "EE+1", "EE+FAM"] as const;
+
+export const STANDARD_TIER_DESCRIPTIONS: Record<string, string> = {
+  "EE": "Employee only",
+  "EE+SP": "Employee plus spouse",
+  "EE+CH": "Employee plus children",
+  "EE+1": "Employee plus one, spouse or child",
+  "EE+FAM": "Employee plus family",
+};
+
+/**
+ * Display fallback for rate cards still carrying the retired `tier` enum rather
+ * than a plan_tiers row. EE_SPOUSE maps to EE+1 on purpose: the enum name was
+ * inaccurate, it covered a spouse or a child.
+ */
 export const TIER_LABELS: Record<string, string> = {
   EE: "EE",
-  EE_CHILD: "EE+C",
-  EE_SPOUSE: "EE+S",
-  FAMILY: "Family",
+  EE_CHILD: "EE+CH",
+  EE_SPOUSE: "EE+1",
+  FAMILY: "EE+FAM",
 };
 
 export const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {

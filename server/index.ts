@@ -422,16 +422,16 @@ app.use((req, res, next) => {
         END IF;
 
         -- Data migration: create plan_tiers rows from existing rate_cards tier enum values.
-        -- EE_SPOUSE is relabelled to "Employee + One" (it was mislabelled; it covers a spouse
-        -- OR a child, making "Employee + One" the accurate label).
+        -- Emits the house standard labels (see Phase 11). EE_SPOUSE becomes EE+1, not
+        -- EE+SP: the enum name was inaccurate, it covered a spouse OR a child.
         INSERT INTO plan_tiers (plan_id, label, display_order)
         SELECT DISTINCT
           rc.plan_id,
           CASE rc.tier::text
-            WHEN 'EE'        THEN 'Employee Only'
-            WHEN 'EE_CHILD'  THEN 'Employee + Child'
-            WHEN 'EE_SPOUSE' THEN 'Employee + One'
-            WHEN 'FAMILY'    THEN 'Employee + Family'
+            WHEN 'EE'        THEN 'EE'
+            WHEN 'EE_CHILD'  THEN 'EE+CH'
+            WHEN 'EE_SPOUSE' THEN 'EE+1'
+            WHEN 'FAMILY'    THEN 'EE+FAM'
             ELSE rc.tier::text
           END,
           CASE rc.tier::text
@@ -454,10 +454,10 @@ app.use((req, res, next) => {
           AND rc.plan_tier_id IS NULL
           AND rc.tier IS NOT NULL
           AND pt.label = CASE rc.tier::text
-            WHEN 'EE'        THEN 'Employee Only'
-            WHEN 'EE_CHILD'  THEN 'Employee + Child'
-            WHEN 'EE_SPOUSE' THEN 'Employee + One'
-            WHEN 'FAMILY'    THEN 'Employee + Family'
+            WHEN 'EE'        THEN 'EE'
+            WHEN 'EE_CHILD'  THEN 'EE+CH'
+            WHEN 'EE_SPOUSE' THEN 'EE+1'
+            WHEN 'FAMILY'    THEN 'EE+FAM'
             ELSE rc.tier::text
           END;
       END $$;
@@ -583,6 +583,56 @@ app.use((req, res, next) => {
           ALTER TABLE rate_cards RENAME COLUMN spread_admin_fee TO simple_fee;
         END IF;
       END $$;
+    `);
+
+    // ── Phase 11: House standard tier labels ──────────────────────────────────
+    // Sits before Phase 10 in the file despite the higher number, because Phase 10
+    // must stay last. Order still matters: this has to run after Phase 4, which is
+    // what creates plan_tiers rows from the retired rate_cards tier enum.
+    //
+    // Labels were free text, so the same tier was written differently by different
+    // people and plans became hard to compare across years. Everything that clearly
+    // corresponds to one of the five standard labels is normalised. Anything else is
+    // left exactly as it is rather than forced into the nearest match, because real
+    // pricing structures exist that the standard set cannot express, for example a
+    // family tier split by dependent count.
+    //
+    // Re-runs every boot and is a no-op once labels are already standard.
+    await pool.query(`
+      WITH standard(norm, label) AS (VALUES
+        ('ee','EE'), ('eeonly','EE'), ('employee','EE'), ('employeeonly','EE'),
+
+        ('eesp','EE+SP'), ('ees','EE+SP'), ('eespouse','EE+SP'),
+        ('employeespouse','EE+SP'), ('employeeplusspouse','EE+SP'),
+
+        ('eech','EE+CH'), ('eec','EE+CH'), ('eechild','EE+CH'), ('eechildren','EE+CH'),
+        ('employeechild','EE+CH'), ('employeechildren','EE+CH'),
+        ('employeepluschild','EE+CH'), ('employeepluschildren','EE+CH'),
+
+        ('ee1','EE+1'), ('eeone','EE+1'), ('employee1','EE+1'),
+        ('employeeone','EE+1'), ('employeeplusone','EE+1'),
+
+        ('eefam','EE+FAM'), ('eef','EE+FAM'), ('eefm','EE+FAM'), ('eefamily','EE+FAM'),
+        ('family','EE+FAM'), ('employeefamily','EE+FAM'), ('employeeplusfamily','EE+FAM')
+      )
+      UPDATE plan_tiers pt
+      SET label = s.label
+      FROM standard s
+      WHERE lower(regexp_replace(pt.label, '[^A-Za-z0-9]', '', 'g')) = s.norm
+        AND pt.label <> s.label
+        -- Never let normalising collapse two tiers on one plan into the same label.
+        -- Skip if a sibling already holds the target label, or if a sibling maps to
+        -- the same target and got there first.
+        AND NOT EXISTS (
+          SELECT 1 FROM plan_tiers other
+          WHERE other.plan_id = pt.plan_id
+            AND other.id <> pt.id
+            AND (
+              other.label = s.label
+              OR (lower(regexp_replace(other.label, '[^A-Za-z0-9]', '', 'g')) = s.norm
+                  AND other.id < pt.id)
+            )
+        );
     `);
 
     // ── Phase 10: Renewals as year-specific records ───────────────────────────

@@ -3,5 +3,6 @@
 - [PPR Phase 2 Architecture](ppr-phase2-architecture.md) — monthly import pipeline + report gen; Python stubs define interface; Node layer owns all DB writes; admin_fee is single all-in figure, never broken out.
 - [Renewal tracking architecture](renewal-tracking.md) — renewals are per-client-per-plan-year records, not client/plan fields; NULL-safe open predicate; warnings measured against the renewal's own plan year.
 - [Startup migration chain](startup-migrations.md) — phases re-run every boot in source order; column drops must go last and relocated ADDs deleted, or they fight forever.
+- [Tier labels](tier-labels.md) — five-label house standard (EE, EE+SP, EE+CH, EE+1, EE+FAM); EE+1 is not EE+SP; never force a non-matching label into the nearest match.
 - [Renewal report](renewal-report.md) — breaks out broker compensation; plans paired by name across years, so rename vs new plan is never guessed; fee traps that hide broker; no em dashes.
 - [Dev server reload](dev-server-reload.md) — no watch flag, so new API routes silently return Vite's SPA shell with a 200 until the workflow restarts.
