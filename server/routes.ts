@@ -264,13 +264,18 @@ export async function registerRoutes(
       const planId = parseInt(req.params.planId);
       const body = req.body;
 
-      // New format: { tiers, rates, brokerMode, brokerValue, feeBasis }
+      // New format: { tiers, rates, brokerMode, brokerValue, feeBasis, flatMonthlyFee? }
       if (body && Array.isArray(body.tiers)) {
         const result = await storage.upsertTiersAndRates(
           planId,
           body.tiers,
           body.rates,
-          { brokerMode: body.brokerMode ?? "NONE", brokerValue: body.brokerValue ?? "0.0000", feeBasis: body.feeBasis ?? "PEPM" },
+          {
+            brokerMode: body.brokerMode ?? "NONE",
+            brokerValue: body.brokerValue ?? "0.0000",
+            feeBasis: body.feeBasis ?? "PEPM",
+            flatMonthlyFee: body.flatMonthlyFee ?? null,
+          },
         );
         await storage.createAuditLog({
           userId: (req.user as any).id,
@@ -1972,42 +1977,51 @@ export async function registerRoutes(
       const monthsPayload = planMonths.map(({ month, year }) => {
         const fact = planFacts.find(f => f.reportMonth === month && f.reportYear === year);
 
-        // Admin fee total: multiply each tier's totalAdminFee by headcount for that tier.
-        // Cards now use planTierId + tierLabel rather than the old enum tier column.
-        // We use displayOrder as the canonical tier sequence (0=EE, 1=EE_CHILD, 2=EE+One, 3=Family)
-        // and fall back to the legacy tier enum for old rows that pre-date the migration.
+        // Admin fee total — two paths depending on the plan's fee basis:
+        //
+        // FIXED_MONTHLY: a single flat charge for the whole group each month.
+        //   = plan.flatMonthlyFee + plan.brokerValue (if brokerMode is FIXED_MONTHLY)
+        //   Headcount is irrelevant here; the amount does not vary by enrollment.
+        //
+        // PEPM: multiply each tier's totalAdminFee by that tier's headcount and sum.
         let adminFeeTotal: number | null = null;
         if (fact) {
-          const monthDate = new Date(year, month - 1, 1);
+          if (plan.feeBasis === "FIXED_MONTHLY") {
+            const flatAdmin  = parseFloat(String(plan.flatMonthlyFee ?? "0")) || 0;
+            const flatBroker = plan.brokerMode === "FIXED_MONTHLY"
+              ? (parseFloat(String(plan.brokerValue ?? "0")) || 0)
+              : 0;
+            const total = flatAdmin + flatBroker;
+            if (total > 0) adminFeeTotal = Math.round(total * 100) / 100;
+          } else {
+            // PEPM path — multiply per-tier totalAdminFee by headcount.
+            const monthDate = new Date(year, month - 1, 1);
 
-          // Build a map from planTierId → totalAdminFee (most recent effective date wins)
-          const byTierId: Record<number, number> = {};
-          const byLegacyTier: Record<string, number> = {};
-          for (const rc of cards) {
-            if (rc.effectiveDate && new Date(rc.effectiveDate) > monthDate) continue;
-            const fee = parseFloat(rc.totalAdminFee ?? rc.totalFee ?? "0") || 0;
-            if (rc.planTierId != null) {
-              if (!(rc.planTierId in byTierId) || (rc.effectiveDate ?? 0) > (cards.find((c: any) => c.planTierId === rc.planTierId && c !== rc)?.effectiveDate ?? 0)) {
-                byTierId[rc.planTierId] = fee;
+            // Build a map from planTierId → totalAdminFee (most recent effective date wins)
+            const byTierId: Record<number, number> = {};
+            const byLegacyTier: Record<string, number> = {};
+            for (const rc of cards) {
+              if (rc.effectiveDate && new Date(rc.effectiveDate) > monthDate) continue;
+              const fee = parseFloat(rc.totalAdminFee ?? "0") || 0;
+              if (rc.planTierId != null) {
+                if (!(rc.planTierId in byTierId)) byTierId[rc.planTierId] = fee;
+              } else if (rc.tier) {
+                byLegacyTier[rc.tier] = fee;
               }
-            } else if (rc.tier) {
-              byLegacyTier[rc.tier] = fee;
             }
+
+            // Sort cards by displayOrder so tier index matches headcount bucket order.
+            const sortedCards = [...cards].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+            const tieredFees = sortedCards.map((rc: any) =>
+              rc.planTierId != null ? (byTierId[rc.planTierId] ?? 0) : (byLegacyTier[rc.tier] ?? 0)
+            );
+
+            // Headcount buckets match displayOrder: [EE-only, EE+Child, EE+One/Spouse, Family]
+            const headcounts = [fact.eeCount ?? 0, fact.eeChildCount ?? 0, fact.eeSpouseCount ?? 0, fact.familyCount ?? 0];
+            let total = 0;
+            tieredFees.forEach((fee: number, i: number) => { total += fee * (headcounts[i] ?? 0); });
+            if (total > 0) adminFeeTotal = Math.round(total * 100) / 100;
           }
-
-          // Match headcount buckets to tiers by displayOrder position (0→EE, 1→EE_CHILD, 2→EE+One, 3→Family).
-          // Sort cards by displayOrder so index matches regardless of label names.
-          const sortedCards = [...cards].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-          const tieredFees = sortedCards.map((rc: any) => {
-            if (rc.planTierId != null) return byTierId[rc.planTierId] ?? 0;
-            return byLegacyTier[rc.tier] ?? 0;
-          });
-
-          // headcount order matches displayOrder: [EE-only, EE+Child, EE+One/Spouse, Family]
-          const headcounts = [fact.eeCount ?? 0, fact.eeChildCount ?? 0, fact.eeSpouseCount ?? 0, fact.familyCount ?? 0];
-          let total = 0;
-          tieredFees.forEach((fee: number, i: number) => { total += fee * (headcounts[i] ?? 0); });
-          if (total > 0) adminFeeTotal = Math.round(total * 100) / 100;
         }
 
         return {

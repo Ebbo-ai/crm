@@ -162,6 +162,9 @@ export const plans = pgTable("plans", {
   brokerValue: decimal("broker_value", { precision: 10, scale: 4 }).default("0.0000"),
   // PEPM = per employee per month (default). FIXED_MONTHLY = single flat amount for the whole group.
   feeBasis: text("fee_basis").notNull().default("PEPM"),
+  // For FIXED_MONTHLY plans only: the flat admin fee charged for the whole group per month.
+  // PEPM plans leave this null — their admin fee is calculated per-tier × headcount.
+  flatMonthlyFee: decimal("flat_monthly_fee", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
@@ -189,8 +192,7 @@ export const rateCards = pgTable("rate_cards", {
   brokerFee: decimal("broker_fee", { precision: 10, scale: 2 }).default("0.00"),
   // totalAdminFee = adminSubtotal + brokerFee (adminSubtotal = base+cobra+simple+network)
   totalAdminFee: decimal("total_admin_fee", { precision: 10, scale: 2 }).notNull(),
-  // totalFee: retired — was a duplicate of monthlyPremium. Kept nullable for backward compat.
-  totalFee: decimal("total_fee", { precision: 10, scale: 2 }),
+  // totalFee: dropped — column removed in Phase 5 migration. Do not re-add.
   expectedClaims: decimal("expected_claims", { precision: 10, scale: 2 }).notNull(),
   // monthlyPremium = totalAdminFee + expectedClaims (always matches)
   monthlyPremium: decimal("monthly_premium", { precision: 10, scale: 2 }).notNull(),

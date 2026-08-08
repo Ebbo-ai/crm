@@ -267,7 +267,7 @@ export class DatabaseStorage implements IStorage {
     planId: number,
     tierDefs: { label: string; displayOrder: number }[],
     rateInputs: Array<{ tierIndex: number; baseAdminFee: string; cobraFee: string; simpleFee: string; networkFee: string; expectedClaims: string }>,
-    planUpdates: { brokerMode: string; brokerValue: string; feeBasis: string },
+    planUpdates: { brokerMode: string; brokerValue: string; feeBasis: string; flatMonthlyFee?: string },
   ): Promise<{ tiers: PlanTier[]; rates: any[] }> {
     // 1. Delete rate cards first (they reference plan_tiers via plan_tier_id)
     await db.delete(rateCards).where(eq(rateCards.planId, planId));
@@ -278,43 +278,71 @@ export class DatabaseStorage implements IStorage {
       ? await db.insert(planTiers).values(tierDefs.map(t => ({ ...t, planId }))).returning()
       : [];
 
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const isFixedMonthly = planUpdates.feeBasis === "FIXED_MONTHLY";
+
     // 4. Calculate and insert rate cards
+    // FIXED_MONTHLY: admin fee lives on the plan record (flatMonthlyFee), not per tier.
+    //   Tier rows carry only expectedClaims for enrollment reporting.
+    //   totalAdminFee and brokerFee are zeroed on each row — do not distribute them per tier.
+    // PEPM: normal per-tier calculation as before.
     const bv = parseFloat(planUpdates.brokerValue || "0") || 0;
     const mode = planUpdates.brokerMode;
-
-    function r2(n: number) { return Math.round(n * 100) / 100; }
 
     const cardValues = rateInputs.map(r => {
       const tier = newTiers[r.tierIndex];
       if (!tier) return null;
-      const base = parseFloat(r.baseAdminFee || "0") || 0;
-      const cobra = parseFloat(r.cobraFee || "0") || 0;
-      const simple = parseFloat(r.simpleFee || "0") || 0;
-      const network = parseFloat(r.networkFee || "0") || 0;
       const claims = parseFloat(r.expectedClaims || "0") || 0;
 
-      const adminSubtotal = r2(base + cobra + simple + network);
+      if (isFixedMonthly) {
+        // Admin is a fixed group charge — store zeros on the tier rows.
+        // monthlyPremium per tier = claims only (for reference; actual billing uses flatMonthlyFee).
+        return {
+          planId,
+          planTierId: tier.id,
+          baseAdminFee: "0.00",
+          cobraFee: "0.00",
+          simpleFee: "0.00",
+          networkFee: "0.00",
+          brokerFee: "0.00",
+          totalAdminFee: "0.00",
+          expectedClaims: r.expectedClaims,
+          monthlyPremium: claims.toFixed(2),
+        };
+      }
+
+      // PEPM path
+      const base   = parseFloat(r.baseAdminFee || "0") || 0;
+      const cobra  = parseFloat(r.cobraFee || "0") || 0;
+      const simple = parseFloat(r.simpleFee || "0") || 0;
+      const network = parseFloat(r.networkFee || "0") || 0;
+
+      const adminSubtotal     = r2(base + cobra + simple + network);
       const preBrokerSubtotal = r2(adminSubtotal + claims);
 
       let brokerFee = 0;
-      if (mode === "FLAT_PEPM" || mode === "FIXED_MONTHLY") {
+      if (mode === "FLAT_PEPM") {
         brokerFee = bv;
+      } else if (mode === "FIXED_MONTHLY") {
+        // FIXED_MONTHLY broker mode on a PEPM fee-basis plan: broker is a flat group charge.
+        // Store it on the plan record only; zero on tier rows (same principle as flatMonthlyFee).
+        brokerFee = 0;
       } else if (mode === "PERCENT_OF_PREMIUM" && bv > 0 && bv < 1) {
         const premium = r2(preBrokerSubtotal / (1 - bv));
         brokerFee = r2(premium - preBrokerSubtotal);
       }
 
-      const totalAdminFee = r2(adminSubtotal + brokerFee);
+      const totalAdminFee  = r2(adminSubtotal + brokerFee);
       const monthlyPremium = r2(totalAdminFee + claims);
 
       return {
         planId,
         planTierId: tier.id,
-        baseAdminFee: r.baseAdminFee,
-        cobraFee: r.cobraFee,
-        simpleFee: r.simpleFee,
-        networkFee: r.networkFee || "0.00",
-        brokerFee: brokerFee.toFixed(2),
+        baseAdminFee:  r.baseAdminFee,
+        cobraFee:      r.cobraFee,
+        simpleFee:     r.simpleFee,
+        networkFee:    r.networkFee || "0.00",
+        brokerFee:     brokerFee.toFixed(2),
         totalAdminFee: totalAdminFee.toFixed(2),
         expectedClaims: r.expectedClaims,
         monthlyPremium: monthlyPremium.toFixed(2),
@@ -325,10 +353,20 @@ export class DatabaseStorage implements IStorage {
       ? await db.insert(rateCards).values(cardValues).returning()
       : [];
 
-    // 5. Update plan broker settings
-    await db.update(plans)
-      .set({ brokerMode: mode, brokerValue: planUpdates.brokerValue, feeBasis: planUpdates.feeBasis, updatedAt: new Date() })
-      .where(eq(plans.id, planId));
+    // 5. Update plan settings
+    const planSet: Record<string, any> = {
+      brokerMode:  mode,
+      brokerValue: planUpdates.brokerValue,
+      feeBasis:    planUpdates.feeBasis,
+      updatedAt:   new Date(),
+    };
+    if (isFixedMonthly) {
+      planSet.flatMonthlyFee = planUpdates.flatMonthlyFee ?? null;
+    } else {
+      // Clear flatMonthlyFee when switching back to PEPM
+      planSet.flatMonthlyFee = null;
+    }
+    await db.update(plans).set(planSet).where(eq(plans.id, planId));
 
     return { tiers: newTiers, rates: newCards };
   }

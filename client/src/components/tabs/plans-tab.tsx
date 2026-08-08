@@ -516,23 +516,33 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           {plan.rateCards?.length > 0 && (() => {
             const sortedCards: any[] = [...plan.rateCards].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
             const hasBroker = plan.brokerMode && plan.brokerMode !== "NONE";
-            const rows = [
+            const isFixedMonthly = plan.feeBasis === "FIXED_MONTHLY";
+            const flatFee = parseFloat(plan.flatMonthlyFee ?? "0") || 0;
+            const flatBroker = isFixedMonthly && plan.brokerMode === "FIXED_MONTHLY"
+              ? (parseFloat(plan.brokerValue ?? "0") || 0) : 0;
+
+            const pepmRows = [
               { key: "baseAdminFee", label: "Base Admin Fee" },
               { key: "cobraFee", label: "COBRA Fee" },
               { key: "simpleFee", label: "Simple Fee" },
               ...(client?.networkActive ? [{ key: "networkFee", label: "Network Fee" }] : []),
-              ...(hasBroker ? [{ key: "brokerFee", label: "Broker Fee" }] : []),
+              ...(hasBroker && !isFixedMonthly ? [{ key: "brokerFee", label: "Broker Fee" }] : []),
               { key: "totalAdminFee", label: "Total Admin Fee", subtotal: true },
               { key: "expectedClaims", label: "Expected Claims" },
               { key: "monthlyPremium", label: "Monthly Premium", highlight: true },
             ];
+
             return (
               <div className="mt-2 mb-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-semibold text-[#1A5276]">Rate Card</h4>
                   <div className="flex items-center gap-3 text-[10px] text-[#94A3B8]">
-                    {plan.feeBasis === "FIXED_MONTHLY" && <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5">Fixed Monthly</span>}
-                    {hasBroker && (
+                    {isFixedMonthly && (
+                      <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5">
+                        Fixed Monthly — ${flatFee.toFixed(2)}/mo{flatBroker > 0 ? ` + $${flatBroker.toFixed(2)} broker` : ""}
+                      </span>
+                    )}
+                    {!isFixedMonthly && hasBroker && (
                       <span>
                         Broker: {plan.brokerMode === "PERCENT_OF_PREMIUM"
                           ? `${(parseFloat(plan.brokerValue || "0") * 100).toFixed(0)}% of premium`
@@ -543,34 +553,69 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                     )}
                   </div>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
-                    <thead>
-                      <tr className="bg-[#1A5276] text-white">
-                        <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
-                        {sortedCards.map((rc: any) => (
-                          <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
-                            {rc.tierLabel ?? TIER_LABELS[rc.tier] ?? rc.tier ?? `Tier ${rc.planTierId}`}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row, i) => (
-                        <tr key={row.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(row as any).highlight ? "font-bold" : ""}`}>
-                          <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
-                            {row.label}
-                          </td>
+
+                {isFixedMonthly ? (
+                  /* Fixed Monthly: tier table shows enrollment tiers + expected claims only.
+                     The flat admin fee is displayed as a plan-level annotation, not per tier. */
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
+                      <thead>
+                        <tr className="bg-[#1A5276] text-white">
+                          <th className="px-3 py-2 text-left text-xs font-medium">Tier</th>
                           {sortedCards.map((rc: any) => (
-                            <td key={rc.id} className={`px-3 py-2 text-right text-xs ${(row as any).highlight ? "font-bold text-[#1A5276]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
-                              {formatCurrency((rc as any)[row.key] ?? 0)}
-                            </td>
+                            <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
+                              {rc.tierLabel ?? TIER_LABELS[rc.tier] ?? rc.tier ?? `Tier ${rc.planTierId}`}
+                            </th>
                           ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        <tr className="bg-white">
+                          <td className="px-3 py-2 text-xs">Expected Claims (PEPM)</td>
+                          {sortedCards.map((rc: any) => (
+                            <td key={rc.id} className="px-3 py-2 text-right text-xs">{formatCurrency(rc.expectedClaims ?? 0)}</td>
+                          ))}
+                        </tr>
+                        <tr className="bg-amber-50">
+                          <td colSpan={sortedCards.length + 1} className="px-3 py-1.5 text-[10px] text-amber-700">
+                            Administration fee: <strong>${flatFee.toFixed(2)}/month</strong> for the group
+                            {flatBroker > 0 && <> · Broker: <strong>${flatBroker.toFixed(2)}/month</strong> for the group</>}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  /* PEPM: full per-tier breakdown */
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
+                      <thead>
+                        <tr className="bg-[#1A5276] text-white">
+                          <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
+                          {sortedCards.map((rc: any) => (
+                            <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
+                              {rc.tierLabel ?? TIER_LABELS[rc.tier] ?? rc.tier ?? `Tier ${rc.planTierId}`}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pepmRows.map((row, i) => (
+                          <tr key={row.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(row as any).highlight ? "font-bold" : ""}`}>
+                            <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                              {row.label}
+                            </td>
+                            {sortedCards.map((rc: any) => (
+                              <td key={rc.id} className={`px-3 py-2 text-right text-xs ${(row as any).highlight ? "font-bold text-[#1A5276]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                                {formatCurrency((rc as any)[row.key] ?? 0)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1269,6 +1314,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
       brokerPct: mode === "PERCENT_OF_PREMIUM" ? String(rawBrokerValue * 100) : "",
       brokerAmt: mode !== "PERCENT_OF_PREMIUM" ? rawBrokerValue.toFixed(2) : "",
       feeBasis: plan?.feeBasis ?? "PEPM",
+      flatMonthlyFee: plan?.flatMonthlyFee ? String(parseFloat(plan.flatMonthlyFee).toFixed(2)) : "",
     };
   };
 
@@ -1278,6 +1324,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
   const [brokerPct, setBrokerPct] = useState("");
   const [brokerAmt, setBrokerAmt] = useState("");
   const [feeBasis, setFeeBasis] = useState("PEPM");
+  const [flatMonthlyFee, setFlatMonthlyFee] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -1288,6 +1335,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
       setBrokerPct(s.brokerPct);
       setBrokerAmt(s.brokerAmt);
       setFeeBasis(s.feeBasis);
+      setFlatMonthlyFee(s.flatMonthlyFee);
     }
   }, [open]);
 
@@ -1324,19 +1372,22 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         saveBrokerValue = (parseFloat(brokerAmt || "0") || 0).toFixed(4);
       }
 
+      const isFixed = feeBasis === "FIXED_MONTHLY";
       const payload = {
         tiers: localTiers.map((t, i) => ({ label: t.label || `Tier ${i + 1}`, displayOrder: i })),
         rates: localTiers.map((t, i) => ({
           tierIndex: i,
-          baseAdminFee: rates[t.id]?.baseAdminFee ?? "0.00",
-          cobraFee: rates[t.id]?.cobraFee ?? "0.00",
-          simpleFee: rates[t.id]?.simpleFee ?? "0.00",
-          networkFee: rates[t.id]?.networkFee ?? "0.00",
+          // Fixed Monthly: only expectedClaims matters per tier. Admin zeros are set server-side.
+          baseAdminFee: isFixed ? "0.00" : (rates[t.id]?.baseAdminFee ?? "0.00"),
+          cobraFee: isFixed ? "0.00" : (rates[t.id]?.cobraFee ?? "0.00"),
+          simpleFee: isFixed ? "0.00" : (rates[t.id]?.simpleFee ?? "0.00"),
+          networkFee: isFixed ? "0.00" : (rates[t.id]?.networkFee ?? "0.00"),
           expectedClaims: rates[t.id]?.expectedClaims ?? "0.00",
         })),
         brokerMode,
         brokerValue: saveBrokerValue,
         feeBasis,
+        ...(isFixed ? { flatMonthlyFee: (parseFloat(flatMonthlyFee || "0") || 0).toFixed(2) } : {}),
       };
       const res = await apiRequest("POST", `/api/plans/${planId}/rates`, payload);
       return res.json();
@@ -1438,17 +1489,37 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
 
         {/* ── PLAN SETTINGS ─────────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-3 bg-[#F8FAFC] rounded-lg border">
-          <div>
-            <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Fee Basis</Label>
-            <Select value={feeBasis} onValueChange={setFeeBasis}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="PEPM">Per employee / month (standard)</SelectItem>
-                <SelectItem value="FIXED_MONTHLY">Fixed monthly — whole group</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="space-y-2">
+            <div>
+              <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Fee Basis</Label>
+              <Select value={feeBasis} onValueChange={v => { setFeeBasis(v); if (v !== "FIXED_MONTHLY") setFlatMonthlyFee(""); }}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PEPM">Per employee / month (standard)</SelectItem>
+                  <SelectItem value="FIXED_MONTHLY">Fixed monthly — whole group</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             {feeBasis === "FIXED_MONTHLY" && (
-              <p className="text-[10px] text-amber-600 mt-1">Amounts below represent the total monthly charge for the group, not per employee.</p>
+              <div>
+                <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Flat Monthly Admin Fee</Label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-[#94A3B8]">$</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={flatMonthlyFee}
+                    onChange={e => setFlatMonthlyFee(e.target.value)}
+                    placeholder="0.00"
+                    className="h-8 text-xs w-28"
+                  />
+                  <span className="text-[10px] text-amber-700">/ month for the whole group</span>
+                </div>
+                <p className="text-[10px] text-[#94A3B8] mt-1">
+                  This replaces per-tier admin fees. Tiers below carry enrollment and expected claims only.
+                </p>
+              </div>
             )}
           </div>
           <div>
@@ -1497,57 +1568,91 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         </div>
 
         {/* ── RATE TABLE ────────────────────────────────────────── */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" data-testid="rate-form-table">
-            <thead>
-              <tr className="bg-[#1A5276] text-white">
-                <th className="px-3 py-2 text-left text-xs font-medium w-44">Fee Component</th>
-                {localTiers.map((t, i) => (
-                  <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
-                    {t.label || `Tier ${i + 1}`}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visibleEditable.map((row, i) => (
-                <tr key={row.field} className={i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"}>
-                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">{row.label}</td>
-                  {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field={row.field} />)}
+        {feeBasis === "FIXED_MONTHLY" ? (
+          /* Fixed Monthly: tiers carry enrollment + expected claims only */
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="rate-form-table">
+              <thead>
+                <tr className="bg-[#1A5276] text-white">
+                  <th className="px-3 py-2 text-left text-xs font-medium w-44">Tier</th>
+                  {localTiers.map((t, i) => (
+                    <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
+                      {t.label || `Tier ${i + 1}`}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-
-              {/* Separator row */}
-              <tr className="bg-[#F0F4F8]">
-                <td colSpan={localTiers.length + 1} className="px-3 py-1 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
-                  Calculated — read only
-                </td>
-              </tr>
-
-              {hasBrokerCalc && (
+              </thead>
+              <tbody>
                 <tr className="bg-white">
-                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Broker Fee</td>
-                  {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="brokerFee" />)}
+                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Expected Claims (PEPM)</td>
+                  {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field="expectedClaims" />)}
                 </tr>
-              )}
-              <tr className="bg-[#F0F4F8]">
-                <td className="px-3 py-1.5 text-xs font-semibold text-[#1A5276]">Total Admin Fee</td>
-                {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="totalAdminFee" />)}
-              </tr>
-              <tr className="bg-white font-bold border-l-4 border-[#F5A623]">
-                <td className="px-3 py-2 text-xs font-bold text-[#1A5276] border-l-4 border-[#F5A623]">Monthly Premium</td>
-                {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="monthlyPremium" />)}
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                <tr className="bg-[#F0F4F8]">
+                  <td colSpan={localTiers.length + 1} className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50">
+                    Admin fee is ${parseFloat(flatMonthlyFee || "0").toFixed(2)}/month for the group
+                    {hasBrokerCalc && brokerMode === "FIXED_MONTHLY" && ` · Broker fee $${parseFloat(brokerAmt || "0").toFixed(2)}/month for the group`}
+                    {" "}— not distributed per tier.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          /* PEPM: full per-tier fee breakdown */
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="rate-form-table">
+              <thead>
+                <tr className="bg-[#1A5276] text-white">
+                  <th className="px-3 py-2 text-left text-xs font-medium w-44">Fee Component</th>
+                  {localTiers.map((t, i) => (
+                    <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
+                      {t.label || `Tier ${i + 1}`}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleEditable.map((row, i) => (
+                  <tr key={row.field} className={i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"}>
+                    <td className="px-3 py-1.5 text-xs text-[#2C3E50]">{row.label}</td>
+                    {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field={row.field} />)}
+                  </tr>
+                ))}
+
+                {/* Separator row */}
+                <tr className="bg-[#F0F4F8]">
+                  <td colSpan={localTiers.length + 1} className="px-3 py-1 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                    Calculated — read only
+                  </td>
+                </tr>
+
+                {hasBrokerCalc && (
+                  <tr className="bg-white">
+                    <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Broker Fee</td>
+                    {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="brokerFee" />)}
+                  </tr>
+                )}
+                <tr className="bg-[#F0F4F8]">
+                  <td className="px-3 py-1.5 text-xs font-semibold text-[#1A5276]">Total Admin Fee</td>
+                  {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="totalAdminFee" />)}
+                </tr>
+                <tr className="bg-white">
+                  <td className="px-3 py-2 text-xs font-bold text-[#1A5276] border-l-4 border-[#F5A623]">Monthly Premium</td>
+                  {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="monthlyPremium" />)}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Formula reminder */}
-        <div className="mt-2 p-2 bg-[#F0F4F8] rounded text-[10px] text-[#94A3B8] space-y-0.5">
-          <p>Admin Fee = Base Admin + COBRA Fee + Simple Fee + Network Fee</p>
-          <p>Total Admin Fee = Admin Fee + Broker Fee &nbsp;·&nbsp; Monthly Premium = Total Admin Fee + Expected Claims</p>
-          {brokerMode === "PERCENT_OF_PREMIUM" && <p className="text-[#2E86C1]">Broker % uses gross-up: Premium = (Admin + Claims) ÷ (1 − rate). Broker fee derived from rounded premium so totals always balance exactly.</p>}
-        </div>
+        {feeBasis !== "FIXED_MONTHLY" && (
+          <div className="mt-2 p-2 bg-[#F0F4F8] rounded text-[10px] text-[#94A3B8] space-y-0.5">
+            <p>Admin Fee = Base Admin + COBRA Fee + Simple Fee + Network Fee</p>
+            <p>Total Admin Fee = Admin Fee + Broker Fee &nbsp;·&nbsp; Monthly Premium = Total Admin Fee + Expected Claims</p>
+            {brokerMode === "PERCENT_OF_PREMIUM" && <p className="text-[#2E86C1]">Broker % uses gross-up: Premium = (Admin + Claims) ÷ (1 − rate). Broker fee derived from rounded premium so totals always balance exactly.</p>}
+          </div>
+        )}
 
         <div className="flex gap-2 mt-4">
           <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-rates">

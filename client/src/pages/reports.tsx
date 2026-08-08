@@ -101,28 +101,55 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
 
   const plansHtml = activePlans.map((plan: any) => {
     const rates: any[] = [...(plan.rateCards ?? [])].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-    // Client-facing report shows only Admin Fee + Expected Claims + Monthly Premium.
-    // Individual fee components (base, cobra, simple, network, broker) are internal only.
-    const ratesTable = rates.length > 0 ? `
-      <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;">
-        <thead>
-          <tr style="background:#F0F4F8;">
-            <th style="text-align:left;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Tier</th>
-            <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Admin Fee</th>
-            <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Expected Claims</th>
-            <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Monthly Premium</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rates.map((r: any) => `
-            <tr style="border-bottom:1px solid #F1F5F9;">
-              <td style="padding:7px 10px;font-weight:600;color:#2C3E50;">${r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? ""}</td>
-              <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.totalAdminFee)}</td>
-              <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.expectedClaims)}</td>
-              <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1A5276;">${formatCurrency(r.monthlyPremium)}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>` : "<div style='font-size:12px;color:#94A3B8;margin-top:8px;'>No rate cards configured.</div>";
+    const isFixedMonthly = plan.feeBasis === "FIXED_MONTHLY";
+    const flatFee = parseFloat(plan.flatMonthlyFee ?? "0") || 0;
+    const flatBroker = isFixedMonthly && plan.brokerMode === "FIXED_MONTHLY"
+      ? (parseFloat(plan.brokerValue ?? "0") || 0) : 0;
+
+    // Client-facing report:
+    //   PEPM plans  — show Admin Fee + Expected Claims + Monthly Premium per tier.
+    //   Fixed Monthly plans — show a plan-level admin fee note, then per-tier Expected Claims only.
+    //   Individual fee components (base, cobra, simple, network, broker) are never shown to clients.
+    const ratesTable = rates.length > 0
+      ? isFixedMonthly
+        ? `<div style="margin-top:10px;padding:10px 14px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;font-size:11px;color:#92400E;">
+             Administration fee: <strong>$${flatFee.toFixed(2)}/month</strong> for the group${flatBroker > 0 ? ` &nbsp;·&nbsp; Broker: <strong>$${flatBroker.toFixed(2)}/month</strong>` : ""}
+           </div>
+           <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;">
+             <thead>
+               <tr style="background:#F0F4F8;">
+                 <th style="text-align:left;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Tier</th>
+                 <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Expected Claims (PEPM)</th>
+               </tr>
+             </thead>
+             <tbody>
+               ${rates.map((r: any) => `
+                 <tr style="border-bottom:1px solid #F1F5F9;">
+                   <td style="padding:7px 10px;font-weight:600;color:#2C3E50;">${r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? ""}</td>
+                   <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.expectedClaims)}</td>
+                 </tr>`).join("")}
+             </tbody>
+           </table>`
+        : `<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:11px;">
+             <thead>
+               <tr style="background:#F0F4F8;">
+                 <th style="text-align:left;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Tier</th>
+                 <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Admin Fee</th>
+                 <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Expected Claims</th>
+                 <th style="text-align:right;padding:7px 10px;color:#64748B;font-weight:600;border-bottom:2px solid #E2E8F0;">Monthly Premium</th>
+               </tr>
+             </thead>
+             <tbody>
+               ${rates.map((r: any) => `
+                 <tr style="border-bottom:1px solid #F1F5F9;">
+                   <td style="padding:7px 10px;font-weight:600;color:#2C3E50;">${r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? ""}</td>
+                   <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.totalAdminFee)}</td>
+                   <td style="padding:7px 10px;text-align:right;color:#2C3E50;">${formatCurrency(r.expectedClaims)}</td>
+                   <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1A5276;">${formatCurrency(r.monthlyPremium)}</td>
+                 </tr>`).join("")}
+             </tbody>
+           </table>`
+      : "<div style='font-size:12px;color:#94A3B8;margin-top:8px;'>No rate cards configured.</div>";
 
     return `
       <div style="border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;margin-bottom:14px;">

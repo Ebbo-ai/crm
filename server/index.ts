@@ -463,6 +463,23 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // Phase 5: Fixed Monthly flat fee on plans + drop retired total_fee column.
+    await pool.query(`
+      DO $$ BEGIN
+        -- plans: flat_monthly_fee (Fixed Monthly plans only; null for PEPM plans)
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'flat_monthly_fee') THEN
+          ALTER TABLE plans ADD COLUMN flat_monthly_fee DECIMAL(10,2);
+        END IF;
+
+        -- rate_cards: drop total_fee permanently — nothing reads it; monthlyPremium is canonical
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'rate_cards' AND column_name = 'total_fee') THEN
+          ALTER TABLE rate_cards DROP COLUMN total_fee;
+        END IF;
+      END $$;
+    `);
+
     // Phase 3: client schema relaxation + new client fields + rate_cards rename.
     await pool.query(`
       DO $$ BEGIN
