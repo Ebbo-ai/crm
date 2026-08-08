@@ -149,9 +149,10 @@ export default function ClientsPage() {
                     </div>
                     {(() => {
                       if (!client.anniversaryDate) return null;
-                      const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+                      const renewal = client.openRenewal;
+                      const step = (renewal?.pipelineStep ?? null) as RenewalPipelineStep | null;
                       if (step === "EMAILED_TO_90D") return null;
-                      const warning = getRenewalTimingWarning(client);
+                      const warning = getRenewalTimingWarning(renewal, client);
                       if (!step && !warning) return null;
                       return (
                         <div className="mt-1 flex items-center gap-1 flex-wrap">

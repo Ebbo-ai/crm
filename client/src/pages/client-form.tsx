@@ -40,10 +40,6 @@ const emptyForm = {
   numberOfEmployees: "" as string | number,
   anniversaryDate: "",
   renewalLeadMonths: 3,
-  renewalPipelineStep: "",
-  proposalSentDate: "",
-  proposalVersion: "",
-  acceptanceReceivedDate: "",
   clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED",
   terminationDate: "",
   planType: "DENTAL",
@@ -107,14 +103,6 @@ export default function ClientFormPage() {
           ? existingClient.anniversaryDate.split("T")[0]
           : "",
         renewalLeadMonths: existingClient.renewalLeadMonths ?? 3,
-        renewalPipelineStep: existingClient.renewalPipelineStep || "",
-        proposalSentDate: existingClient.proposalSentDate
-          ? existingClient.proposalSentDate.split("T")[0]
-          : "",
-        proposalVersion: existingClient.proposalVersion || "",
-        acceptanceReceivedDate: existingClient.acceptanceReceivedDate
-          ? existingClient.acceptanceReceivedDate.split("T")[0]
-          : "",
         clientStatus:
           (existingClient.clientStatus as "PROSPECT" | "ACTIVE" | "TERMINATED") ||
           (existingClient.isActive === false || existingClient.terminationDate
@@ -416,67 +404,9 @@ export default function ClientFormPage() {
           </CardContent>
         </Card>
 
-        {/* ── Renewal Tracking ───────────────────────────────────────── */}
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Tracking</h2>
-            <p className="text-xs text-[#94A3B8] mt-0.5">Pipeline step and dates for this renewal cycle — all fields optional</p>
-          </CardHeader>
-          <CardContent className="px-6 pb-6 space-y-4">
-            <div>
-              <Label htmlFor="renewalPipelineStep" className="text-sm font-medium text-[#2C3E50]">Pipeline Step</Label>
-              <Select value={form.renewalPipelineStep || "_none"} onValueChange={v => updateField("renewalPipelineStep", v === "_none" ? "" : v)}>
-                <SelectTrigger id="renewalPipelineStep" data-testid="select-renewal-pipeline-step">
-                  <SelectValue placeholder="Not started" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">Not started</SelectItem>
-                  <SelectItem value="REQUESTED">1 — Requested</SelectItem>
-                  <SelectItem value="PROCESSED">2 — Processed</SelectItem>
-                  <SelectItem value="SENT">3 — Sent</SelectItem>
-                  <SelectItem value="REVISED">4 — Revised</SelectItem>
-                  <SelectItem value="ACCEPTED">5 — Accepted</SelectItem>
-                  <SelectItem value="SIGNED_FORM_ATTACHED">6 — Signed Form Attached</SelectItem>
-                  <SelectItem value="EMAILED_TO_90D">7 — Emailed to 90 Degree</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-[#94A3B8] mt-1">Use the client detail page for one-click advancing through steps</p>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="proposalSentDate" className="text-sm font-medium text-[#2C3E50]">Proposal Sent Date</Label>
-                <Input
-                  id="proposalSentDate"
-                  type="date"
-                  value={form.proposalSentDate}
-                  onChange={e => updateField("proposalSentDate", e.target.value)}
-                  data-testid="input-proposal-sent-date"
-                />
-              </div>
-              <div>
-                <Label htmlFor="proposalVersion" className="text-sm font-medium text-[#2C3E50]">Proposal Version</Label>
-                <Input
-                  id="proposalVersion"
-                  value={form.proposalVersion}
-                  onChange={e => updateField("proposalVersion", e.target.value)}
-                  placeholder="e.g. v1, v2 revised"
-                  data-testid="input-proposal-version"
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="acceptanceReceivedDate" className="text-sm font-medium text-[#2C3E50]">Acceptance Received Date</Label>
-              <Input
-                id="acceptanceReceivedDate"
-                type="date"
-                value={form.acceptanceReceivedDate}
-                onChange={e => updateField("acceptanceReceivedDate", e.target.value)}
-                data-testid="input-acceptance-received-date"
-              />
-              <p className="text-xs text-[#94A3B8] mt-1">Set this once the client confirms their renewal selection</p>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Renewal pipeline step and cycle dates are edited on the client detail
+            page, against the specific plan year's renewal record. They are not
+            client-level fields — each year keeps its own. */}
 
         {/* ── Plan Type ──────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">

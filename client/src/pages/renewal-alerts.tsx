@@ -10,7 +10,12 @@ import {
   type RenewalPipelineStep, type RenewalTimingWarning,
 } from "@/lib/renewal";
 
-const WARNING_GROUP_TITLES: Record<RenewalTimingWarning, { title: string; subtitle: string; headerBg: string; headerText: string }> = {
+// Entries with no timing warning are surfaced because a prior plan year was
+// never completed. Without its own group they'd count toward the alert total
+// but render nowhere.
+type AlertGroupKey = RenewalTimingWarning | "INCOMPLETE_PRIOR";
+
+const WARNING_GROUP_TITLES: Record<AlertGroupKey, { title: string; subtitle: string; headerBg: string; headerText: string }> = {
   OVERDUE: {
     title: "Overdue",
     subtitle: "Anniversary has passed and renewal is not yet complete",
@@ -29,6 +34,12 @@ const WARNING_GROUP_TITLES: Record<RenewalTimingWarning, { title: string; subtit
     headerBg: "bg-orange-50 border-orange-200",
     headerText: "text-orange-700",
   },
+  INCOMPLETE_PRIOR: {
+    title: "Prior year never completed",
+    subtitle: "A new renewal opened while the previous plan year was still unfinished",
+    headerBg: "bg-slate-100 border-slate-200",
+    headerText: "text-slate-700",
+  },
 };
 
 function fmtDate(d: string | null | undefined) {
@@ -43,14 +54,15 @@ export default function RenewalAlertsPage() {
     refetchInterval: 60_000,
   });
 
-  // Group by timing warning
-  const groups: Record<RenewalTimingWarning, any[]> = {
-    OVERDUE: alerts.filter(c => c.timingWarning === "OVERDUE"),
-    PROPOSAL_DUE: alerts.filter(c => c.timingWarning === "PROPOSAL_DUE"),
-    LATE_RESPONSE: alerts.filter(c => c.timingWarning === "LATE_RESPONSE"),
+  // Group by timing warning. Entries carry { client, renewal, timingWarning }.
+  const groups: Record<AlertGroupKey, any[]> = {
+    OVERDUE: alerts.filter(a => a.timingWarning === "OVERDUE"),
+    PROPOSAL_DUE: alerts.filter(a => a.timingWarning === "PROPOSAL_DUE"),
+    LATE_RESPONSE: alerts.filter(a => a.timingWarning === "LATE_RESPONSE"),
+    INCOMPLETE_PRIOR: alerts.filter(a => !a.timingWarning),
   };
 
-  const warningOrder: RenewalTimingWarning[] = ["OVERDUE", "PROPOSAL_DUE", "LATE_RESPONSE"];
+  const warningOrder: AlertGroupKey[] = ["OVERDUE", "PROPOSAL_DUE", "LATE_RESPONSE", "INCOMPLETE_PRIOR"];
   const totalAlerts = alerts.length;
 
   return (
@@ -89,9 +101,11 @@ export default function RenewalAlertsPage() {
                   <p className={`text-xs mt-0.5 opacity-75 ${cfg.headerText}`}>{cfg.subtitle}</p>
                 </div>
                 <div className="border border-t-0 rounded-b-lg divide-y divide-gray-100 overflow-hidden">
-                  {clients.map((client: any) => {
-                    const step = client.renewalPipelineStep as RenewalPipelineStep | null;
-                    const proposalDue = getProposalDueDate(client);
+                  {clients.map((item: any) => {
+                    const client = item.client;
+                    const renewal = item.renewal;
+                    const step = (renewal?.pipelineStep ?? null) as RenewalPipelineStep | null;
+                    const proposalDue = getProposalDueDate(client, renewal?.planYear);
                     return (
                       <Link key={client.id} href={`/clients/${client.id}`}>
                         <div
@@ -104,6 +118,9 @@ export default function RenewalAlertsPage() {
                                 <span className="text-[10px] text-[#2E86C1] font-semibold">{client.clientCode}</span>
                               )}
                               <span className="text-sm font-semibold text-[#2C3E50]">{client.clientName}</span>
+                              {renewal?.planYear && (
+                                <span className="text-[10px] text-[#94A3B8]">PY {renewal.planYear}</span>
+                              )}
                               {/* Pipeline step badge */}
                               {step ? (
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
@@ -111,6 +128,11 @@ export default function RenewalAlertsPage() {
                                 </span>
                               ) : (
                                 <span className="text-[10px] text-[#94A3B8] italic">Not started</span>
+                              )}
+                              {renewal?.incompletePriorFlag && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                                  ⚠ Prior year never completed
+                                </span>
                               )}
                             </div>
                             <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[#94A3B8]">
@@ -120,10 +142,10 @@ export default function RenewalAlertsPage() {
                               {proposalDue && (
                                 <span>Proposal due: {fmtDate(proposalDue.toISOString())}</span>
                               )}
-                              {client.proposalSentDate && (
+                              {renewal?.proposalSentDate && (
                                 <span>
-                                  Sent: {fmtDate(client.proposalSentDate)}
-                                  {client.proposalVersion ? ` (${client.proposalVersion})` : ""}
+                                  Sent: {fmtDate(renewal.proposalSentDate)}
+                                  {renewal.proposalVersion ? ` (${renewal.proposalVersion})` : ""}
                                 </span>
                               )}
                             </div>

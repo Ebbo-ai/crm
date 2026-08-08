@@ -463,46 +463,23 @@ app.use((req, res, next) => {
       END $$;
     `);
 
-    // Phase 9: Seven-step renewal pipeline on clients; accepted rates snapshot on plans.
-    await pool.query(`
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'clients' AND column_name = 'renewal_pipeline_step') THEN
-          ALTER TABLE clients ADD COLUMN renewal_pipeline_step TEXT;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'plans' AND column_name = 'accepted_rates') THEN
-          ALTER TABLE plans ADD COLUMN accepted_rates JSONB;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'plans' AND column_name = 'accepted_rates_engine_version') THEN
-          ALTER TABLE plans ADD COLUMN accepted_rates_engine_version TEXT;
-        END IF;
-      END $$;
-    `);
+    // Phase 9 intentionally removed. It added renewal_pipeline_step to clients and
+    // accepted_rates / accepted_rates_engine_version to plans. Phase 10 relocated all
+    // three onto the renewals / renewal_plan_options tables and drops them. Because
+    // these migrations re-run on every boot, leaving the ADDs here would mean Phase 10
+    // drops the columns and Phase 9 immediately recreates them, forever.
 
-    // Phase 8: Renewal tracking fields on clients; renewal option accepted on plans.
+    // Phase 8: Renewal lead time on clients.
+    // The other Phase 8 columns (proposal_sent_date, proposal_version,
+    // acceptance_received_date on clients; renewal_option_accepted on plans) were
+    // relocated to the renewals tables by Phase 10 and deliberately removed here —
+    // same re-add-on-every-boot reason as Phase 9. renewal_lead_months stays because
+    // it describes the client, not a single year's renewal.
     await pool.query(`
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name = 'clients' AND column_name = 'renewal_lead_months') THEN
           ALTER TABLE clients ADD COLUMN renewal_lead_months INTEGER NOT NULL DEFAULT 3;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'clients' AND column_name = 'proposal_sent_date') THEN
-          ALTER TABLE clients ADD COLUMN proposal_sent_date TIMESTAMP;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'clients' AND column_name = 'proposal_version') THEN
-          ALTER TABLE clients ADD COLUMN proposal_version TEXT;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'clients' AND column_name = 'acceptance_received_date') THEN
-          ALTER TABLE clients ADD COLUMN acceptance_received_date TIMESTAMP;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'plans' AND column_name = 'renewal_option_accepted') THEN
-          ALTER TABLE plans ADD COLUMN renewal_option_accepted TEXT;
         END IF;
       END $$;
     `);
@@ -605,6 +582,78 @@ app.use((req, res, next) => {
                    WHERE table_name = 'rate_cards' AND column_name = 'spread_admin_fee') THEN
           ALTER TABLE rate_cards RENAME COLUMN spread_admin_fee TO simple_fee;
         END IF;
+      END $$;
+    `);
+
+    // ── Phase 10: Renewals as year-specific records ───────────────────────────
+    // MUST RUN LAST. This phase drops columns that earlier phases used to add.
+    // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at
+    // the end of the chain means a future re-added column can never survive a
+    // boot by being recreated after the drop.
+    //
+    // Renewal lifecycle data moves off clients/plans onto per-year records so
+    // history survives across plan years instead of being overwritten annually.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS renewals (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        plan_year INTEGER NOT NULL,
+        pipeline_step TEXT,
+        proposal_sent_date TIMESTAMP,
+        proposal_version TEXT,
+        acceptance_received_date TIMESTAMP,
+        incomplete_prior_flag BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // One renewal per client per plan year, enforced by the database.
+    // Auto-creation fires on GET requests, so two concurrent page loads for the
+    // same client would otherwise both pass the application-level existence check
+    // and insert duplicates. The insert uses ON CONFLICT DO NOTHING against this.
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS renewals_client_plan_year_unique
+        ON renewals (client_id, plan_year);
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS renewal_plan_options (
+        id SERIAL PRIMARY KEY,
+        renewal_id INTEGER NOT NULL REFERENCES renewals(id) ON DELETE CASCADE,
+        plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+        accepted_option TEXT,
+        accepted_rates JSONB,
+        rating_engine_version TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS renewal_plan_options_renewal_plan_unique
+        ON renewal_plan_options (renewal_id, plan_id);
+    `);
+
+    await pool.query(`
+      DO $$ BEGIN
+        -- Documents can attach to a specific renewal year (proposal, signed form,
+        -- 90 Degree notification) rather than just to the client.
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'documents' AND column_name = 'renewal_id') THEN
+          ALTER TABLE documents ADD COLUMN renewal_id INTEGER REFERENCES renewals(id) ON DELETE SET NULL;
+        END IF;
+
+        -- Drop the relocated columns. Each lived for one plan year and was
+        -- overwritten on the next cycle; they now live on renewals /
+        -- renewal_plan_options where each year keeps its own row.
+        ALTER TABLE clients DROP COLUMN IF EXISTS proposal_sent_date;
+        ALTER TABLE clients DROP COLUMN IF EXISTS proposal_version;
+        ALTER TABLE clients DROP COLUMN IF EXISTS acceptance_received_date;
+        ALTER TABLE clients DROP COLUMN IF EXISTS renewal_pipeline_step;
+        ALTER TABLE plans   DROP COLUMN IF EXISTS renewal_option_accepted;
+        ALTER TABLE plans   DROP COLUMN IF EXISTS accepted_rates;
+        ALTER TABLE plans   DROP COLUMN IF EXISTS accepted_rates_engine_version;
       END $$;
     `);
 

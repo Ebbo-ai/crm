@@ -1,4 +1,5 @@
 - [Rating Engine service](rating-engine-service.md) — internal Flask service on port 5001, WeasyPrint PDF confirmed working; no waitForPort in workflow config.
 - [Pipeline tracking architecture](pipeline-tracking.md) — renewal_progress (per plan, 7 steps) + prospect_progress (per client, 3 steps); stall = 14 days since clock_start; dashboard /api/dashboard/stalled; step4 revisions in JSONB.
 - [PPR Phase 2 Architecture](ppr-phase2-architecture.md) — monthly import pipeline + report gen; Python stubs define interface; Node layer owns all DB writes; admin_fee is single all-in figure, never broken out.
-- [Renewal tracking architecture](renewal-tracking.md) — renewal fields on clients table (Phase 8 migration); shared logic in client/src/lib/renewal.ts; PprTab accepts optional `client` prop for 4-slot underwriting section.
+- [Renewal tracking architecture](renewal-tracking.md) — renewals are per-client-per-plan-year records, not client/plan fields; NULL-safe open predicate; warnings measured against the renewal's own plan year.
+- [Startup migration chain](startup-migrations.md) — phases re-run every boot in source order; column drops must go last and relocated ADDs deleted, or they fight forever.

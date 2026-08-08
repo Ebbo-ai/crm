@@ -57,6 +57,20 @@ export default function ClientDetailPage() {
     queryKey: ["/api/clients", params.id],
   });
 
+  // Full renewal history, newest plan year first. The server opens the current
+  // year's record automatically when it comes due.
+  const { data: renewalHistory = [] } = useQuery<any[]>({
+    queryKey: ["/api/clients", params.id, "renewals"],
+  });
+
+  // Needed so the open renewal can show an accepted-option selector per plan.
+  const { data: clientPlans = [] } = useQuery<any[]>({
+    queryKey: ["/api/clients", params.id, "plans"],
+  });
+
+  const openRenewal = renewalHistory.find(r => r.pipelineStep !== "EMAILED_TO_90D") ?? null;
+  const priorRenewals = renewalHistory.filter(r => r.id !== openRenewal?.id);
+
   const { toast } = useToast();
 
   const generateDraftMutation = useMutation({
@@ -72,14 +86,29 @@ export default function ClientDetailPage() {
   });
 
   const advancePipelineMutation = useMutation({
-    mutationFn: async (step: RenewalPipelineStep | null) => {
-      const res = await apiRequest("PUT", `/api/clients/${clientId}`, { renewalPipelineStep: step });
+    mutationFn: async ({ renewalId, step }: { renewalId: number; step: RenewalPipelineStep | null }) => {
+      const res = await apiRequest("PUT", `/api/renewals/${renewalId}`, { pipelineStep: step });
       return res.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", params.id, "renewals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients", params.id] });
       queryClient.invalidateQueries({ queryKey: ["/api/renewal-alerts"] });
       toast({ title: "Pipeline step updated" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  // Accepted option is per plan — a multi-plan client can accept a different
+  // tier on each plan within the same renewal.
+  const planOptionMutation = useMutation({
+    mutationFn: async ({ renewalId, planId, acceptedOption }: { renewalId: number; planId: number; acceptedOption: string | null }) => {
+      const res = await apiRequest("PUT", `/api/renewals/${renewalId}/plan-options/${planId}`, { acceptedOption });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", params.id, "renewals"] });
+      toast({ title: "Accepted option saved" });
     },
     onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -281,20 +310,28 @@ export default function ClientDetailPage() {
             )}
 
             {client.anniversaryDate && (() => {
-              const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+              const step = (openRenewal?.pipelineStep ?? null) as RenewalPipelineStep | null;
               const nextStep = getNextPipelineStep(step);
-              const warning = getRenewalTimingWarning(client);
-              const proposalDue = getProposalDueDate(client);
+              const warning = getRenewalTimingWarning(openRenewal, client);
+              const proposalDue = getProposalDueDate(client, openRenewal?.planYear);
               const currentStepIdx = step ? RENEWAL_PIPELINE_STEPS.indexOf(step) : -1;
               return (
                 <Card className="border-0 shadow-sm lg:col-span-2">
                   <CardHeader className="pb-3 pt-5 px-6">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Pipeline</h2>
+                      <h2 className="text-lg font-semibold text-[#1A5276]">
+                        Renewal Pipeline
+                        {openRenewal && <span className="ml-2 text-sm font-normal text-[#94A3B8]">Plan year {openRenewal.planYear}</span>}
+                      </h2>
                       <div className="flex items-center gap-2 flex-wrap">
                         {warning && (
                           <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${RENEWAL_TIMING_WARNING_COLORS[warning]}`}>
                             ⚠ {RENEWAL_TIMING_WARNING_LABELS[warning]}
+                          </span>
+                        )}
+                        {openRenewal?.incompletePriorFlag && (
+                          <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-red-100 text-red-700">
+                            ⚠ Prior year never completed
                           </span>
                         )}
                         {step
@@ -304,6 +341,13 @@ export default function ClientDetailPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="px-6 pb-6 space-y-4">
+                    {!openRenewal ? (
+                      <p className="text-sm text-[#94A3B8] italic" data-testid="text-no-open-renewal">
+                        No renewal is open for this client yet. One opens automatically 30 days before the proposal due date
+                        {proposalDue ? ` (${new Date(proposalDue.getTime() - 30 * 86400000).toLocaleDateString()})` : ""}.
+                      </p>
+                    ) : (
+                    <>
                     {/* 7-segment progress bar */}
                     <div>
                       <div className="flex gap-1 mb-3">
@@ -322,19 +366,16 @@ export default function ClientDetailPage() {
                           <Button
                             size="sm"
                             className="h-8 text-xs bg-[#1A5276] text-white gap-1"
-                            onClick={() => advancePipelineMutation.mutate(nextStep)}
+                            onClick={() => advancePipelineMutation.mutate({ renewalId: openRenewal.id, step: nextStep })}
                             disabled={advancePipelineMutation.isPending}
                             data-testid="button-advance-pipeline"
                           >
                             → {RENEWAL_PIPELINE_STEP_LABELS[nextStep]}
                           </Button>
                         )}
-                        {step === "EMAILED_TO_90D" && (
-                          <span className="text-xs text-[#22C55E] font-semibold">✓ Renewal complete</span>
-                        )}
                         <Select
                           value={step ?? "_none"}
-                          onValueChange={v => advancePipelineMutation.mutate(v === "_none" ? null : v as RenewalPipelineStep)}
+                          onValueChange={v => advancePipelineMutation.mutate({ renewalId: openRenewal.id, step: v === "_none" ? null : v as RenewalPipelineStep })}
                         >
                           <SelectTrigger className="h-8 text-xs w-auto min-w-[150px]" data-testid="select-pipeline-step">
                             <SelectValue placeholder="Set step…" />
@@ -348,17 +389,80 @@ export default function ClientDetailPage() {
                         </Select>
                       </div>
                     </div>
+
+                    {/* Accepted option per plan */}
+                    {clientPlans.length > 0 && (
+                      <div className="border-t pt-3 space-y-2">
+                        <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide">Accepted option by plan</p>
+                        {clientPlans.map((plan: any) => {
+                          const opt = openRenewal.planOptions?.find((o: any) => o.planId === plan.id);
+                          return (
+                            <div key={plan.id} className="flex items-center justify-between gap-3 flex-wrap">
+                              <span className="text-sm text-[#2C3E50]">{plan.planName || PLAN_TYPE_LABELS[plan.planType] || `Plan #${plan.id}`}</span>
+                              <div className="flex items-center gap-2">
+                                {opt?.ratingEngineVersion && (
+                                  <span className="text-[10px] text-[#94A3B8]">engine {opt.ratingEngineVersion}</span>
+                                )}
+                                <Select
+                                  value={opt?.acceptedOption ?? "_none"}
+                                  onValueChange={v => planOptionMutation.mutate({
+                                    renewalId: openRenewal.id,
+                                    planId: plan.id,
+                                    acceptedOption: v === "_none" ? null : v,
+                                  })}
+                                >
+                                  <SelectTrigger className="h-8 text-xs w-[160px]" data-testid={`select-accepted-option-${plan.id}`}>
+                                    <SelectValue placeholder="Not accepted" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="_none">— Not accepted</SelectItem>
+                                    <SelectItem value="VALUE">Value</SelectItem>
+                                    <SelectItem value="RECOMMENDED">Recommended</SelectItem>
+                                    <SelectItem value="PROTECTIVE">Protective</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     {/* Date facts */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t pt-3">
                       <InfoRow label="Anniversary" value={new Date(client.anniversaryDate).toLocaleDateString()} />
                       {proposalDue && <InfoRow label="Proposal due" value={proposalDue.toLocaleDateString()} />}
-                      {client.proposalSentDate && (
-                        <InfoRow label="Proposal sent" value={`${new Date(client.proposalSentDate).toLocaleDateString()}${client.proposalVersion ? ` — ${client.proposalVersion}` : ""}`} />
+                      {openRenewal.proposalSentDate && (
+                        <InfoRow label="Proposal sent" value={`${new Date(openRenewal.proposalSentDate).toLocaleDateString()}${openRenewal.proposalVersion ? ` — ${openRenewal.proposalVersion}` : ""}`} />
                       )}
-                      {client.acceptanceReceivedDate && (
-                        <InfoRow label="Acceptance received" value={new Date(client.acceptanceReceivedDate).toLocaleDateString()} />
+                      {openRenewal.acceptanceReceivedDate && (
+                        <InfoRow label="Acceptance received" value={new Date(openRenewal.acceptanceReceivedDate).toLocaleDateString()} />
                       )}
                     </div>
+                    </>
+                    )}
+
+                    {/* Prior years — the reason renewals are year-specific records */}
+                    {priorRenewals.length > 0 && (
+                      <div className="border-t pt-3 space-y-2">
+                        <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide">Renewal history</p>
+                        {priorRenewals.map((r: any) => (
+                          <div key={r.id} className="flex items-center justify-between gap-3 flex-wrap text-sm" data-testid={`row-renewal-history-${r.planYear}`}>
+                            <span className="font-medium text-[#2C3E50]">{r.planYear}</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {(r.planOptions ?? []).filter((o: any) => o.acceptedOption).map((o: any) => (
+                                <span key={o.id} className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                  {o.acceptedOption === "RECOMMENDED" ? "Recommended" : o.acceptedOption === "VALUE" ? "Value" : "Protective"}
+                                </span>
+                              ))}
+                              {r.pipelineStep === "EMAILED_TO_90D"
+                                ? <span className="text-xs text-[#22C55E] font-semibold">✓ Complete</span>
+                                : <span className="text-xs text-amber-600 font-semibold">Never completed</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );

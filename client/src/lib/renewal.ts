@@ -99,18 +99,29 @@ export const RENEWAL_TIMING_WARNING_COLORS: Record<RenewalTimingWarning, string>
  * Derive the timing warning from date fields only.
  * Returns null when the renewal is complete or there is no timing issue.
  *
+ * Takes the renewal record and the client separately: timing data lives on the
+ * renewal (pipeline step, proposal sent date) while the schedule that defines
+ * "late" lives on the client (anniversary date, lead months).
+ *
  * This is independent of the pipeline step — a client at SENT can still have
  * a LATE_RESPONSE warning.
  */
 export function getRenewalTimingWarning(
+  renewal: any,
   client: any,
   today: Date = new Date(),
 ): RenewalTimingWarning | null {
-  if (!client.anniversaryDate) return null;
+  if (!client?.anniversaryDate) return null;
+  // No open renewal for this cycle — nothing to warn about
+  if (!renewal) return null;
   // Completed — no warning needed
-  if (client.renewalPipelineStep === "EMAILED_TO_90D") return null;
+  if (renewal.pipelineStep === "EMAILED_TO_90D") return null;
 
-  const anniversary = new Date(client.anniversaryDate);
+  // Measured against the renewal's own plan year. Using the upcoming
+  // anniversary would make OVERDUE unreachable, since that date is always
+  // in the future by construction.
+  const anniversary = getAnniversaryForPlanYear(client.anniversaryDate, renewal.planYear);
+  if (!anniversary) return null;
   if (today > anniversary) return "OVERDUE";
 
   const leadMonths = (client.renewalLeadMonths ?? 3) as number;
@@ -119,12 +130,12 @@ export function getRenewalTimingWarning(
 
   // Proposal due date passed but we haven't sent anything yet
   const earlySteps: Array<RenewalPipelineStep | null> = [null, "REQUESTED", "PROCESSED"];
-  const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+  const step = (renewal.pipelineStep ?? null) as RenewalPipelineStep | null;
   if (today >= proposalDue && earlySteps.includes(step)) return "PROPOSAL_DUE";
 
   // Proposal was sent but client hasn't responded in 14+ days
-  if (client.proposalSentDate) {
-    const sent = new Date(client.proposalSentDate);
+  if (renewal.proposalSentDate) {
+    const sent = new Date(renewal.proposalSentDate);
     const days = (today.getTime() - sent.getTime()) / (1000 * 60 * 60 * 24);
     const preAcceptance: Array<RenewalPipelineStep | null> = [null, "REQUESTED", "PROCESSED", "SENT", "REVISED"];
     if (days > 14 && preAcceptance.includes(step)) return "LATE_RESPONSE";
@@ -135,10 +146,51 @@ export function getRenewalTimingWarning(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Return the proposal due date (anniversary minus lead months), or null. */
-export function getProposalDueDate(client: any): Date | null {
-  if (!client.anniversaryDate) return null;
-  const anniversary = new Date(client.anniversaryDate);
+/**
+ * The anniversary date stores an original effective date, so its year is
+ * historical. This projects it onto the next occurrence from today — the cycle
+ * the current renewal work actually applies to.
+ */
+export function getUpcomingAnniversary(
+  anniversaryDate: string | Date | null | undefined,
+  today: Date = new Date(),
+): Date | null {
+  if (!anniversaryDate) return null;
+  const upcoming = new Date(anniversaryDate);
+  upcoming.setFullYear(today.getFullYear());
+  if (upcoming < today) upcoming.setFullYear(today.getFullYear() + 1);
+  return upcoming;
+}
+
+/**
+ * The anniversary a specific renewal cycle is measured against — the stored
+ * month and day, projected onto that renewal's plan year.
+ */
+export function getAnniversaryForPlanYear(
+  anniversaryDate: string | Date | null | undefined,
+  planYear: number | null | undefined,
+): Date | null {
+  if (!anniversaryDate || !planYear) return null;
+  const d = new Date(anniversaryDate);
+  d.setFullYear(planYear);
+  return d;
+}
+
+/**
+ * Return the proposal due date (anniversary minus lead months), or null.
+ * Pass the renewal's planYear to measure against that cycle; without it the
+ * upcoming anniversary is used, which is the right basis for a client that has
+ * no open renewal yet.
+ */
+export function getProposalDueDate(
+  client: any,
+  planYear?: number | null,
+  today: Date = new Date(),
+): Date | null {
+  const anniversary = planYear
+    ? getAnniversaryForPlanYear(client?.anniversaryDate, planYear)
+    : getUpcomingAnniversary(client?.anniversaryDate, today);
+  if (!anniversary) return null;
   const leadMonths = (client.renewalLeadMonths ?? 3) as number;
   const due = new Date(anniversary);
   due.setMonth(due.getMonth() - leadMonths);

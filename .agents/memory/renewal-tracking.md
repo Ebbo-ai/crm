@@ -1,67 +1,63 @@
 ---
 name: Renewal tracking architecture
-description: How renewal status, proposal tracking, and PPR underwriting slots are implemented across the CRM.
+description: Renewals are year-specific records, not fields on clients/plans — plus the NULL-safe and plan-year rules that govern them.
 ---
 
-## DB columns
+# Renewals are year-specific records
 
-### Phase 9 (added in correction)
-**clients table:**
-- `renewal_pipeline_step` TEXT (nullable) — manually set; one of the 7 steps or null
+Renewal lifecycle data lives on `renewals` (one row per client per plan year) and
+`renewal_plan_options` (one row per plan per renewal). It is NOT on the clients or
+plans tables.
 
-**plans table:**
-- `accepted_rates` JSONB (nullable) — snapshot of tier rates the client signed; nothing reads it yet from CRM side
-- `accepted_rates_engine_version` TEXT (nullable) — rating engine version string (e.g. "7.3.1"); critical for knowing whether a future re-render matches the signed document
+**Why:** lifecycle values (pipeline step, proposal dates, accepted option, accepted
+rates) change every plan year while the client and plan persist. Stored on the
+client/plan they were overwritten each cycle, so last year's renewal history was
+destroyed. `anniversaryDate` and `renewalLeadMonths` legitimately stay on the client
+— they describe the client, not one year.
 
-### Phase 8 migration
+**How to apply:** anything year-specific about a renewal belongs on `renewals` or
+`renewal_plan_options`. Accepted option is per *plan*, not per renewal — a multi-plan
+client can accept a different tier on each plan.
 
-**clients table:**
-- `renewal_lead_months` INT NOT NULL DEFAULT 3 — months before anniversary the proposal is due (3–7)
-- `proposal_sent_date` TIMESTAMP — when the proposal was actually sent
-- `proposal_version` TEXT — e.g. "v1", "v2 revised"
-- `acceptance_received_date` TIMESTAMP — when client confirmed renewal selection
+## Auto-creation must iterate clients, never query renewals
 
-**plans table:**
-- `renewal_option_accepted` TEXT — 'VALUE' | 'RECOMMENDED' | 'PROTECTIVE' | null
+A renewal opens automatically 30 days before its proposal due date, triggered from
+GET handlers.
 
-## Two independent renewal concepts (do not conflate)
+**Why:** any endpoint that needs to surface renewals must loop over active clients and
+call the ensure-helper for each. Querying existing renewals first is a chicken-and-egg
+trap: a client with no renewal row can't match the query, so the helper never fires,
+so the row is never created — the client silently never appears.
 
-**RenewalPipelineStep** — set manually by staff; never derived from dates.
-Steps in order: REQUESTED → PROCESSED → SENT → REVISED → ACCEPTED → SIGNED_FORM_ATTACHED → EMAILED_TO_90D.
-A null step means the renewal cycle has not been started yet for this client.
+**How to apply:** creation is a side effect of iterating clients. If you add an endpoint
+that lists renewals, iterate clients first.
 
-**RenewalTimingWarning** — derived from dates only; coexists with any pipeline step.
-Values: OVERDUE (anniversary passed) | PROPOSAL_DUE (due date passed, step is early) | LATE_RESPONSE (sent >14 days ago, no acceptance).
-A client can show SENT + LATE_RESPONSE simultaneously — these are two different facts.
+## An unfinished year must never block the next one
 
-**Why this split:** the five-status approach (derived from dates alone) was replaced because several real renewal states (Processed, Revised, Signed Form) cannot be inferred from dates at all. Staff must advance the pipeline manually.
+The new renewal opens on schedule even if the prior year never reached the final step;
+the prior-incomplete case is recorded on a flag and surfaced, not used as a gate.
 
-## Shared logic: `client/src/lib/renewal.ts`
+## "Open renewal" predicate must be NULL-safe in SQL
 
-- `getRenewalTimingWarning(client, today?)` → `RenewalTimingWarning | null`
-- `getProposalDueDate(client)` → `Date | null`
-- `getNextPipelineStep(current)` → next step or null (for the advance button)
-- `pipelineStepIndex(step)` → 0-based index (for progress bar)
-- `getPprSlots(anniversaryDate, today?)` → 4 PprSlots (current + 3 prior plan-years)
+A not-yet-started renewal has `pipeline_step = NULL`, and in SQL
+`NULL <> 'EMAILED_TO_90D'` evaluates to NULL, not TRUE.
 
-**Why:** server route (`GET /api/renewal-alerts`) replicates timing-warning logic inline in TypeScript since it can't import from client/src/lib.
+**Why:** a plain inequality silently drops every unstarted renewal — the single most
+common state. This bug hid renewals from list views and made the prior-incomplete flag
+compute as false.
 
-## Pages / components
+**How to apply:** always `pipeline_step IS NULL OR pipeline_step <> <final>`. Keep it in
+one shared predicate rather than re-spelling the comparison per query. Note JS-side
+`!==` does NOT have this problem, so the bug only appears in the SQL layer — easy to
+miss when the JS path tests fine.
 
-- `client/src/pages/renewal-alerts.tsx` — groups clients by timing warning (OVERDUE → PROPOSAL_DUE → LATE_RESPONSE); within each group shows pipeline step badge; sidebar badge refetches every 2 min
-- `client/src/pages/clients.tsx` — shows pipeline step + timing warning chips on client card; both can appear at once; hidden for EMAILED_TO_90D
-- `client/src/pages/client-form.tsx` — "Renewal Tracking" card: pipeline step select at top, then dates (proposalSentDate, proposalVersion, acceptanceReceivedDate); renewalLeadMonths in Client Information card
-- `client/src/pages/client-detail.tsx` — "Renewal Pipeline" card (lg:col-span-2): 7-segment progress bar, one-click advance button, step select dropdown, timing warning badge, date facts; `advancePipelineMutation` invalidates both /api/clients and /api/renewal-alerts; passes `client` prop to PprTab
-- `client/src/components/tabs/plans-tab.tsx` — renewalOptionAccepted + acceptedRatesEngineVersion in PlanFormDialog renewal settings; engine version input only shown when option is selected; badge in plan detail; accepted_rates JSONB stored but not exposed in UI yet
-- `client/src/components/tabs/ppr-tab.tsx` — accepts `client?: any` prop; renders "Renewal Underwriting" 4-slot section when anniversaryDate present
+## Timing warnings measure against the renewal's own plan year
 
-## PPR slot logic
+Use the anniversary projected onto `renewal.planYear`, not the *upcoming* anniversary.
 
-- Anniversary July → periods end June (same calendar year as anniversary)
-- Anniversary January → periods end December (prior calendar year)
-- Anniversary September (before Sep arrives) → periods end August of prior year
-- Formula: `endMonth = annMonth - 1` (0 → 12); `currentSlotYear` adjusted when `endMonth > annMonth`
+**Why:** the upcoming anniversary is always in the future by construction, so
+`today > anniversary` can never be true and OVERDUE becomes unreachable. A renewal for
+plan year N left unfinished into N+1 is overdue against its own year-N anniversary.
 
-## Server date conversion
-
-`PUT /api/clients/:id` now converts `proposalSentDate` and `acceptanceReceivedDate` from ISO strings to Date objects before passing to storage, same pattern as `terminationDate`.
+**How to apply:** the next-occurrence projection is only for deciding *which* plan year
+to open. All warning math uses the renewal's own plan year.

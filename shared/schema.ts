@@ -100,14 +100,10 @@ export const clients = pgTable("clients", {
   // How many months before the anniversary date the renewal proposal is due.
   // Default 3; override to 4–7 for clients that need more lead time.
   renewalLeadMonths: integer("renewal_lead_months").notNull().default(3),
-  // Renewal cycle tracking — when things actually happened this year
-  proposalSentDate: timestamp("proposal_sent_date"),
-  proposalVersion: text("proposal_version"),           // e.g. "v1", "v2 revised"
-  acceptanceReceivedDate: timestamp("acceptance_received_date"),
-  // Manually-advanced seven-step renewal pipeline.
-  // Staff set this explicitly; it is never derived from dates.
-  // null = not yet started for this cycle
-  renewalPipelineStep: text("renewal_pipeline_step"),
+  // Renewal lifecycle data lives on the `renewals` table (one record per client
+  // per plan year). Anniversary date and lead months describe the client itself
+  // and stay here; pipeline step, proposal dates, and accepted options belong
+  // to a particular year's renewal record.
 
   // COBRA administration by 90 Degree Benefits
   cobraAdministeredBy90d: boolean("cobra_administered_by_90d").notNull().default(false),
@@ -189,17 +185,9 @@ export const plans = pgTable("plans", {
   // Free-text notes for plan design details that don't fit structured fields.
   // Renders on all client-facing documents (PPR, employee handout). Not internal-only.
   planNotes: text("plan_notes"),
-  // Which of the three renewal proposal options the client accepted.
-  // 'VALUE' | 'RECOMMENDED' | 'PROTECTIVE' | null (null = not yet accepted or N/A)
-  // Tracked per plan because a client with multiple plans can accept different tiers on each.
-  renewalOptionAccepted: text("renewal_option_accepted"),
-  // Snapshot of the tier rates for the accepted renewal option.
-  // Stored as JSONB so the structure can match whatever the rating engine produces.
-  // Populated by the rating engine integration; nothing reads it yet from the CRM side.
-  acceptedRates: jsonb("accepted_rates"),
-  // Version string of the rating engine that produced the accepted rates (e.g. "7.3.1").
-  // Critical for knowing whether a future re-render will match the signed document.
-  acceptedRatesEngineVersion: text("accepted_rates_engine_version"),
+  // Accepted renewal option and accepted rates now live on `renewal_plan_options`
+  // (one row per plan per renewal year). They change every year while the plan
+  // itself persists, so they are properties of a renewal, not of the plan.
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
@@ -239,6 +227,9 @@ export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull(),
   planId: integer("plan_id"),
+  // Optional link to a specific renewal year. Proposals, signed acceptance
+  // forms, and the 90 Degree notification all belong to one year's renewal.
+  renewalId: integer("renewal_id"),
   documentName: text("document_name").notNull(),
   category: documentCategoryEnum("category").notNull(),
   filePath: text("file_path").notNull(),
@@ -417,6 +408,62 @@ export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSche
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;
 export type InsertBrokerHistory = z.infer<typeof insertBrokerHistorySchema>;
+
+// ── Renewal records (one per client per plan year) ────────────────────────────
+// A renewal opens automatically 30 days before the proposal due date
+// (anniversary − lead months − 30 days), giving staff time to produce the
+// analysis and contact the client before the proposal itself is due.
+//
+// A new renewal opens on schedule regardless of whether the prior year's
+// renewal reached its final step — an incomplete renewal must never block the
+// next one. When that happens, incompletePriorFlag is set so it is surfaced
+// rather than hidden.
+//
+// DB-level constraint (in migration SQL): UNIQUE (client_id, plan_year).
+// Auto-creation fires on GET requests, so concurrent page loads would otherwise
+// race to insert the same record.
+export const renewals = pgTable("renewals", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull(),
+  // Calendar year of the anniversary this renewal cycle covers
+  planYear: integer("plan_year").notNull(),
+  // Seven-step pipeline — set manually by staff; never derived from dates
+  pipelineStep: text("pipeline_step"),
+  proposalSentDate: timestamp("proposal_sent_date"),
+  proposalVersion: text("proposal_version"),
+  acceptanceReceivedDate: timestamp("acceptance_received_date"),
+  // True when a prior year's renewal was still open as this one auto-created
+  incompletePriorFlag: boolean("incomplete_prior_flag").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  clientPlanYearUnique: uniqueIndex("renewals_client_plan_year_unique").on(table.clientId, table.planYear),
+}));
+export type Renewal = typeof renewals.$inferSelect;
+export const insertRenewalSchema = createInsertSchema(renewals).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertRenewal = z.infer<typeof insertRenewalSchema>;
+
+// ── Renewal plan options (one per plan per renewal) ───────────────────────────
+// Which proposal option the client accepted, plus the rate snapshot, recorded
+// per plan within a renewal — a multi-plan client can accept a different option
+// on each plan (e.g. Recommended on dental, Value on vision).
+export const renewalPlanOptions = pgTable("renewal_plan_options", {
+  id: serial("id").primaryKey(),
+  renewalId: integer("renewal_id").notNull(),
+  planId: integer("plan_id").notNull(),
+  acceptedOption: text("accepted_option"),  // 'VALUE' | 'RECOMMENDED' | 'PROTECTIVE' | null
+  acceptedRates: jsonb("accepted_rates"),   // rate snapshot produced by the rating engine
+  // Version of the rating program that produced the accepted rates (e.g. "7.3.1").
+  // Lets staff tell whether a regenerated document would match what was signed.
+  ratingEngineVersion: text("rating_engine_version"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  renewalPlanUnique: uniqueIndex("renewal_plan_options_renewal_plan_unique").on(table.renewalId, table.planId),
+}));
+export type RenewalPlanOption = typeof renewalPlanOptions.$inferSelect;
+export const insertRenewalPlanOptionSchema = createInsertSchema(renewalPlanOptions).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertRenewalPlanOption = z.infer<typeof insertRenewalPlanOptionSchema>;
 
 // ── Renewal pipeline progress (one record per plan) ──────────────────────────
 export const renewalProgress = pgTable("renewal_progress", {

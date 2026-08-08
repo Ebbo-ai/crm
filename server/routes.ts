@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
+import { renewals, renewalPlanOptions } from "@shared/schema";
+import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { matchEmailToClients, processEmail, queryClientCommunications } from "./claude";
 import bcrypt from "bcryptjs";
@@ -53,6 +56,112 @@ const upload = multer({
 
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
+// Seven-step pipeline order. Index used for urgency sorting and completion checks.
+const PIPELINE_STEPS = ["REQUESTED","PROCESSED","SENT","REVISED","ACCEPTED","SIGNED_FORM_ATTACHED","EMAILED_TO_90D"];
+const FINAL_STEP = "EMAILED_TO_90D";
+
+/**
+ * A renewal is open until it reaches the final step.
+ *
+ * Must be NULL-safe: a brand new renewal has pipeline_step = NULL, and in SQL
+ * `NULL <> 'EMAILED_TO_90D'` evaluates to NULL rather than TRUE, so a plain
+ * inequality silently drops every not-yet-started renewal — which is the most
+ * common state there is.
+ */
+const openRenewalPredicate = () =>
+  or(isNull(renewals.pipelineStep), ne(renewals.pipelineStep, FINAL_STEP));
+
+/**
+ * The anniversary date stores an original effective date (e.g. 2019-04-01), so
+ * the year is historical. This projects it onto the next occurrence from today.
+ * Used to decide WHICH plan year to open a renewal for.
+ */
+function getUpcomingAnniversary(anniversaryDate: Date, today: Date): Date {
+  const upcoming = new Date(anniversaryDate);
+  upcoming.setFullYear(today.getFullYear());
+  if (upcoming < today) upcoming.setFullYear(today.getFullYear() + 1);
+  return upcoming;
+}
+
+/**
+ * The anniversary that a specific renewal cycle is measured against.
+ *
+ * Timing warnings must use this, not the upcoming anniversary: the upcoming one
+ * is always in the future by construction, so comparing today against it can
+ * never produce OVERDUE. A renewal for plan year 2025 left unfinished into 2026
+ * is overdue against its own 2025 anniversary.
+ */
+function getAnniversaryForPlanYear(anniversaryDate: Date, planYear: number): Date {
+  const d = new Date(anniversaryDate);
+  d.setFullYear(planYear);
+  return d;
+}
+
+/**
+ * Opens the renewal record for a client's upcoming plan year once it is due to
+ * start, and returns the currently open renewal (or null if none is open yet).
+ *
+ * A renewal opens 30 days before the proposal due date, giving staff lead time
+ * to prepare the analysis before the proposal itself is owed to the client.
+ *
+ * Called from GET handlers so records appear without anyone having to trigger
+ * them manually. Two concurrent requests can therefore both pass the existence
+ * check below; the UNIQUE (client_id, plan_year) index plus onConflictDoNothing
+ * make the duplicate impossible rather than merely unlikely.
+ */
+async function ensureOpenRenewal(client: any, today = new Date()) {
+  if (!client?.anniversaryDate || client.clientStatus === "TERMINATED") return null;
+
+  const anniversary = getUpcomingAnniversary(new Date(client.anniversaryDate), today);
+  const leadMonths = (client.renewalLeadMonths ?? 3) as number;
+  const proposalDue = new Date(anniversary);
+  proposalDue.setMonth(proposalDue.getMonth() - leadMonths);
+
+  const opensAt = new Date(proposalDue);
+  opensAt.setDate(opensAt.getDate() - 30);
+
+  const planYear = anniversary.getFullYear();
+
+  const existing = await db.select().from(renewals)
+    .where(and(eq(renewals.clientId, client.id), eq(renewals.planYear, planYear)))
+    .limit(1);
+  if (existing.length > 0) {
+    return existing[0].pipelineStep === FINAL_STEP ? null : existing[0];
+  }
+
+  // Not yet time to open this year's renewal. Any earlier year's renewal that is
+  // still unfinished remains the open one so it stays visible until completed.
+  if (today < opensAt) {
+    const stragglers = await db.select().from(renewals)
+      .where(and(eq(renewals.clientId, client.id), openRenewalPredicate()))
+      .orderBy(desc(renewals.planYear))
+      .limit(1);
+    return stragglers[0] ?? null;
+  }
+
+  // A prior year still open means last cycle never finished. The new renewal
+  // opens regardless — an unfinished year must never block the next one — but
+  // the flag records it so it is surfaced rather than silently buried.
+  const priorOpen = await db.select().from(renewals)
+    .where(and(eq(renewals.clientId, client.id), openRenewalPredicate()))
+    .limit(1);
+
+  await db.insert(renewals).values({
+    clientId: client.id,
+    planYear,
+    pipelineStep: null,
+    incompletePriorFlag: priorOpen.length > 0,
+  }).onConflictDoNothing();
+
+  // Re-read rather than using the insert's return value: onConflictDoNothing
+  // returns nothing when a concurrent request won the race, and that request's
+  // row is the correct one to use.
+  const [created] = await db.select().from(renewals)
+    .where(and(eq(renewals.clientId, client.id), eq(renewals.planYear, planYear)))
+    .limit(1);
+  return created ?? null;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -64,7 +173,20 @@ export async function registerRoutes(
       const search = req.query.search as string | undefined;
       const status = req.query.status as string | undefined;
       const clientList = await storage.getClients(search, status);
-      res.json(clientList);
+
+      // Attach each client's open renewal so the list can show pipeline badges.
+      // Read-only here — the list view shouldn't create records as a side effect
+      // of a search; auto-creation happens on the detail and alerts endpoints.
+      const ids = clientList.map(c => c.id);
+      const openRows = ids.length
+        ? await db.select().from(renewals)
+            .where(and(inArray(renewals.clientId, ids), openRenewalPredicate()))
+            .orderBy(desc(renewals.planYear))
+        : [];
+      const byClient = new Map<number, any>();
+      for (const r of openRows) if (!byClient.has(r.clientId)) byClient.set(r.clientId, r);
+
+      res.json(clientList.map(c => ({ ...c, openRenewal: byClient.get(c.id) ?? null })));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -124,7 +246,8 @@ export async function registerRoutes(
       const client = await storage.getClient(parseInt(req.params.id));
       if (!client) return res.status(404).json({ message: "Client not found" });
       const activeIssueCount = await storage.getActiveIssueCount(client.id);
-      res.json({ ...client, activeIssueCount });
+      const openRenewal = await ensureOpenRenewal(client);
+      res.json({ ...client, activeIssueCount, openRenewal });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -136,51 +259,178 @@ export async function registerRoutes(
       const allClients = await storage.getClients();
       const alerts: any[] = [];
 
-      // Pipeline step order — used to sort within each timing-warning group.
-      // Earlier (lower index) = more urgent because less has been done.
-      const STEPS = ["REQUESTED","PROCESSED","SENT","REVISED","ACCEPTED","SIGNED_FORM_ATTACHED","EMAILED_TO_90D"];
-      const stepIdx = (s: string | null) => s ? STEPS.indexOf(s) : -1;
+      const stepIdx = (s: string | null) => s ? PIPELINE_STEPS.indexOf(s) : -1;
 
+      // Iterate every active client and open its renewal if due, rather than
+      // querying renewals that already exist. Querying first would mean a client
+      // whose renewal has never been created can't appear here, so the helper
+      // would never fire for them, so the record would never be created — the
+      // client would surface only if someone happened to open their detail page.
       for (const client of allClients) {
         if (!client.anniversaryDate || client.clientStatus === "TERMINATED") continue;
-        if (client.renewalPipelineStep === "EMAILED_TO_90D") continue; // Completed
 
-        const anniversary = new Date(client.anniversaryDate);
+        const renewal = await ensureOpenRenewal(client, today);
+        if (!renewal) continue; // No open renewal — either not due yet, or finished.
+
+        // Measure against the renewal's OWN plan year, not the upcoming
+        // anniversary. The upcoming anniversary is always in the future, so
+        // `today > anniversary` could never fire and OVERDUE was unreachable.
+        const anniversary = getAnniversaryForPlanYear(new Date(client.anniversaryDate), renewal.planYear);
         const leadMonths = (client.renewalLeadMonths ?? 3) as number;
         const proposalDue = new Date(anniversary);
         proposalDue.setMonth(proposalDue.getMonth() - leadMonths);
 
-        const step = (client.renewalPipelineStep as string | null) ?? null;
+        const step = renewal.pipelineStep ?? null;
         let timingWarning: string | null = null;
 
         if (today > anniversary) {
           timingWarning = "OVERDUE";
         } else if (today >= proposalDue && [null,"REQUESTED","PROCESSED"].includes(step)) {
           timingWarning = "PROPOSAL_DUE";
-        } else if (client.proposalSentDate && [null,"REQUESTED","PROCESSED","SENT","REVISED"].includes(step)) {
-          const sent = new Date(client.proposalSentDate as string);
+        } else if (renewal.proposalSentDate && [null,"REQUESTED","PROCESSED","SENT","REVISED"].includes(step)) {
+          const sent = new Date(renewal.proposalSentDate);
           const days = (today.getTime() - sent.getTime()) / (1000 * 60 * 60 * 24);
           if (days > 14) timingWarning = "LATE_RESPONSE";
         }
 
-        if (!timingWarning) continue;
+        // An unfinished prior year is worth surfacing even with no timing warning.
+        if (!timingWarning && !renewal.incompletePriorFlag) continue;
+
         alerts.push({
-          ...client,
+          client,
+          renewal,
           timingWarning,
           proposalDueDate: proposalDue.toISOString(),
         });
       }
 
-      // Sort: OVERDUE first, then PROPOSAL_DUE, then LATE_RESPONSE.
-      // Within each group, earlier pipeline step = more urgent (less has been done).
+      // Sort: OVERDUE first, then PROPOSAL_DUE, then LATE_RESPONSE, then
+      // flag-only entries. Within each group, earlier pipeline step = more
+      // urgent because less has been done.
       const warnOrder: Record<string, number> = { OVERDUE: 0, PROPOSAL_DUE: 1, LATE_RESPONSE: 2 };
       alerts.sort((a, b) => {
         const wDiff = (warnOrder[a.timingWarning] ?? 9) - (warnOrder[b.timingWarning] ?? 9);
         if (wDiff !== 0) return wDiff;
-        return stepIdx(a.renewalPipelineStep) - stepIdx(b.renewalPipelineStep);
+        return stepIdx(a.renewal.pipelineStep) - stepIdx(b.renewal.pipelineStep);
       });
 
       res.json(alerts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Full renewal history for a client, newest plan year first, each with its
+  // per-plan accepted options. This is what makes prior years readable instead
+  // of being overwritten by the current cycle.
+  app.get("/api/clients/:id/renewals", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      const client = await storage.getClient(clientId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+
+      await ensureOpenRenewal(client);
+
+      const rows = await db.select().from(renewals)
+        .where(eq(renewals.clientId, clientId))
+        .orderBy(desc(renewals.planYear));
+
+      const ids = rows.map(r => r.id);
+      const options = ids.length
+        ? await db.select().from(renewalPlanOptions).where(inArray(renewalPlanOptions.renewalId, ids))
+        : [];
+
+      res.json(rows.map(r => ({
+        ...r,
+        planOptions: options.filter(o => o.renewalId === r.id),
+      })));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/renewals/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const body = { ...req.body };
+
+      const patch: any = { updatedAt: new Date() };
+      if ("pipelineStep" in body) {
+        const step = body.pipelineStep || null;
+        if (step !== null && !PIPELINE_STEPS.includes(step)) {
+          return res.status(400).json({ message: `Unknown pipeline step "${step}"` });
+        }
+        patch.pipelineStep = step;
+      }
+      if ("proposalVersion" in body) patch.proposalVersion = body.proposalVersion || null;
+      if ("incompletePriorFlag" in body) patch.incompletePriorFlag = !!body.incompletePriorFlag;
+      for (const field of ["proposalSentDate", "acceptanceReceivedDate"] as const) {
+        if (field in body) patch[field] = body[field] ? new Date(body[field]) : null;
+      }
+
+      const [updated] = await db.update(renewals).set(patch).where(eq(renewals.id, id)).returning();
+      if (!updated) return res.status(404).json({ message: "Renewal not found" });
+
+      const client = await storage.getClient(updated.clientId);
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "updated",
+        entity: "renewal",
+        entityId: updated.id,
+        details: `Updated ${updated.planYear} renewal for "${client?.clientName ?? `client ${updated.clientId}`}"`,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Accepted option is recorded per plan, since a multi-plan client can accept a
+  // different tier on each plan. Upsert keyed on (renewal, plan).
+  app.put("/api/renewals/:id/plan-options/:planId", requireAuth, async (req, res) => {
+    try {
+      const renewalId = parseInt(req.params.id);
+      const planId = parseInt(req.params.planId);
+      const { acceptedOption, acceptedRates, ratingEngineVersion } = req.body ?? {};
+
+      if (acceptedOption && !["VALUE","RECOMMENDED","PROTECTIVE"].includes(acceptedOption)) {
+        return res.status(400).json({ message: `Unknown renewal option "${acceptedOption}"` });
+      }
+
+      const [renewal] = await db.select().from(renewals).where(eq(renewals.id, renewalId)).limit(1);
+      if (!renewal) return res.status(404).json({ message: "Renewal not found" });
+
+      // The plan must belong to the same client as the renewal. Without this,
+      // any plan id could be attached to any renewal, creating cross-client
+      // option records.
+      const plan = await storage.getPlan(planId);
+      if (!plan) return res.status(404).json({ message: "Plan not found" });
+      if (plan.clientId !== renewal.clientId) {
+        return res.status(400).json({ message: "Plan does not belong to this renewal's client" });
+      }
+
+      const values = {
+        renewalId,
+        planId,
+        acceptedOption: acceptedOption || null,
+        acceptedRates: acceptedRates ?? null,
+        ratingEngineVersion: ratingEngineVersion || null,
+      };
+
+      const [saved] = await db.insert(renewalPlanOptions).values(values)
+        .onConflictDoUpdate({
+          target: [renewalPlanOptions.renewalId, renewalPlanOptions.planId],
+          set: {
+            acceptedOption: values.acceptedOption,
+            acceptedRates: values.acceptedRates,
+            ratingEngineVersion: values.ratingEngineVersion,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+
+      res.json(saved);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -192,12 +442,8 @@ export async function registerRoutes(
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
       }
-      if (body.proposalSentDate && typeof body.proposalSentDate === "string") {
-        body.proposalSentDate = new Date(body.proposalSentDate);
-      }
-      if (body.acceptanceReceivedDate && typeof body.acceptanceReceivedDate === "string") {
-        body.acceptanceReceivedDate = new Date(body.acceptanceReceivedDate);
-      }
+      // Renewal lifecycle fields are no longer on the client record — they are
+      // edited through PUT /api/renewals/:id against a specific plan year.
       const updated = await storage.updateClient(parseInt(req.params.id), body);
       if (!updated) return res.status(404).json({ message: "Client not found" });
       await storage.createAuditLog({
@@ -449,6 +695,8 @@ export async function registerRoutes(
       const doc = await storage.createDocument({
         clientId: plan.clientId,
         planId: plan.id,
+        // Optional — ties the proposal to a specific renewal year
+        renewalId: req.body.renewalId ? parseInt(req.body.renewalId) : null,
         documentName: req.body.documentName,
         category: "RENEWAL_PROPOSAL",
         filePath: req.file.path,
@@ -481,6 +729,9 @@ export async function registerRoutes(
       if (!req.file) return res.status(400).json({ message: "File is required" });
       const doc = await storage.createDocument({
         clientId: parseInt(req.params.id),
+        // Optional — signed acceptance forms and 90 Degree notifications belong
+        // to a particular renewal year
+        renewalId: req.body.renewalId ? parseInt(req.body.renewalId) : null,
         documentName: req.body.documentName,
         category: req.body.category,
         filePath: req.file.path,
