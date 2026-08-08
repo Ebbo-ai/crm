@@ -104,6 +104,10 @@ export const clients = pgTable("clients", {
   proposalSentDate: timestamp("proposal_sent_date"),
   proposalVersion: text("proposal_version"),           // e.g. "v1", "v2 revised"
   acceptanceReceivedDate: timestamp("acceptance_received_date"),
+  // Manually-advanced seven-step renewal pipeline.
+  // Staff set this explicitly; it is never derived from dates.
+  // null = not yet started for this cycle
+  renewalPipelineStep: text("renewal_pipeline_step"),
 
   // COBRA administration by 90 Degree Benefits
   cobraAdministeredBy90d: boolean("cobra_administered_by_90d").notNull().default(false),
@@ -189,6 +193,13 @@ export const plans = pgTable("plans", {
   // 'VALUE' | 'RECOMMENDED' | 'PROTECTIVE' | null (null = not yet accepted or N/A)
   // Tracked per plan because a client with multiple plans can accept different tiers on each.
   renewalOptionAccepted: text("renewal_option_accepted"),
+  // Snapshot of the tier rates for the accepted renewal option.
+  // Stored as JSONB so the structure can match whatever the rating engine produces.
+  // Populated by the rating engine integration; nothing reads it yet from the CRM side.
+  acceptedRates: jsonb("accepted_rates"),
+  // Version string of the rating engine that produced the accepted rates (e.g. "7.3.1").
+  // Critical for knowing whether a future re-render will match the signed document.
+  acceptedRatesEngineVersion: text("accepted_rates_engine_version"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({

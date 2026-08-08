@@ -40,6 +40,7 @@ const emptyForm = {
   numberOfEmployees: "" as string | number,
   anniversaryDate: "",
   renewalLeadMonths: 3,
+  renewalPipelineStep: "",
   proposalSentDate: "",
   proposalVersion: "",
   acceptanceReceivedDate: "",
@@ -106,6 +107,7 @@ export default function ClientFormPage() {
           ? existingClient.anniversaryDate.split("T")[0]
           : "",
         renewalLeadMonths: existingClient.renewalLeadMonths ?? 3,
+        renewalPipelineStep: existingClient.renewalPipelineStep || "",
         proposalSentDate: existingClient.proposalSentDate
           ? existingClient.proposalSentDate.split("T")[0]
           : "",
@@ -418,9 +420,28 @@ export default function ClientFormPage() {
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
             <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Tracking</h2>
-            <p className="text-xs text-[#94A3B8] mt-0.5">Record what happened this renewal cycle — all fields optional</p>
+            <p className="text-xs text-[#94A3B8] mt-0.5">Pipeline step and dates for this renewal cycle — all fields optional</p>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
+            <div>
+              <Label htmlFor="renewalPipelineStep" className="text-sm font-medium text-[#2C3E50]">Pipeline Step</Label>
+              <Select value={form.renewalPipelineStep || "_none"} onValueChange={v => updateField("renewalPipelineStep", v === "_none" ? "" : v)}>
+                <SelectTrigger id="renewalPipelineStep" data-testid="select-renewal-pipeline-step">
+                  <SelectValue placeholder="Not started" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">Not started</SelectItem>
+                  <SelectItem value="REQUESTED">1 — Requested</SelectItem>
+                  <SelectItem value="PROCESSED">2 — Processed</SelectItem>
+                  <SelectItem value="SENT">3 — Sent</SelectItem>
+                  <SelectItem value="REVISED">4 — Revised</SelectItem>
+                  <SelectItem value="ACCEPTED">5 — Accepted</SelectItem>
+                  <SelectItem value="SIGNED_FORM_ATTACHED">6 — Signed Form Attached</SelectItem>
+                  <SelectItem value="EMAILED_TO_90D">7 — Emailed to 90 Degree</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-[#94A3B8] mt-1">Use the client detail page for one-click advancing through steps</p>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="proposalSentDate" className="text-sm font-medium text-[#2C3E50]">Proposal Sent Date</Label>

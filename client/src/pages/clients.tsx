@@ -8,7 +8,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Plus, Users, Building2, MapPin } from "lucide-react";
 import { PLAN_TYPE_LABELS } from "@/lib/constants";
 import { getClientCompleteness } from "@/lib/client-completeness";
-import { getRenewalStatus, RENEWAL_STATUS_LABELS, RENEWAL_STATUS_COLORS } from "@/lib/renewal";
+import {
+  getRenewalTimingWarning, getProposalDueDate,
+  RENEWAL_TIMING_WARNING_LABELS, RENEWAL_TIMING_WARNING_COLORS,
+  RENEWAL_PIPELINE_STEP_LABELS, RENEWAL_PIPELINE_STEP_COLORS,
+  type RenewalPipelineStep,
+} from "@/lib/renewal";
 
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
@@ -143,11 +148,23 @@ export default function ClientsPage() {
                       )}
                     </div>
                     {(() => {
-                      const rs = getRenewalStatus(client);
-                      if (!rs || rs === "NOT_DUE" || rs === "ACCEPTED") return null;
+                      if (!client.anniversaryDate) return null;
+                      const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+                      if (step === "EMAILED_TO_90D") return null;
+                      const warning = getRenewalTimingWarning(client);
+                      if (!step && !warning) return null;
                       return (
-                        <div className={`mt-1 text-[11px] px-2 py-1 rounded border ${RENEWAL_STATUS_COLORS[rs]} border-current/20`}>
-                          <span className="font-semibold">Renewal: {RENEWAL_STATUS_LABELS[rs]}</span>
+                        <div className="mt-1 flex items-center gap-1 flex-wrap">
+                          {step && (
+                            <span className={`text-[11px] px-2 py-0.5 rounded font-semibold ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
+                              {RENEWAL_PIPELINE_STEP_LABELS[step]}
+                            </span>
+                          )}
+                          {warning && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${RENEWAL_TIMING_WARNING_COLORS[warning]}`}>
+                              ⚠ {RENEWAL_TIMING_WARNING_LABELS[warning]}
+                            </span>
+                          )}
                         </div>
                       );
                     })()}

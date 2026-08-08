@@ -1,14 +1,34 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, Clock, CheckCircle2, Calendar, ArrowRight } from "lucide-react";
-import { getRenewalStatus, getProposalDueDate, isAwaitingTooLong, RENEWAL_STATUS_LABELS, RENEWAL_STATUS_COLORS } from "@/lib/renewal";
+import { CheckCircle2, ArrowRight } from "lucide-react";
+import {
+  getProposalDueDate,
+  RENEWAL_TIMING_WARNING_LABELS, RENEWAL_TIMING_WARNING_COLORS,
+  RENEWAL_PIPELINE_STEP_LABELS, RENEWAL_PIPELINE_STEP_COLORS,
+  type RenewalPipelineStep, type RenewalTimingWarning,
+} from "@/lib/renewal";
 
-const STATUS_ICONS: Record<string, React.ReactNode> = {
-  OVERDUE:             <AlertTriangle className="w-4 h-4 text-red-600" />,
-  PROPOSAL_DUE:        <Clock className="w-4 h-4 text-amber-600" />,
-  AWAITING_ACCEPTANCE: <Calendar className="w-4 h-4 text-blue-600" />,
+const WARNING_GROUP_TITLES: Record<RenewalTimingWarning, { title: string; subtitle: string; headerBg: string; headerText: string }> = {
+  OVERDUE: {
+    title: "Overdue",
+    subtitle: "Anniversary has passed and renewal is not yet complete",
+    headerBg: "bg-red-50 border-red-200",
+    headerText: "text-red-700",
+  },
+  PROPOSAL_DUE: {
+    title: "Proposal past due",
+    subtitle: "Due date passed — proposal not yet sent",
+    headerBg: "bg-amber-50 border-amber-200",
+    headerText: "text-amber-700",
+  },
+  LATE_RESPONSE: {
+    title: "No response in 14+ days",
+    subtitle: "Proposal sent but client has not responded",
+    headerBg: "bg-orange-50 border-orange-200",
+    headerText: "text-orange-700",
+  },
 };
 
 function fmtDate(d: string | null | undefined) {
@@ -23,10 +43,14 @@ export default function RenewalAlertsPage() {
     refetchInterval: 60_000,
   });
 
-  const overdue = alerts.filter(c => c.renewalStatus === "OVERDUE");
-  const proposalDue = alerts.filter(c => c.renewalStatus === "PROPOSAL_DUE");
-  const awaitingLong = alerts.filter(c => c.renewalStatus === "AWAITING_ACCEPTANCE");
+  // Group by timing warning
+  const groups: Record<RenewalTimingWarning, any[]> = {
+    OVERDUE: alerts.filter(c => c.timingWarning === "OVERDUE"),
+    PROPOSAL_DUE: alerts.filter(c => c.timingWarning === "PROPOSAL_DUE"),
+    LATE_RESPONSE: alerts.filter(c => c.timingWarning === "LATE_RESPONSE"),
+  };
 
+  const warningOrder: RenewalTimingWarning[] = ["OVERDUE", "PROPOSAL_DUE", "LATE_RESPONSE"];
   const totalAlerts = alerts.length;
 
   return (
@@ -34,7 +58,7 @@ export default function RenewalAlertsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-[#1A5276]">Renewal Alerts</h1>
         <p className="text-sm text-[#94A3B8] mt-1">
-          Clients that need attention right now — internal use only
+          Clients whose renewal timing is off-track — internal view only
         </p>
       </div>
 
@@ -48,92 +72,73 @@ export default function RenewalAlertsPage() {
             <CheckCircle2 className="w-12 h-12 text-[#22C55E] mx-auto mb-3" />
             <h3 className="text-lg font-medium text-[#2C3E50]">All caught up</h3>
             <p className="text-sm text-[#94A3B8] mt-1">
-              No clients need renewal attention right now.
+              No renewal timing issues right now.
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-6">
-          {overdue.length > 0 && (
-            <AlertGroup
-              title="Overdue"
-              subtitle="Anniversary passed — acceptance not yet received"
-              color="border-red-200 bg-red-50"
-              headerColor="text-red-700"
-              clients={overdue}
-            />
-          )}
-          {proposalDue.length > 0 && (
-            <AlertGroup
-              title="Proposal due"
-              subtitle="Due date has passed and nothing has been sent"
-              color="border-amber-200 bg-amber-50"
-              headerColor="text-amber-700"
-              clients={proposalDue}
-            />
-          )}
-          {awaitingLong.length > 0 && (
-            <AlertGroup
-              title="Awaiting acceptance"
-              subtitle="Proposal sent more than 14 days ago — no response yet"
-              color="border-blue-200 bg-blue-50"
-              headerColor="text-blue-700"
-              clients={awaitingLong}
-            />
-          )}
+          {warningOrder.map(w => {
+            const clients = groups[w];
+            if (!clients.length) return null;
+            const cfg = WARNING_GROUP_TITLES[w];
+            return (
+              <div key={w}>
+                <div className={`rounded-t-lg border px-5 py-3 ${cfg.headerBg}`}>
+                  <h2 className={`text-sm font-bold ${cfg.headerText}`}>{cfg.title}</h2>
+                  <p className={`text-xs mt-0.5 opacity-75 ${cfg.headerText}`}>{cfg.subtitle}</p>
+                </div>
+                <div className="border border-t-0 rounded-b-lg divide-y divide-gray-100 overflow-hidden">
+                  {clients.map((client: any) => {
+                    const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+                    const proposalDue = getProposalDueDate(client);
+                    return (
+                      <Link key={client.id} href={`/clients/${client.id}`}>
+                        <div
+                          className="flex items-center justify-between px-5 py-4 bg-white hover:bg-[#F8FAFC] transition-colors cursor-pointer group"
+                          data-testid={`alert-client-${client.id}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              {client.clientCode && (
+                                <span className="text-[10px] text-[#2E86C1] font-semibold">{client.clientCode}</span>
+                              )}
+                              <span className="text-sm font-semibold text-[#2C3E50]">{client.clientName}</span>
+                              {/* Pipeline step badge */}
+                              {step ? (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
+                                  {RENEWAL_PIPELINE_STEP_LABELS[step]}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[#94A3B8] italic">Not started</span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[#94A3B8]">
+                              {client.anniversaryDate && (
+                                <span>Anniversary: {fmtDate(client.anniversaryDate)}</span>
+                              )}
+                              {proposalDue && (
+                                <span>Proposal due: {fmtDate(proposalDue.toISOString())}</span>
+                              )}
+                              {client.proposalSentDate && (
+                                <span>
+                                  Sent: {fmtDate(client.proposalSentDate)}
+                                  {client.proposalVersion ? ` (${client.proposalVersion})` : ""}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <ArrowRight className="w-4 h-4 text-[#94A3B8] flex-shrink-0 ml-3 group-hover:text-[#1A5276] transition-colors" />
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
-    </div>
-  );
-}
-
-function AlertGroup({
-  title, subtitle, color, headerColor, clients,
-}: {
-  title: string;
-  subtitle: string;
-  color: string;
-  headerColor: string;
-  clients: any[];
-}) {
-  return (
-    <div>
-      <div className={`rounded-t-lg border px-5 py-3 ${color}`}>
-        <h2 className={`text-sm font-bold ${headerColor}`}>{title}</h2>
-        <p className={`text-xs mt-0.5 opacity-75 ${headerColor}`}>{subtitle}</p>
-      </div>
-      <div className="border border-t-0 rounded-b-lg divide-y divide-gray-100 overflow-hidden">
-        {clients.map((client: any) => {
-          const proposalDueDate = getProposalDueDate(client);
-          const anniversary = client.anniversaryDate ? new Date(client.anniversaryDate) : null;
-          return (
-            <Link key={client.id} href={`/clients/${client.id}`}>
-              <div className="flex items-center justify-between px-5 py-4 bg-white hover:bg-[#F8FAFC] transition-colors cursor-pointer group">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    {client.clientCode && (
-                      <span className="text-[10px] text-[#2E86C1] font-semibold">{client.clientCode}</span>
-                    )}
-                    <span className="text-sm font-semibold text-[#2C3E50]">{client.clientName}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-[#94A3B8]">
-                    {anniversary && (
-                      <span>Anniversary: {fmtDate(client.anniversaryDate)}</span>
-                    )}
-                    {proposalDueDate && (
-                      <span>Proposal due: {fmtDate(proposalDueDate.toISOString())}</span>
-                    )}
-                    {client.proposalSentDate && (
-                      <span>Proposal sent: {fmtDate(client.proposalSentDate)}{client.proposalVersion ? ` (${client.proposalVersion})` : ""}</span>
-                    )}
-                  </div>
-                </div>
-                <ArrowRight className="w-4 h-4 text-[#94A3B8] flex-shrink-0 group-hover:text-[#1A5276] transition-colors" />
-              </div>
-            </Link>
-          );
-        })}
-      </div>
     </div>
   );
 }

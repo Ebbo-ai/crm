@@ -951,6 +951,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     assignmentOfBenefits: plan?.assignmentOfBenefits ?? true,
     planNotes: plan?.planNotes || "",
     renewalOptionAccepted: plan?.renewalOptionAccepted || "",
+    acceptedRatesEngineVersion: plan?.acceptedRatesEngineVersion || "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -1016,6 +1017,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
       assignmentOfBenefits: form.assignmentOfBenefits,
       planNotes: form.planNotes.trim() || null,
       renewalOptionAccepted: form.renewalOptionAccepted || null,
+      acceptedRatesEngineVersion: form.acceptedRatesEngineVersion.trim() || null,
     });
   };
 
@@ -1280,6 +1282,20 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
               </Select>
               <p className="text-[10px] text-[#94A3B8] mt-1">Which proposal option the client accepted for this plan</p>
             </div>
+            {form.renewalOptionAccepted && (
+              <div>
+                <Label className="text-xs">Rating Engine Version</Label>
+                <input
+                  type="text"
+                  value={form.acceptedRatesEngineVersion}
+                  onChange={e => setForm(f => ({ ...f, acceptedRatesEngineVersion: e.target.value }))}
+                  placeholder="e.g. 7.3.1"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  data-testid="input-accepted-rates-engine-version"
+                />
+                <p className="text-[10px] text-[#94A3B8] mt-1">Version of the rating program that produced the rates the client signed</p>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 pt-2">

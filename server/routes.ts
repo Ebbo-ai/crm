@@ -136,33 +136,49 @@ export async function registerRoutes(
       const allClients = await storage.getClients();
       const alerts: any[] = [];
 
+      // Pipeline step order — used to sort within each timing-warning group.
+      // Earlier (lower index) = more urgent because less has been done.
+      const STEPS = ["REQUESTED","PROCESSED","SENT","REVISED","ACCEPTED","SIGNED_FORM_ATTACHED","EMAILED_TO_90D"];
+      const stepIdx = (s: string | null) => s ? STEPS.indexOf(s) : -1;
+
       for (const client of allClients) {
         if (!client.anniversaryDate || client.clientStatus === "TERMINATED") continue;
-        if (client.acceptanceReceivedDate) continue; // Already accepted — not an alert
+        if (client.renewalPipelineStep === "EMAILED_TO_90D") continue; // Completed
 
         const anniversary = new Date(client.anniversaryDate);
         const leadMonths = (client.renewalLeadMonths ?? 3) as number;
         const proposalDue = new Date(anniversary);
         proposalDue.setMonth(proposalDue.getMonth() - leadMonths);
 
-        let renewalStatus: string | null = null;
+        const step = (client.renewalPipelineStep as string | null) ?? null;
+        let timingWarning: string | null = null;
 
         if (today > anniversary) {
-          renewalStatus = "OVERDUE";
-        } else if (client.proposalSentDate) {
-          const sentDate = new Date(client.proposalSentDate);
-          const daysSince = (today.getTime() - sentDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (daysSince > 14) renewalStatus = "AWAITING_ACCEPTANCE";
-        } else if (today >= proposalDue) {
-          renewalStatus = "PROPOSAL_DUE";
+          timingWarning = "OVERDUE";
+        } else if (today >= proposalDue && [null,"REQUESTED","PROCESSED"].includes(step)) {
+          timingWarning = "PROPOSAL_DUE";
+        } else if (client.proposalSentDate && [null,"REQUESTED","PROCESSED","SENT","REVISED"].includes(step)) {
+          const sent = new Date(client.proposalSentDate as string);
+          const days = (today.getTime() - sent.getTime()) / (1000 * 60 * 60 * 24);
+          if (days > 14) timingWarning = "LATE_RESPONSE";
         }
 
-        if (!renewalStatus) continue;
-        alerts.push({ ...client, renewalStatus, proposalDueDate: proposalDue.toISOString() });
+        if (!timingWarning) continue;
+        alerts.push({
+          ...client,
+          timingWarning,
+          proposalDueDate: proposalDue.toISOString(),
+        });
       }
 
-      const order: Record<string, number> = { OVERDUE: 0, PROPOSAL_DUE: 1, AWAITING_ACCEPTANCE: 2 };
-      alerts.sort((a, b) => (order[a.renewalStatus] ?? 9) - (order[b.renewalStatus] ?? 9));
+      // Sort: OVERDUE first, then PROPOSAL_DUE, then LATE_RESPONSE.
+      // Within each group, earlier pipeline step = more urgent (less has been done).
+      const warnOrder: Record<string, number> = { OVERDUE: 0, PROPOSAL_DUE: 1, LATE_RESPONSE: 2 };
+      alerts.sort((a, b) => {
+        const wDiff = (warnOrder[a.timingWarning] ?? 9) - (warnOrder[b.timingWarning] ?? 9);
+        if (wDiff !== 0) return wDiff;
+        return stepIdx(a.renewalPipelineStep) - stepIdx(b.renewalPipelineStep);
+      });
 
       res.json(alerts);
     } catch (err: any) {

@@ -463,6 +463,24 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // Phase 9: Seven-step renewal pipeline on clients; accepted rates snapshot on plans.
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'renewal_pipeline_step') THEN
+          ALTER TABLE clients ADD COLUMN renewal_pipeline_step TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'accepted_rates') THEN
+          ALTER TABLE plans ADD COLUMN accepted_rates JSONB;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'accepted_rates_engine_version') THEN
+          ALTER TABLE plans ADD COLUMN accepted_rates_engine_version TEXT;
+        END IF;
+      END $$;
+    `);
+
     // Phase 8: Renewal tracking fields on clients; renewal option accepted on plans.
     await pool.query(`
       DO $$ BEGIN

@@ -12,7 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle, CalendarClock } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
 import { getClientCompleteness } from "@/lib/client-completeness";
-import { getRenewalStatus, getProposalDueDate, RENEWAL_STATUS_LABELS, RENEWAL_STATUS_COLORS } from "@/lib/renewal";
+import {
+  getRenewalTimingWarning, getProposalDueDate,
+  RENEWAL_TIMING_WARNING_LABELS, RENEWAL_TIMING_WARNING_COLORS,
+  RENEWAL_PIPELINE_STEPS, RENEWAL_PIPELINE_STEP_LABELS, RENEWAL_PIPELINE_STEP_COLORS,
+  getNextPipelineStep, type RenewalPipelineStep,
+} from "@/lib/renewal";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import PlansTab from "@/components/tabs/plans-tab";
@@ -64,6 +69,19 @@ export default function ClientDetailPage() {
     onError: (err: any) => {
       toast({ title: "Generation failed", description: err.message || "Rating engine error", variant: "destructive" });
     },
+  });
+
+  const advancePipelineMutation = useMutation({
+    mutationFn: async (step: RenewalPipelineStep | null) => {
+      const res = await apiRequest("PUT", `/api/clients/${clientId}`, { renewalPipelineStep: step });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/renewal-alerts"] });
+      toast({ title: "Pipeline step updated" });
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   if (isLoading) {
@@ -263,34 +281,84 @@ export default function ClientDetailPage() {
             )}
 
             {client.anniversaryDate && (() => {
-              const status = getRenewalStatus(client);
+              const step = client.renewalPipelineStep as RenewalPipelineStep | null;
+              const nextStep = getNextPipelineStep(step);
+              const warning = getRenewalTimingWarning(client);
               const proposalDue = getProposalDueDate(client);
+              const currentStepIdx = step ? RENEWAL_PIPELINE_STEPS.indexOf(step) : -1;
               return (
-                <Card className="border-0 shadow-sm">
+                <Card className="border-0 shadow-sm lg:col-span-2">
                   <CardHeader className="pb-3 pt-5 px-6">
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Tracking</h2>
-                      {status && (
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${RENEWAL_STATUS_COLORS[status]}`}>
-                          {RENEWAL_STATUS_LABELS[status]}
-                        </span>
-                      )}
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Pipeline</h2>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {warning && (
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${RENEWAL_TIMING_WARNING_COLORS[warning]}`}>
+                            ⚠ {RENEWAL_TIMING_WARNING_LABELS[warning]}
+                          </span>
+                        )}
+                        {step
+                          ? <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>{RENEWAL_PIPELINE_STEP_LABELS[step]}</span>
+                          : <span className="text-xs italic text-[#94A3B8]">Not started</span>}
+                      </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="px-6 pb-6 space-y-3">
-                    <InfoRow label="Anniversary Date" value={new Date(client.anniversaryDate).toLocaleDateString()} />
-                    {proposalDue && (
-                      <InfoRow label="Proposal Due" value={proposalDue.toLocaleDateString()} />
-                    )}
-                    {client.proposalSentDate && (
-                      <InfoRow label="Proposal Sent" value={`${new Date(client.proposalSentDate).toLocaleDateString()}${client.proposalVersion ? ` — ${client.proposalVersion}` : ""}`} />
-                    )}
-                    {client.acceptanceReceivedDate && (
-                      <InfoRow label="Acceptance Received" value={new Date(client.acceptanceReceivedDate).toLocaleDateString()} />
-                    )}
-                    {!client.proposalSentDate && !client.acceptanceReceivedDate && (
-                      <p className="text-xs italic text-[#94A3B8]">No renewal activity recorded yet</p>
-                    )}
+                  <CardContent className="px-6 pb-6 space-y-4">
+                    {/* 7-segment progress bar */}
+                    <div>
+                      <div className="flex gap-1 mb-3">
+                        {RENEWAL_PIPELINE_STEPS.map((s, i) => (
+                          <div
+                            key={s}
+                            title={RENEWAL_PIPELINE_STEP_LABELS[s]}
+                            className={`h-2 rounded-full flex-1 transition-colors ${
+                              i < currentStepIdx ? "bg-[#1A5276]" : i === currentStepIdx ? "bg-[#2E86C1]" : "bg-gray-200"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {nextStep && (
+                          <Button
+                            size="sm"
+                            className="h-8 text-xs bg-[#1A5276] text-white gap-1"
+                            onClick={() => advancePipelineMutation.mutate(nextStep)}
+                            disabled={advancePipelineMutation.isPending}
+                            data-testid="button-advance-pipeline"
+                          >
+                            → {RENEWAL_PIPELINE_STEP_LABELS[nextStep]}
+                          </Button>
+                        )}
+                        {step === "EMAILED_TO_90D" && (
+                          <span className="text-xs text-[#22C55E] font-semibold">✓ Renewal complete</span>
+                        )}
+                        <Select
+                          value={step ?? "_none"}
+                          onValueChange={v => advancePipelineMutation.mutate(v === "_none" ? null : v as RenewalPipelineStep)}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-auto min-w-[150px]" data-testid="select-pipeline-step">
+                            <SelectValue placeholder="Set step…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="_none">— Not started</SelectItem>
+                            {RENEWAL_PIPELINE_STEPS.map(s => (
+                              <SelectItem key={s} value={s}>{RENEWAL_PIPELINE_STEP_LABELS[s]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    {/* Date facts */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t pt-3">
+                      <InfoRow label="Anniversary" value={new Date(client.anniversaryDate).toLocaleDateString()} />
+                      {proposalDue && <InfoRow label="Proposal due" value={proposalDue.toLocaleDateString()} />}
+                      {client.proposalSentDate && (
+                        <InfoRow label="Proposal sent" value={`${new Date(client.proposalSentDate).toLocaleDateString()}${client.proposalVersion ? ` — ${client.proposalVersion}` : ""}`} />
+                      )}
+                      {client.acceptanceReceivedDate && (
+                        <InfoRow label="Acceptance received" value={new Date(client.acceptanceReceivedDate).toLocaleDateString()} />
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               );
