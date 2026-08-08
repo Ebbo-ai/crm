@@ -164,7 +164,14 @@ export const plans = pgTable("plans", {
   feeBasis: text("fee_basis").notNull().default("PEPM"),
   // For FIXED_MONTHLY plans only: the flat admin fee charged for the whole group per month.
   // PEPM plans leave this null — their admin fee is calculated per-tier × headcount.
+  // This is the admin-only total (excludes broker). PPR uses this + brokerValue for the full charge.
   flatMonthlyFee: decimal("flat_monthly_fee", { precision: 10, scale: 2 }),
+  // Fee component breakdown for FIXED_MONTHLY plans — mirrors the per-tier breakdown on PEPM plans.
+  // All three are optional: when unknown, only flatMonthlyFee (the total) is stored.
+  // When present, flatMonthlyFee = flat90DBFee + flatSimpleFee + flatNetworkFee (auto-computed on save).
+  flat90DBFee:   decimal("flat_90db_fee",    { precision: 10, scale: 2 }),
+  flatSimpleFee: decimal("flat_simple_fee",  { precision: 10, scale: 2 }),
+  flatNetworkFee: decimal("flat_network_fee", { precision: 10, scale: 2 }),
   // Whether claims are assigned directly to providers (true = provider is paid; false = member pays and seeks reimbursement).
   // Defaults true — the majority of plans assign benefits. Varies per plan even within a single client.
   assignmentOfBenefits: boolean("assignment_of_benefits").notNull().default(true),

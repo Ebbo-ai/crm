@@ -267,7 +267,7 @@ export class DatabaseStorage implements IStorage {
     planId: number,
     tierDefs: { label: string; displayOrder: number }[],
     rateInputs: Array<{ tierIndex: number; baseAdminFee: string; cobraFee: string; simpleFee: string; networkFee: string; expectedClaims: string }>,
-    planUpdates: { brokerMode: string; brokerValue: string; feeBasis: string; flatMonthlyFee?: string },
+    planUpdates: { brokerMode: string; brokerValue: string; feeBasis: string; flatMonthlyFee?: string | null; flat90DBFee?: string | null; flatSimpleFee?: string | null; flatNetworkFee?: string | null },
   ): Promise<{ tiers: PlanTier[]; rates: any[] }> {
     // 1. Delete rate cards first (they reference plan_tiers via plan_tier_id)
     await db.delete(rateCards).where(eq(rateCards.planId, planId));
@@ -361,10 +361,26 @@ export class DatabaseStorage implements IStorage {
       updatedAt:   new Date(),
     };
     if (isFixedMonthly) {
-      planSet.flatMonthlyFee = planUpdates.flatMonthlyFee ?? null;
+      // Store the three optional components.
+      const db90    = parseFloat(planUpdates.flat90DBFee    ?? "0") || 0;
+      const simple  = parseFloat(planUpdates.flatSimpleFee  ?? "0") || 0;
+      const network = parseFloat(planUpdates.flatNetworkFee ?? "0") || 0;
+      const hasComponents = db90 > 0 || simple > 0 || network > 0;
+
+      // If the breakdown is provided, auto-compute the admin total from components so it stays
+      // consistent. If components are all empty (partial data entry), fall back to the manual total.
+      planSet.flat90DBFee    = hasComponents ? db90.toFixed(2)    : (planUpdates.flat90DBFee    ?? null);
+      planSet.flatSimpleFee  = hasComponents ? simple.toFixed(2)  : (planUpdates.flatSimpleFee  ?? null);
+      planSet.flatNetworkFee = hasComponents ? network.toFixed(2) : (planUpdates.flatNetworkFee ?? null);
+      planSet.flatMonthlyFee = hasComponents
+        ? r2(db90 + simple + network).toFixed(2)
+        : (planUpdates.flatMonthlyFee ?? null);
     } else {
-      // Clear flatMonthlyFee when switching back to PEPM
-      planSet.flatMonthlyFee = null;
+      // Clear all fixed-monthly fields when switching back to PEPM
+      planSet.flatMonthlyFee  = null;
+      planSet.flat90DBFee     = null;
+      planSet.flatSimpleFee   = null;
+      planSet.flatNetworkFee  = null;
     }
     await db.update(plans).set(planSet).where(eq(plans.id, planId));
 

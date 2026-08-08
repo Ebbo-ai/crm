@@ -264,7 +264,7 @@ export async function registerRoutes(
       const planId = parseInt(req.params.planId);
       const body = req.body;
 
-      // New format: { tiers, rates, brokerMode, brokerValue, feeBasis, flatMonthlyFee? }
+      // New format: { tiers, rates, brokerMode, brokerValue, feeBasis, flatMonthlyFee?, flat90DBFee?, flatSimpleFee?, flatNetworkFee? }
       if (body && Array.isArray(body.tiers)) {
         const result = await storage.upsertTiersAndRates(
           planId,
@@ -275,6 +275,9 @@ export async function registerRoutes(
             brokerValue: body.brokerValue ?? "0.0000",
             feeBasis: body.feeBasis ?? "PEPM",
             flatMonthlyFee: body.flatMonthlyFee ?? null,
+            flat90DBFee: body.flat90DBFee ?? null,
+            flatSimpleFee: body.flatSimpleFee ?? null,
+            flatNetworkFee: body.flatNetworkFee ?? null,
           },
         );
         await storage.createAuditLog({

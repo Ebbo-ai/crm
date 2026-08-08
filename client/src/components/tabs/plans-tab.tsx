@@ -554,7 +554,20 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                   <div className="flex items-center gap-3 text-[10px] text-[#94A3B8]">
                     {isFixedMonthly && (
                       <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5">
-                        Fixed Monthly — ${flatFee.toFixed(2)}/mo{flatBroker > 0 ? ` + $${flatBroker.toFixed(2)} broker` : ""}
+                        {(() => {
+                          const db90n    = parseFloat(plan.flat90DBFee    ?? "0") || 0;
+                          const simplen  = parseFloat(plan.flatSimpleFee  ?? "0") || 0;
+                          const networkn = parseFloat(plan.flatNetworkFee ?? "0") || 0;
+                          const hasComp  = db90n > 0 || simplen > 0 || networkn > 0;
+                          if (hasComp) {
+                            const parts = [];
+                            if (db90n)    parts.push(`90DB $${db90n.toFixed(2)}`);
+                            if (simplen)  parts.push(`Simple $${simplen.toFixed(2)}`);
+                            if (networkn) parts.push(`Network $${networkn.toFixed(2)}`);
+                            return <>Fixed Monthly — {parts.join(" + ")}{flatBroker > 0 ? ` + $${flatBroker.toFixed(2)} broker` : ""} = ${(flatFee + flatBroker).toFixed(2)}/mo</>;
+                          }
+                          return <>Fixed Monthly — ${flatFee.toFixed(2)}/mo{flatBroker > 0 ? ` + $${flatBroker.toFixed(2)} broker` : ""}</>;
+                        })()}
                       </span>
                     )}
                     {!isFixedMonthly && hasBroker && (
@@ -1365,6 +1378,9 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
       brokerAmt: mode !== "PERCENT_OF_PREMIUM" ? rawBrokerValue.toFixed(2) : "",
       feeBasis: plan?.feeBasis ?? "PEPM",
       flatMonthlyFee: plan?.flatMonthlyFee ? String(parseFloat(plan.flatMonthlyFee).toFixed(2)) : "",
+      flat90DBFee:    plan?.flat90DBFee    ? String(parseFloat(plan.flat90DBFee).toFixed(2))    : "",
+      flatSimpleFee:  plan?.flatSimpleFee  ? String(parseFloat(plan.flatSimpleFee).toFixed(2))  : "",
+      flatNetworkFee: plan?.flatNetworkFee ? String(parseFloat(plan.flatNetworkFee).toFixed(2)) : "",
     };
   };
 
@@ -1375,6 +1391,9 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
   const [brokerAmt, setBrokerAmt] = useState("");
   const [feeBasis, setFeeBasis] = useState("PEPM");
   const [flatMonthlyFee, setFlatMonthlyFee] = useState("");
+  const [flat90DBFee, setFlat90DBFee] = useState("");
+  const [flatSimpleFee, setFlatSimpleFee] = useState("");
+  const [flatNetworkFee, setFlatNetworkFee] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -1386,6 +1405,9 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
       setBrokerAmt(s.brokerAmt);
       setFeeBasis(s.feeBasis);
       setFlatMonthlyFee(s.flatMonthlyFee);
+      setFlat90DBFee(s.flat90DBFee);
+      setFlatSimpleFee(s.flatSimpleFee);
+      setFlatNetworkFee(s.flatNetworkFee);
     }
   }, [open]);
 
@@ -1437,7 +1459,14 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         brokerMode,
         brokerValue: saveBrokerValue,
         feeBasis,
-        ...(isFixed ? { flatMonthlyFee: (parseFloat(flatMonthlyFee || "0") || 0).toFixed(2) } : {}),
+        ...(isFixed ? {
+          // Pass both the components and the manual total. Storage will auto-compute the total
+          // from components when any component is non-zero; otherwise uses the manual total.
+          flatMonthlyFee: (parseFloat(flatMonthlyFee || "0") || 0).toFixed(2),
+          flat90DBFee:    flat90DBFee    ? (parseFloat(flat90DBFee)    || 0).toFixed(2) : null,
+          flatSimpleFee:  flatSimpleFee  ? (parseFloat(flatSimpleFee)  || 0).toFixed(2) : null,
+          flatNetworkFee: flatNetworkFee ? (parseFloat(flatNetworkFee) || 0).toFixed(2) : null,
+        } : {}),
       };
       const res = await apiRequest("POST", `/api/plans/${planId}/rates`, payload);
       return res.json();
@@ -1538,11 +1567,24 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
         </div>
 
         {/* ── PLAN SETTINGS ─────────────────────────────────────── */}
+        {(() => {
+          const db90    = parseFloat(flat90DBFee    || "0") || 0;
+          const simple  = parseFloat(flatSimpleFee  || "0") || 0;
+          const network = parseFloat(flatNetworkFee || "0") || 0;
+          const hasComponents = db90 > 0 || simple > 0 || network > 0;
+          const componentAdminSum = Math.round((db90 + simple + network) * 100) / 100;
+          const brokerFixed = brokerMode === "FIXED_MONTHLY" ? (parseFloat(brokerAmt || "0") || 0) : 0;
+          const effectiveAdmin = hasComponents ? componentAdminSum : (parseFloat(flatMonthlyFee || "0") || 0);
+          const grandTotal = Math.round((effectiveAdmin + brokerFixed) * 100) / 100;
+          return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-3 bg-[#F8FAFC] rounded-lg border">
           <div className="space-y-2">
             <div>
               <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Fee Basis</Label>
-              <Select value={feeBasis} onValueChange={v => { setFeeBasis(v); if (v !== "FIXED_MONTHLY") setFlatMonthlyFee(""); }}>
+              <Select value={feeBasis} onValueChange={v => {
+                setFeeBasis(v);
+                if (v !== "FIXED_MONTHLY") { setFlatMonthlyFee(""); setFlat90DBFee(""); setFlatSimpleFee(""); setFlatNetworkFee(""); }
+              }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PEPM">Per employee / month (standard)</SelectItem>
@@ -1551,24 +1593,48 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
               </Select>
             </div>
             {feeBasis === "FIXED_MONTHLY" && (
-              <div>
-                <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Flat Monthly Admin Fee</Label>
-                <div className="flex items-center gap-1.5">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-[#1A5276] block">Fee Components (group / month)</Label>
+                <p className="text-[10px] text-[#94A3B8] -mt-1">Enter the breakdown when known. Leave blank to record only the total for now.</p>
+
+                {[
+                  { label: "90 Degree fee", val: flat90DBFee, set: setFlat90DBFee },
+                  { label: "Simple fee",    val: flatSimpleFee, set: setFlatSimpleFee },
+                  { label: "Network fee",   val: flatNetworkFee, set: setFlatNetworkFee },
+                ].map(({ label, val, set }) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <span className="text-xs text-[#64748B] w-28 shrink-0">{label}</span>
+                    <span className="text-xs text-[#94A3B8]">$</span>
+                    <Input type="number" step="0.01" min="0" value={val}
+                      onChange={e => set(e.target.value)}
+                      placeholder="0.00" className="h-7 text-xs w-24" />
+                  </div>
+                ))}
+
+                <div className="flex items-center gap-2 border-t border-dashed border-[#E2E8F0] pt-2">
+                  <span className="text-xs font-semibold text-[#1A5276] w-28 shrink-0">Admin total</span>
                   <span className="text-xs text-[#94A3B8]">$</span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={flatMonthlyFee}
-                    onChange={e => setFlatMonthlyFee(e.target.value)}
-                    placeholder="0.00"
-                    className="h-8 text-xs w-28"
-                  />
-                  <span className="text-[10px] text-amber-700">/ month for the whole group</span>
+                  {hasComponents ? (
+                    <span className="text-xs font-mono font-semibold text-[#1A5276] w-24">
+                      {componentAdminSum.toFixed(2)}
+                    </span>
+                  ) : (
+                    <Input type="number" step="0.01" min="0" value={flatMonthlyFee}
+                      onChange={e => setFlatMonthlyFee(e.target.value)}
+                      placeholder="0.00" className="h-7 text-xs w-24" />
+                  )}
+                  <span className="text-[10px] text-amber-700">/ mo, whole group</span>
                 </div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">
-                  This replaces per-tier admin fees. Tiers below carry enrollment and expected claims only.
-                </p>
+
+                {grandTotal > 0 && (
+                  <div className="flex items-center gap-2 bg-[#EFF6FF] rounded px-2 py-1.5">
+                    <span className="text-xs font-semibold text-[#1A5276] w-28 shrink-0">Grand total</span>
+                    <span className="text-xs font-mono font-bold text-[#1A5276]">${grandTotal.toFixed(2)}/mo</span>
+                    {brokerFixed > 0 && (
+                      <span className="text-[10px] text-[#64748B]">(incl. ${brokerFixed.toFixed(2)} broker)</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1616,6 +1682,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
             )}
           </div>
         </div>
+        );})()}
 
         {/* ── RATE TABLE ────────────────────────────────────────── */}
         {feeBasis === "FIXED_MONTHLY" ? (
@@ -1639,9 +1706,30 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                 </tr>
                 <tr className="bg-[#F0F4F8]">
                   <td colSpan={localTiers.length + 1} className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50">
-                    Admin fee is ${parseFloat(flatMonthlyFee || "0").toFixed(2)}/month for the group
-                    {hasBrokerCalc && brokerMode === "FIXED_MONTHLY" && ` · Broker fee $${parseFloat(brokerAmt || "0").toFixed(2)}/month for the group`}
-                    {" "}— not distributed per tier.
+                    {(() => {
+                      const db90n    = parseFloat(flat90DBFee    || "0") || 0;
+                      const simplen  = parseFloat(flatSimpleFee  || "0") || 0;
+                      const networkn = parseFloat(flatNetworkFee || "0") || 0;
+                      const hasComp  = db90n > 0 || simplen > 0 || networkn > 0;
+                      const adminAmt = hasComp
+                        ? (Math.round((db90n + simplen + networkn) * 100) / 100)
+                        : (parseFloat(flatMonthlyFee || "0") || 0);
+                      const brokerFixedAmt = brokerMode === "FIXED_MONTHLY" ? (parseFloat(brokerAmt || "0") || 0) : 0;
+                      const parts = [];
+                      if (hasComp) {
+                        if (db90n)    parts.push(`90DB $${db90n.toFixed(2)}`);
+                        if (simplen)  parts.push(`Simple $${simplen.toFixed(2)}`);
+                        if (networkn) parts.push(`Network $${networkn.toFixed(2)}`);
+                      }
+                      return (
+                        <>
+                          Admin fee: ${adminAmt.toFixed(2)}/mo
+                          {parts.length > 0 && ` (${parts.join(" + ")})`}
+                          {brokerFixedAmt > 0 && ` · Broker $${brokerFixedAmt.toFixed(2)}/mo`}
+                          {" "}— not distributed per tier.
+                        </>
+                      );
+                    })()}
                   </td>
                 </tr>
               </tbody>

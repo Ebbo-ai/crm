@@ -463,6 +463,24 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // Phase 7: Fixed-monthly fee component breakdown (90DB / Simple / Network).
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'flat_90db_fee') THEN
+          ALTER TABLE plans ADD COLUMN flat_90db_fee NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'flat_simple_fee') THEN
+          ALTER TABLE plans ADD COLUMN flat_simple_fee NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'flat_network_fee') THEN
+          ALTER TABLE plans ADD COLUMN flat_network_fee NUMERIC(10,2);
+        END IF;
+      END $$;
+    `);
+
     // Phase 6: Assignment of Benefits flag + plan design notes field.
     await pool.query(`
       DO $$ BEGIN
