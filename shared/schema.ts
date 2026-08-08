@@ -94,9 +94,16 @@ export const clients = pgTable("clients", {
   // Set to true when actual account_balance is on file and is materially below the billed position
   underfundingFlag: boolean("underfunding_flag").notNull().default(false),
 
-  // ── New fields ──────────────────────────────────────────────────────────
+  // ── Renewal tracking ────────────────────────────────────────────────────
   // Plan anniversary date — drives renewal timing
   anniversaryDate: timestamp("anniversary_date"),
+  // How many months before the anniversary date the renewal proposal is due.
+  // Default 3; override to 4–7 for clients that need more lead time.
+  renewalLeadMonths: integer("renewal_lead_months").notNull().default(3),
+  // Renewal cycle tracking — when things actually happened this year
+  proposalSentDate: timestamp("proposal_sent_date"),
+  proposalVersion: text("proposal_version"),           // e.g. "v1", "v2 revised"
+  acceptanceReceivedDate: timestamp("acceptance_received_date"),
 
   // COBRA administration by 90 Degree Benefits
   cobraAdministeredBy90d: boolean("cobra_administered_by_90d").notNull().default(false),
@@ -178,6 +185,10 @@ export const plans = pgTable("plans", {
   // Free-text notes for plan design details that don't fit structured fields.
   // Renders on all client-facing documents (PPR, employee handout). Not internal-only.
   planNotes: text("plan_notes"),
+  // Which of the three renewal proposal options the client accepted.
+  // 'VALUE' | 'RECOMMENDED' | 'PROTECTIVE' | null (null = not yet accepted or N/A)
+  // Tracked per plan because a client with multiple plans can accept different tiers on each.
+  renewalOptionAccepted: text("renewal_option_accepted"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({

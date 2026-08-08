@@ -11,7 +11,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { MONTHS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet, Eye, X, Loader2, BarChart2, Printer, BookmarkPlus, ChevronDown } from "lucide-react";
+import { Upload, Download, Trash2, FileText, TrendingUp, TrendingDown, Minus, RefreshCw, FileSpreadsheet, Eye, X, Loader2, BarChart2, Printer, BookmarkPlus, ChevronDown, ArchiveX } from "lucide-react";
+import { getPprSlots, type PprSlot } from "@/lib/renewal";
 import { format } from "date-fns";
 
 function LossRatioBadge({ value }: { value: string | null }) {
@@ -62,7 +63,7 @@ interface ViewTarget {
   fileType: "PDF" | "EXCEL";
 }
 
-export default function PprTab({ clientId }: { clientId: number }) {
+export default function PprTab({ clientId, client }: { clientId: number; client?: any }) {
   const { toast } = useToast();
   const [showUpload, setShowUpload] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
@@ -356,6 +357,108 @@ export default function PprTab({ clientId }: { clientId: number }) {
           </table>
         </div>
       )}
+
+      {/* ── Renewal Underwriting Slots ─────────────────────────────── */}
+      {client?.anniversaryDate && (() => {
+        const slots = getPprSlots(client.anniversaryDate);
+        if (!slots.length) return null;
+        return (
+          <div className="mt-8">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-base font-semibold text-[#1A5276]">Renewal Underwriting</h2>
+              <span className="text-xs text-[#94A3B8]">— the 4 plan years underwriters need at renewal</span>
+            </div>
+            <div className="border rounded-lg overflow-hidden">
+              {slots.map((slot) => {
+                const match = groups.find(
+                  g => g.reportMonth === slot.reportMonth && g.reportYear === slot.reportYear,
+                );
+                return (
+                  <div
+                    key={`${slot.reportMonth}-${slot.reportYear}`}
+                    className="flex items-center justify-between px-4 py-3 border-b last:border-0 bg-white hover:bg-[#F8FAFC] transition-colors"
+                    data-testid={`ppr-slot-${slot.reportYear}-${slot.reportMonth}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[#2C3E50]">{slot.label}</p>
+                      {match && (
+                        <p className="text-xs text-[#94A3B8] mt-0.5">
+                          Uploaded {format(new Date(match.uploadedAt), "MMM d, yyyy")}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {match ? (
+                        <>
+                          {match.pdf && (
+                            <a
+                              href={`/api/ppr/${match.pdf.id}/download`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+                              data-testid={`slot-download-pdf-${slot.reportYear}-${slot.reportMonth}`}
+                            >
+                              <FileText className="w-3.5 h-3.5" /> PDF
+                            </a>
+                          )}
+                          {match.excel && (
+                            <a
+                              href={`/api/ppr/${match.excel.id}/download`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-green-700 hover:underline"
+                              data-testid={`slot-download-excel-${slot.reportYear}-${slot.reportMonth}`}
+                            >
+                              <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
+                            </a>
+                          )}
+                          {!match.pdf && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              onClick={() => setReplaceTarget({ reportMonth: slot.reportMonth, reportYear: slot.reportYear, fileType: "PDF" })}
+                              data-testid={`slot-upload-pdf-${slot.reportYear}-${slot.reportMonth}`}
+                            >
+                              <Upload className="w-3 h-3" /> PDF
+                            </Button>
+                          )}
+                          {!match.excel && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              onClick={() => setReplaceTarget({ reportMonth: slot.reportMonth, reportYear: slot.reportYear, fileType: "EXCEL" })}
+                              data-testid={`slot-upload-excel-${slot.reportYear}-${slot.reportMonth}`}
+                            >
+                              <Upload className="w-3 h-3" /> Excel
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs text-[#94A3B8] flex items-center gap-1 mr-2">
+                            <ArchiveX className="w-3.5 h-3.5" /> No file
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1"
+                            onClick={() => setReplaceTarget({ reportMonth: slot.reportMonth, reportYear: slot.reportYear, fileType: "PDF" })}
+                            data-testid={`slot-upload-${slot.reportYear}-${slot.reportMonth}`}
+                          >
+                            <Upload className="w-3 h-3" /> Upload PPR
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <PprUploadDialog open={showUpload} onClose={() => setShowUpload(false)} clientId={clientId} />
 

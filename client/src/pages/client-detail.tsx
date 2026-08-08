@@ -9,9 +9,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle } from "lucide-react";
+import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle, CalendarClock } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
 import { getClientCompleteness } from "@/lib/client-completeness";
+import { getRenewalStatus, getProposalDueDate, RENEWAL_STATUS_LABELS, RENEWAL_STATUS_COLORS } from "@/lib/renewal";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import PlansTab from "@/components/tabs/plans-tab";
@@ -261,6 +262,40 @@ export default function ClientDetailPage() {
               <BrokerCard client={client} clientId={clientId} />
             )}
 
+            {client.anniversaryDate && (() => {
+              const status = getRenewalStatus(client);
+              const proposalDue = getProposalDueDate(client);
+              return (
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="pb-3 pt-5 px-6">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Tracking</h2>
+                      {status && (
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${RENEWAL_STATUS_COLORS[status]}`}>
+                          {RENEWAL_STATUS_LABELS[status]}
+                        </span>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-3">
+                    <InfoRow label="Anniversary Date" value={new Date(client.anniversaryDate).toLocaleDateString()} />
+                    {proposalDue && (
+                      <InfoRow label="Proposal Due" value={proposalDue.toLocaleDateString()} />
+                    )}
+                    {client.proposalSentDate && (
+                      <InfoRow label="Proposal Sent" value={`${new Date(client.proposalSentDate).toLocaleDateString()}${client.proposalVersion ? ` — ${client.proposalVersion}` : ""}`} />
+                    )}
+                    {client.acceptanceReceivedDate && (
+                      <InfoRow label="Acceptance Received" value={new Date(client.acceptanceReceivedDate).toLocaleDateString()} />
+                    )}
+                    {!client.proposalSentDate && !client.acceptanceReceivedDate && (
+                      <p className="text-xs italic text-[#94A3B8]">No renewal activity recorded yet</p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-3 pt-5 px-6">
                 <h2 className="text-lg font-semibold text-[#1A5276]">Banking & Funding</h2>
@@ -312,7 +347,7 @@ export default function ClientDetailPage() {
         </TabsContent>
 
         <TabsContent value="ppr">
-          <PprTab clientId={clientId} />
+          <PprTab clientId={clientId} client={client} />
         </TabsContent>
 
         <TabsContent value="communications">

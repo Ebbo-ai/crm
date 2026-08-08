@@ -39,6 +39,10 @@ const emptyForm = {
   industryType: "",
   numberOfEmployees: "" as string | number,
   anniversaryDate: "",
+  renewalLeadMonths: 3,
+  proposalSentDate: "",
+  proposalVersion: "",
+  acceptanceReceivedDate: "",
   clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED",
   terminationDate: "",
   planType: "DENTAL",
@@ -100,6 +104,14 @@ export default function ClientFormPage() {
         numberOfEmployees: existingClient.numberOfEmployees ?? "",
         anniversaryDate: existingClient.anniversaryDate
           ? existingClient.anniversaryDate.split("T")[0]
+          : "",
+        renewalLeadMonths: existingClient.renewalLeadMonths ?? 3,
+        proposalSentDate: existingClient.proposalSentDate
+          ? existingClient.proposalSentDate.split("T")[0]
+          : "",
+        proposalVersion: existingClient.proposalVersion || "",
+        acceptanceReceivedDate: existingClient.acceptanceReceivedDate
+          ? existingClient.acceptanceReceivedDate.split("T")[0]
           : "",
         clientStatus:
           (existingClient.clientStatus as "PROSPECT" | "ACTIVE" | "TERMINATED") ||
@@ -384,6 +396,63 @@ export default function ClientFormPage() {
                 data-testid="input-anniversary-date"
               />
               <p className="text-xs text-[#94A3B8] mt-1">Plan anniversary — drives renewal timing</p>
+            </div>
+            <div>
+              <Label htmlFor="renewalLeadMonths" className="text-sm font-medium text-[#2C3E50]">Renewal Lead Time</Label>
+              <Select value={String(form.renewalLeadMonths)} onValueChange={v => updateField("renewalLeadMonths", Number(v))}>
+                <SelectTrigger id="renewalLeadMonths" data-testid="select-renewal-lead-months">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[3, 4, 5, 6, 7].map(n => (
+                    <SelectItem key={n} value={String(n)}>{n} months before anniversary</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-[#94A3B8] mt-1">How far in advance to prepare the renewal proposal</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ── Renewal Tracking ───────────────────────────────────────── */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3 pt-5 px-6">
+            <h2 className="text-lg font-semibold text-[#1A5276]">Renewal Tracking</h2>
+            <p className="text-xs text-[#94A3B8] mt-0.5">Record what happened this renewal cycle — all fields optional</p>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="proposalSentDate" className="text-sm font-medium text-[#2C3E50]">Proposal Sent Date</Label>
+                <Input
+                  id="proposalSentDate"
+                  type="date"
+                  value={form.proposalSentDate}
+                  onChange={e => updateField("proposalSentDate", e.target.value)}
+                  data-testid="input-proposal-sent-date"
+                />
+              </div>
+              <div>
+                <Label htmlFor="proposalVersion" className="text-sm font-medium text-[#2C3E50]">Proposal Version</Label>
+                <Input
+                  id="proposalVersion"
+                  value={form.proposalVersion}
+                  onChange={e => updateField("proposalVersion", e.target.value)}
+                  placeholder="e.g. v1, v2 revised"
+                  data-testid="input-proposal-version"
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="acceptanceReceivedDate" className="text-sm font-medium text-[#2C3E50]">Acceptance Received Date</Label>
+              <Input
+                id="acceptanceReceivedDate"
+                type="date"
+                value={form.acceptanceReceivedDate}
+                onChange={e => updateField("acceptanceReceivedDate", e.target.value)}
+                data-testid="input-acceptance-received-date"
+              />
+              <p className="text-xs text-[#94A3B8] mt-1">Set this once the client confirms their renewal selection</p>
             </div>
           </CardContent>
         </Card>

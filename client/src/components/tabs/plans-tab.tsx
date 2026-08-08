@@ -512,13 +512,24 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
             )}
           </div>
 
-          {/* assignment of benefits + plan notes */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-2">
+          {/* assignment of benefits + renewal option accepted */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2">
             <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${plan.assignmentOfBenefits !== false ? "bg-green-50 text-green-700" : "bg-[#F0F4F8] text-[#94A3B8]"}`}>
                 {plan.assignmentOfBenefits !== false ? "✓ Assignment of Benefits" : "✗ No Assignment of Benefits"}
               </span>
             </div>
+            {plan.renewalOptionAccepted && (
+              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                plan.renewalOptionAccepted === "RECOMMENDED"
+                  ? "bg-blue-50 text-blue-700"
+                  : plan.renewalOptionAccepted === "VALUE"
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-purple-50 text-purple-700"
+              }`}>
+                Renewal: {plan.renewalOptionAccepted === "RECOMMENDED" ? "Recommended" : plan.renewalOptionAccepted === "VALUE" ? "Value" : "Protective"}
+              </span>
+            )}
           </div>
           {plan.planNotes && (
             <div className="mt-1 mb-3 p-3 bg-amber-50 border border-amber-100 rounded-md">
@@ -939,6 +950,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     orthoLifetimeMax: plan?.orthoLifetimeMax ?? "",
     assignmentOfBenefits: plan?.assignmentOfBenefits ?? true,
     planNotes: plan?.planNotes || "",
+    renewalOptionAccepted: plan?.renewalOptionAccepted || "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -1003,6 +1015,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
       orthoLifetimeMax: form.orthoEligibility !== "NONE" && form.orthoMaxType === "SEPARATE_LIFETIME" && form.orthoLifetimeMax ? String(form.orthoLifetimeMax) : null,
       assignmentOfBenefits: form.assignmentOfBenefits,
       planNotes: form.planNotes.trim() || null,
+      renewalOptionAccepted: form.renewalOptionAccepted || null,
     });
   };
 
@@ -1251,6 +1264,21 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div>
+              <Label className="text-xs">Renewal Option Accepted</Label>
+              <Select value={form.renewalOptionAccepted || "_none"} onValueChange={v => setForm(f => ({ ...f, renewalOptionAccepted: v === "_none" ? "" : v }))}>
+                <SelectTrigger data-testid="select-renewal-option-accepted">
+                  <SelectValue placeholder="Not yet accepted" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">Not yet accepted</SelectItem>
+                  <SelectItem value="VALUE">Value</SelectItem>
+                  <SelectItem value="RECOMMENDED">Recommended</SelectItem>
+                  <SelectItem value="PROTECTIVE">Protective</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-[#94A3B8] mt-1">Which proposal option the client accepted for this plan</p>
             </div>
           </div>
 

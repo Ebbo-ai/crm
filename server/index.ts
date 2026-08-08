@@ -463,6 +463,32 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // Phase 8: Renewal tracking fields on clients; renewal option accepted on plans.
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'renewal_lead_months') THEN
+          ALTER TABLE clients ADD COLUMN renewal_lead_months INTEGER NOT NULL DEFAULT 3;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'proposal_sent_date') THEN
+          ALTER TABLE clients ADD COLUMN proposal_sent_date TIMESTAMP;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'proposal_version') THEN
+          ALTER TABLE clients ADD COLUMN proposal_version TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'clients' AND column_name = 'acceptance_received_date') THEN
+          ALTER TABLE clients ADD COLUMN acceptance_received_date TIMESTAMP;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'plans' AND column_name = 'renewal_option_accepted') THEN
+          ALTER TABLE plans ADD COLUMN renewal_option_accepted TEXT;
+        END IF;
+      END $$;
+    `);
+
     // Phase 7: Fixed-monthly fee component breakdown (90DB / Simple / Network).
     await pool.query(`
       DO $$ BEGIN

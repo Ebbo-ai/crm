@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -31,9 +31,16 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
     refetchInterval: 60_000,
   });
 
+  const { data: renewalAlertsData } = useQuery<any[]>({
+    queryKey: ["/api/renewal-alerts"],
+    queryFn: () => fetch("/api/renewal-alerts", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 120_000,
+  });
+
   const activeIssueCount = activeIssuesData?.length ?? 0;
   const overdueFollowUpCount = followUpData?.count ?? 0;
   const unmatchedCount = unmatchedData?.count ?? 0;
+  const renewalAlertCount = renewalAlertsData?.length ?? 0;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -140,6 +147,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
         {[
           { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard, badge: null },
           { title: "Clients", path: "/clients", icon: Users, badge: null },
+          { title: "Renewal Alerts", path: "/renewal-alerts", icon: Bell, badge: renewalAlertCount > 0 ? renewalAlertCount : null, badgeAlert: renewalAlertCount > 0 },
           { title: "Issues", path: "/issues", icon: AlertCircle, badge: activeIssueCount > 0 ? activeIssueCount : null, badgeAlert: overdueFollowUpCount > 0 },
           { title: "Monthly Import", path: "/ppr-import", icon: Upload, badge: null },
           { title: "PPR Batch Upload", path: "/ppr-batch", icon: FileSpreadsheet, badge: null },

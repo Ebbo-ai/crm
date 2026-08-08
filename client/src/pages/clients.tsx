@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Plus, Users, Building2, MapPin } from "lucide-react";
 import { PLAN_TYPE_LABELS } from "@/lib/constants";
 import { getClientCompleteness } from "@/lib/client-completeness";
+import { getRenewalStatus, RENEWAL_STATUS_LABELS, RENEWAL_STATUS_COLORS } from "@/lib/renewal";
 
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
@@ -141,6 +142,15 @@ export default function ClientsPage() {
                         </span>
                       )}
                     </div>
+                    {(() => {
+                      const rs = getRenewalStatus(client);
+                      if (!rs || rs === "NOT_DUE" || rs === "ACCEPTED") return null;
+                      return (
+                        <div className={`mt-1 text-[11px] px-2 py-1 rounded border ${RENEWAL_STATUS_COLORS[rs]} border-current/20`}>
+                          <span className="font-semibold">Renewal: {RENEWAL_STATUS_LABELS[rs]}</span>
+                        </div>
+                      );
+                    })()}
                     {(() => {
                       const comp = getClientCompleteness(client);
                       if (comp.isComplete) return null;

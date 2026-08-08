@@ -130,11 +130,57 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/renewal-alerts", requireAuth, async (req, res) => {
+    try {
+      const today = new Date();
+      const allClients = await storage.getClients();
+      const alerts: any[] = [];
+
+      for (const client of allClients) {
+        if (!client.anniversaryDate || client.clientStatus === "TERMINATED") continue;
+        if (client.acceptanceReceivedDate) continue; // Already accepted — not an alert
+
+        const anniversary = new Date(client.anniversaryDate);
+        const leadMonths = (client.renewalLeadMonths ?? 3) as number;
+        const proposalDue = new Date(anniversary);
+        proposalDue.setMonth(proposalDue.getMonth() - leadMonths);
+
+        let renewalStatus: string | null = null;
+
+        if (today > anniversary) {
+          renewalStatus = "OVERDUE";
+        } else if (client.proposalSentDate) {
+          const sentDate = new Date(client.proposalSentDate);
+          const daysSince = (today.getTime() - sentDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (daysSince > 14) renewalStatus = "AWAITING_ACCEPTANCE";
+        } else if (today >= proposalDue) {
+          renewalStatus = "PROPOSAL_DUE";
+        }
+
+        if (!renewalStatus) continue;
+        alerts.push({ ...client, renewalStatus, proposalDueDate: proposalDue.toISOString() });
+      }
+
+      const order: Record<string, number> = { OVERDUE: 0, PROPOSAL_DUE: 1, AWAITING_ACCEPTANCE: 2 };
+      alerts.sort((a, b) => (order[a.renewalStatus] ?? 9) - (order[b.renewalStatus] ?? 9));
+
+      res.json(alerts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.put("/api/clients/:id", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
+      }
+      if (body.proposalSentDate && typeof body.proposalSentDate === "string") {
+        body.proposalSentDate = new Date(body.proposalSentDate);
+      }
+      if (body.acceptanceReceivedDate && typeof body.acceptanceReceivedDate === "string") {
+        body.acceptanceReceivedDate = new Date(body.acceptanceReceivedDate);
       }
       const updated = await storage.updateClient(parseInt(req.params.id), body);
       if (!updated) return res.status(404).json({ message: "Client not found" });
