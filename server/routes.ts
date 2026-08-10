@@ -5,6 +5,7 @@ import { db } from "./db";
 import { renewals, renewalPlanOptions } from "@shared/schema";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
+import { runImport } from "./crm-import";
 import { matchEmailToClients, processEmail, queryClientCommunications } from "./claude";
 import bcrypt from "bcryptjs";
 import multer from "multer";
@@ -2159,6 +2160,23 @@ export async function registerRoutes(
       if (!updated) return res.status(404).json({ message: "User not found" });
       const { password, ...safeUser } = updated;
       res.json(safeUser);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── CRM spreadsheet import (admin only) ────────────────────────────────────
+  // Two modes over one code path. "validate" runs the entire import inside a
+  // transaction and rolls it back, so the preview is produced by the same logic that
+  // does the writing rather than by a separate estimate that could disagree with it.
+  app.post("/api/admin/crm-import", requireAdmin, memUpload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file was uploaded." });
+      const mode = req.body?.mode === "apply" ? "apply" : "validate";
+      const result = await runImport(req.file.buffer, mode);
+      // A rejected workbook is a client-side problem (wrong columns, unknown values),
+      // so it reports as 422 with the issues attached rather than as a server error.
+      res.status(result.ok ? 200 : 422).json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

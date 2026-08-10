@@ -6,4 +6,5 @@
 - [Tier labels](tier-labels.md) — five-label house standard (EE, EE+SP, EE+CH, EE+1, EE+FAM); EE+1 is not EE+SP; never force a non-matching label into the nearest match.
 - [Plan identity](plan-identity.md) — a plan is coverage + name + year, never name alone; NULLS NOT DISTINCT when a nullable column joins a unique key; backfill pairing rules.
 - [Renewal report](renewal-report.md) — breaks out broker compensation; plans paired by name across years, so rename vs new plan is never guessed; fee traps that hide broker; no em dashes.
+- [CRM spreadsheet import](crm-import.md) — upsert on business keys; client codes spelled S-020 and S-20 both exist so match on normalised padding but never rewrite the stored code.
 - [Dev server reload](dev-server-reload.md) — no watch flag, so new API routes silently return Vite's SPA shell with a 200 until the workflow restarts.

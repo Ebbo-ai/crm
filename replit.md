@@ -56,6 +56,13 @@ shared/
 - Dashboard with stats, activity feed, and alerts
 - User management (admin only)
 - Global client search
+- CRM spreadsheet import (admin only, `/settings/crm-import`). Upserts on business keys,
+  so the same workbook can be run repeatedly as corrections come back without creating
+  duplicates. Clients match on client code; plans and rate cards on client code, plan
+  name, coverage type and plan year. A workbook only writes the columns it actually
+  contains, so a partial correction file leaves everything it does not mention alone.
+  Always run "Check file" first: it validates against the database inside a transaction
+  and rolls back, so nothing is written until the import is run deliberately.
 
 ## Seed Credentials
 - Email: admin@simplebenefits.com

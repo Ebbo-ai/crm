@@ -66,7 +66,10 @@ export const clients = pgTable("clients", {
   isActive: boolean("is_active").notNull().default(true),
   terminationDate: timestamp("termination_date"),
   clientStatus: clientStatusEnum("client_status").notNull().default("ACTIVE"),
-  planType: planTypeEnum("plan_type").notNull(),
+  // Optional: a client whose current coverage is still being confirmed with the
+  // administrator is a real client we need on file. Recording no plan type is
+  // honest; guessing one would be read as fact everywhere it renders.
+  planType: planTypeEnum("plan_type"),
   networkActive: boolean("network_active").notNull().default(false),
   dentalNetworkName: text("dental_network_name").default("Dentemax"),
   // Contacts — all optional; save whatever we have and fill the rest later
@@ -136,7 +139,10 @@ export const plans = pgTable("plans", {
   clientId: integer("client_id").notNull(),
   planName: text("plan_name").notNull(),
   effectiveDate: timestamp("effective_date").notNull(),
-  planBasis: planBasisEnum("plan_basis").notNull(),
+  // Nullable: the basis is read from the coinsurance wording, and a plan whose
+  // coinsurance has not been supplied has no known basis. Defaulting it to dollar
+  // based would put an invented design on a client-facing document.
+  planBasis: planBasisEnum("plan_basis"),
   preventivePercent: integer("preventive_percent").default(100),
   correctivePercent: integer("corrective_percent").default(80),
   restorativePercent: integer("restorative_percent").default(50),
@@ -147,9 +153,17 @@ export const plans = pgTable("plans", {
   dollarTier2Percent: integer("dollar_tier2_percent"),
   dollarTier2Limit: decimal("dollar_tier2_limit", { precision: 10, scale: 2 }),
   dollarTier3Percent: integer("dollar_tier3_percent"),
+  // Null when the final band is open ended ("50% of the remaining"). A bounded final
+  // band is a materially different plan from an unbounded one, so the figure needs a
+  // column of its own rather than being dropped on the way in.
+  dollarTier3Limit: decimal("dollar_tier3_limit", { precision: 10, scale: 2 }),
   isArchived: boolean("is_archived").notNull().default(false),
   planYear: integer("plan_year").notNull(),
-  orthoEligibility: orthoEligibilityEnum("ortho_eligibility").notNull().default("NONE"),
+  // Nullable: wording such as "Included in the $2,000 maximum" describes an
+  // orthodontia benefit without saying who is eligible. Storing NONE there would
+  // assert the plan has no orthodontia, which is a stronger claim than the source
+  // supports, so the field is left empty and the wording is kept in plan notes.
+  orthoEligibility: orthoEligibilityEnum("ortho_eligibility"),
   orthoCoinsurancePercent: integer("ortho_coinsurance_percent"),
   orthoMaxType: orthoMaxTypeEnum("ortho_max_type").default("SHARED_ANNUAL"),
   orthoLifetimeMax: decimal("ortho_lifetime_max", { precision: 10, scale: 2 }),
@@ -185,6 +199,19 @@ export const plans = pgTable("plans", {
   // Free-text notes for plan design details that don't fit structured fields.
   // Renders on all client-facing documents (PPR, employee handout). Not internal-only.
   planNotes: text("plan_notes"),
+  // Plan surplus or deficit — the plan's financial position, negative when in deficit.
+  //
+  // Deliberately NOT the same figure as clients.accountBalance, and neither is derivable
+  // from the other. The account balance is what the bank account actually holds; the
+  // surplus or deficit is where the plan stands. They diverge because employers fund at
+  // their own discretion (paying ahead, paying short, or skipping a month when the plan
+  // is in surplus) and because administrative fees are drawn from that same account.
+  // Storing this separately is what makes the two comparable.
+  //
+  // Point in time: taken from one particular monthly report, so it carries its own
+  // as-of date rather than borrowing the client's account balance date.
+  surplusDeficit: decimal("surplus_deficit", { precision: 14, scale: 2 }),
+  surplusDeficitAsOfDate: timestamp("surplus_deficit_as_of_date"),
   // Accepted renewal option and accepted rates now live on `renewal_plan_options`
   // (one row per plan per renewal year). They change every year while the plan
   // itself persists, so they are properties of a renewal, not of the plan.
@@ -224,20 +251,26 @@ export const rateCards = pgTable("rate_cards", {
   // effectiveDate lets prior months be valued at the rates actually in force
   // rather than being retroactively restated when a group renews
   effectiveDate: timestamp("effective_date"),
-  baseAdminFee: decimal("base_admin_fee", { precision: 10, scale: 2 }).notNull(),
+  // Every figure below is nullable on purpose. A tier can be known to exist while its
+  // rate has not been published yet — the administrator names the tier in the plan
+  // performance report but leaves the rate blank. Storing the tier with no figures
+  // records exactly that, and a later import fills the numbers in. Substituting zero
+  // would be indistinguishable from a genuinely free tier and would quietly feed a
+  // wrong number into every fee total and client-facing document.
+  baseAdminFee: decimal("base_admin_fee", { precision: 10, scale: 2 }),
   // COBRA admin fee for this tier (from client.cobraFee when COBRA is active, else 0).
-  cobraFee: decimal("cobra_fee", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  cobraFee: decimal("cobra_fee", { precision: 10, scale: 2 }).default("0.00"),
   // Simple's marketing and program fee. Previously named "spread admin fee".
-  simpleFee: decimal("simple_fee", { precision: 10, scale: 2 }).notNull(),
+  simpleFee: decimal("simple_fee", { precision: 10, scale: 2 }),
   networkFee: decimal("network_fee", { precision: 10, scale: 2 }).default("0.00"),
   // Calculated from plan.brokerMode + plan.brokerValue; never entered per-tier.
   brokerFee: decimal("broker_fee", { precision: 10, scale: 2 }).default("0.00"),
   // totalAdminFee = adminSubtotal + brokerFee (adminSubtotal = base+cobra+simple+network)
-  totalAdminFee: decimal("total_admin_fee", { precision: 10, scale: 2 }).notNull(),
+  totalAdminFee: decimal("total_admin_fee", { precision: 10, scale: 2 }),
   // totalFee: dropped — column removed in Phase 5 migration. Do not re-add.
-  expectedClaims: decimal("expected_claims", { precision: 10, scale: 2 }).notNull(),
+  expectedClaims: decimal("expected_claims", { precision: 10, scale: 2 }),
   // monthlyPremium = totalAdminFee + expectedClaims (always matches)
-  monthlyPremium: decimal("monthly_premium", { precision: 10, scale: 2 }).notNull(),
+  monthlyPremium: decimal("monthly_premium", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

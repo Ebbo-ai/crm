@@ -666,6 +666,48 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // ── Phase 13: Plan surplus/deficit + partial-data tolerance ───────────────
+    // Sits before Phase 10 in the file because Phase 10 must stay last.
+    //
+    // surplus_deficit is the plan's financial position and is deliberately separate
+    // from clients.account_balance, which is what the bank account actually holds.
+    // Neither can be derived from the other: employers fund at their own discretion,
+    // and administrative fees are drawn from the same account. Keeping both, each with
+    // its own as-of date, is what lets the two be compared instead of conflated.
+    await pool.query(`
+      ALTER TABLE plans
+        ADD COLUMN IF NOT EXISTS surplus_deficit NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS surplus_deficit_as_of_date TIMESTAMP;
+    `);
+
+    // Partial data is a valid state, not a defect. Records arrive from the plan
+    // performance reports with genuine gaps: a client whose coverage is still being
+    // confirmed with the administrator, or a tier that exists but whose rate has never
+    // been published. Those records must be storable as-is so a later corrected import
+    // fills them in. The alternative — refusing the row, or defaulting the number to
+    // zero — either loses the client or invents a figure that reads as fact.
+    await pool.query(`ALTER TABLE clients ALTER COLUMN plan_type DROP NOT NULL;`);
+    // Orthodontia wording such as "Included in the $2,000 maximum" describes a benefit
+    // without saying who is eligible. NONE would assert the plan has no orthodontia at
+    // all, which is a stronger claim than the source makes, so the column has to be
+    // able to hold nothing.
+    await pool.query(`ALTER TABLE plans ALTER COLUMN ortho_eligibility DROP NOT NULL;`);
+    // Likewise plan_basis: it is derived from the coinsurance wording, so a plan whose
+    // coinsurance has not been supplied genuinely has no basis yet.
+    await pool.query(`ALTER TABLE plans ALTER COLUMN plan_basis DROP NOT NULL;`);
+    // The third coinsurance band had a percentage column but no limit column, so
+    // "50% of the next $3,180" was stored as a bare 50% and read as unbounded.
+    await pool.query(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS dollar_tier3_limit NUMERIC(10,2);`);
+    await pool.query(`
+      ALTER TABLE rate_cards
+        ALTER COLUMN base_admin_fee  DROP NOT NULL,
+        ALTER COLUMN cobra_fee       DROP NOT NULL,
+        ALTER COLUMN simple_fee      DROP NOT NULL,
+        ALTER COLUMN total_admin_fee DROP NOT NULL,
+        ALTER COLUMN expected_claims DROP NOT NULL,
+        ALTER COLUMN monthly_premium DROP NOT NULL;
+    `);
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at

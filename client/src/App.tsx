@@ -17,6 +17,7 @@ import PprBatchPage from "@/pages/ppr-batch";
 import PprImportPage from "@/pages/ppr-import";
 import ReportsPage from "@/pages/reports";
 import RenewalAlertsPage from "@/pages/renewal-alerts";
+import CrmImportPage from "@/pages/crm-import";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
@@ -67,6 +68,7 @@ function Router() {
       <Route path="/reports">{() => <ProtectedRoute component={ReportsPage} />}</Route>
       <Route path="/renewal-alerts">{() => <ProtectedRoute component={RenewalAlertsPage} />}</Route>
       <Route path="/settings/users">{() => <ProtectedRoute component={SettingsUsersPage} adminOnly />}</Route>
+      <Route path="/settings/crm-import">{() => <ProtectedRoute component={CrmImportPage} adminOnly />}</Route>
       <Route component={NotFound} />
     </Switch>
   );
