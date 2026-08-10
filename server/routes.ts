@@ -121,6 +121,32 @@ const ORTHO_MAX_TYPE_LABELS: Record<string, string> = {
 const PLAN_BASIS_LABELS: Record<string, string> = {
   PROCEDURE_BASED: "Procedure based", DOLLAR_BASED: "Dollar based",
 };
+const PLAN_COVERAGE_TYPE_LABELS: Record<string, string> = {
+  DENTAL_ONLY: "dental",
+  VISION_ONLY: "vision",
+  DENTAL_VISION: "dental and vision",
+  DENTAL_VISION_HEARING: "dental, vision and hearing",
+};
+
+/**
+ * A plan is identified by its coverage *and* its name, never by name alone.
+ * Coverage is the benefit provided; the name is the benefit level within it. One
+ * client can carry Standard on dental and Standard on vision, and pairing those
+ * two against each other across plan years would compare unrelated plans.
+ *
+ * Coverage is nullable and still being filled in, so unset is its own bucket
+ * rather than a wildcard. The NUL separator keeps a name containing the
+ * separator from colliding with a different coverage.
+ */
+function planKey(p: any): string {
+  return `${p?.coverageType ?? ""}\u0000${p?.planName ?? ""}`;
+}
+
+/** How a plan is named to a human reader. Disambiguates a name shared across coverages. */
+function planLabel(p: any): string {
+  const cov = p?.coverageType ? PLAN_COVERAGE_TYPE_LABELS[p.coverageType] ?? String(p.coverageType) : null;
+  return cov ? `${p.planName} (${cov})` : String(p?.planName ?? "");
+}
 
 /** Decimal columns come back as strings. Empty and null both mean "not recorded". */
 function dec(v: any): number | null {
@@ -247,22 +273,85 @@ function orList(names: string[]) {
 }
 
 /**
- * Work out which plan names gained or lost a counterpart between the prior plan
- * year and the renewal year.
+ * Coverage was added to plan records after many plans were first entered, so
+ * during the backfill a plan can carry its coverage this year and have none
+ * recorded in an earlier year. Strict matching would call that a brand new plan
+ * and report a discontinuation beside it, both false alarms caused by a records
+ * gap rather than by anything the client did.
  *
- * Plans are paired across years by name, because rate_cards is the only source
- * of the fee component split. That pairing cannot tell a renamed plan apart
- * from a genuinely new one: both simply fail to match. Only one of them is
- * correct to render as all new, so neither is guessed at. Both sides are
- * surfaced and a person decides before the report goes out.
+ * Pairing the two is only safe when it involves no guessing, so a name is
+ * eligible only when exactly one plan can possibly be the continuation:
+ *
+ *   eligible   one, and only one, plan this year carries the name and is
+ *              otherwise unmatched. Safe to pair to the earlier uncovered plan.
+ *   ambiguous  more than one does. This is the case the coverage change exists
+ *              to support, a single plan splitting into separate dental and
+ *              vision plans, and nothing in the data says which one continues
+ *              the original. Never guessed at, reported instead.
+ *
+ * A name is skipped entirely when some plan this year still has no coverage
+ * recorded, because that plan already pairs to the earlier uncovered plan on the
+ * key itself and there is nothing left over to reconnect.
+ *
+ * Returned as one shared result so the pairing and the drift notices cannot
+ * disagree about which plans were reconnected.
+ */
+function coverageBackfill(priorYearPlans: any[], newYearPlans: any[]) {
+  const eligible = new Set<string>();
+  const ambiguous = new Set<string>();
+
+  // Judged strictly against the immediately preceding plan year, the same
+  // horizon `dropped` uses. Looking further back gets both halves wrong: a plan
+  // whose match lives two years ago would still leave last year's uncovered
+  // record looking discontinued, and an older match would wrongly certify some
+  // other coverage as the safe owner of that record.
+  const priorKeys = new Set(priorYearPlans.map(planKey));
+  // At most one per name: uniqueness treats NULLs as not distinct, so a client
+  // cannot hold two uncovered plans of the same name in one year.
+  const priorUncoveredNames = new Set(priorYearPlans.filter(p => !p.coverageType).map(p => p.planName));
+
+  const byName = new Map<string, any[]>();
+  for (const p of newYearPlans) {
+    const list = byName.get(p.planName);
+    if (list) list.push(p); else byName.set(p.planName, [p]);
+  }
+
+  for (const [name, plans] of Array.from(byName.entries())) {
+    if (!priorUncoveredNames.has(name)) continue;
+    if (plans.some(p => !p.coverageType)) continue;
+    // Plans that already pair into the prior year on the key are settled and
+    // cannot also lay claim to the uncovered record.
+    const candidates = plans.filter(p => !priorKeys.has(planKey(p)));
+    if (candidates.length === 1) eligible.add(name);
+    else if (candidates.length > 1) ambiguous.add(name);
+  }
+  return { eligible, ambiguous };
+}
+
+/**
+ * Work out which plans gained or lost a counterpart between the prior plan year
+ * and the renewal year.
+ *
+ * Plans are paired across years by coverage *and* name, because rate_cards is
+ * the only source of the fee component split. Matching on name alone would pair
+ * a client's Standard dental plan against their Standard vision plan and present
+ * two entirely different plans as a like for like renewal.
+ *
+ * The pairing still cannot tell a renamed plan apart from a genuinely new one:
+ * both simply fail to match. Only one of them is correct to render as all new,
+ * so neither is guessed at. Both sides are surfaced and a person decides before
+ * the report goes out.
  *
  * The two sides are deliberately asymmetric:
- *   dropped  names carried in the immediately preceding plan year on record and
+ *   dropped  plans carried in the immediately preceding plan year on record and
  *            absent from the renewal year. Scoped to that one year so a plan
  *            discontinued three years ago is not raised again every renewal.
- *   added    names in the renewal year with no plan of that name in ANY earlier
- *            year. Matches how the prior plan is looked up, so a plan that
- *            skipped a year is not misreported as new.
+ *   added    plans in the renewal year with no counterpart in ANY earlier year.
+ *            Matches how the prior plan is looked up, so a plan that skipped a
+ *            year is not misreported as new.
+ *
+ * Both are returned as reader-facing labels, so a name shared across two
+ * coverages is distinguishable in the notice text.
  */
 function planNameDrift(allPlans: any[], renewalYear: number) {
   const earlier = allPlans.filter(p => p.planYear < renewalYear);
@@ -270,18 +359,38 @@ function planNameDrift(allPlans: any[], renewalYear: number) {
   const priorYearPlans = priorYear === null ? [] : allPlans.filter(p => p.planYear === priorYear);
   const newYearPlans = allPlans.filter(p => p.planYear === renewalYear && !p.isArchived);
 
-  const newNames = new Set(newYearPlans.map(p => p.planName));
-  const everEarlier = new Set(earlier.map(p => p.planName));
+  const newKeys = new Set(newYearPlans.map(planKey));
+  const everEarlierKeys = new Set(earlier.map(planKey));
+
+  // Plans reconnected across a coverage records gap are not drift, and both
+  // sides have to be excluded or one gap produces two false alarms: a
+  // discontinuation that never happened, and a new plan that is really last
+  // year's plan with its coverage now filled in. It would also offer each as the
+  // other's rename candidate, which is the exact wrong answer.
+  //
+  // Ambiguous names are excluded from `dropped` too. The earlier plan really
+  // does lack a counterpart there, but calling it a possible discontinuation
+  // would be misleading when the likelier story is that it split in two, and
+  // that case gets its own notice which says something more useful.
+  const backfill = coverageBackfill(priorYearPlans, newYearPlans);
 
   return {
     priorYear,
     newYearPlans,
-    dropped: Array.from(new Set(
-      priorYearPlans.map(p => p.planName).filter(n => !newNames.has(n)),
-    )),
-    added: Array.from(new Set(
-      newYearPlans.map(p => p.planName).filter(n => !everEarlier.has(n)),
-    )),
+    backfill,
+    dropped: Array.from(new Map(
+      priorYearPlans
+        .filter(p => !newKeys.has(planKey(p)))
+        .filter(p => !(!p.coverageType
+          && (backfill.eligible.has(p.planName) || backfill.ambiguous.has(p.planName))))
+        .map(p => [planKey(p), planLabel(p)]),
+    ).values()),
+    added: Array.from(new Map(
+      newYearPlans
+        .filter(p => !everEarlierKeys.has(planKey(p)))
+        .filter(p => !backfill.eligible.has(p.planName))
+        .map(p => [planKey(p), planLabel(p)]),
+    ).values()),
   };
 }
 
@@ -321,7 +430,7 @@ async function buildRenewalReportPayload(renewalId: number) {
       `to compare against. Every value in this report is new.`,
     );
   }
-  const reportedNames = new Set<string>();
+  const reportedKeys = new Set<string>();
 
   for (const opt of accepted) {
     const optPlan = allPlans.find(p => p.id === opt.planId) ?? await storage.getPlan(opt.planId);
@@ -330,28 +439,68 @@ async function buildRenewalReportPayload(renewalId: number) {
       continue;
     }
 
-    // Pair the plan across years by name. Unique on (client, name, year).
-    const family = allPlans.filter(p => p.planName === optPlan.planName);
+    // Pair the plan across years by coverage and name. Unique on
+    // (client, coverage, name, year), so this identifies at most one per year.
+    const key = planKey(optPlan);
+    const family = allPlans.filter(p => planKey(p) === key);
     const newPlan = family.find(p => p.planYear === renewal.planYear && !p.isArchived) ?? null;
-    const priorPlan = family
+    let priorPlan = family
       .filter(p => p.planYear < renewal.planYear)
       .sort((a, b) => b.planYear - a.planYear)[0] ?? null;
 
-    const name = optPlan.planName;
-    reportedNames.add(name);
+    // Reconnect a plan to its earlier self across a coverage records gap, but
+    // only where coverageBackfill judged the pairing unambiguous. Where a name
+    // now covers two plans, pairing both to the one earlier record would compare
+    // the same old plan twice and quietly invent a history for whichever plan is
+    // not its continuation.
+    let coverageBackfillPair: any = null;
+    if (optPlan.coverageType && drift.priorYear !== null
+        && drift.backfill.eligible.has(optPlan.planName)) {
+      const uncovered = allPlans.find(
+        p => p.planYear === drift.priorYear && p.planName === optPlan.planName && !p.coverageType,
+      ) ?? null;
+      // Prefer it over an older exact match. Where a plan carried coverage two
+      // years ago, lost it from the records last year, and carries it again now,
+      // last year's record is still the real predecessor and comparing against
+      // the older one would skip a year of changes. A plan that already pairs
+      // into the prior year has the later year and keeps it, which is what stops
+      // a settled plan from stealing the uncovered record.
+      if (uncovered && (!priorPlan || priorPlan.planYear < uncovered.planYear)) {
+        coverageBackfillPair = uncovered;
+        priorPlan = uncovered;
+      }
+    }
+
+    const name = planLabel(optPlan);
+    reportedKeys.add(key);
+    if (coverageBackfillPair) {
+      notices.push(
+        `${name}: no coverage was recorded on this plan in ${coverageBackfillPair.planYear}, so it was ` +
+        `paired to the ${coverageBackfillPair.planYear} plan of the same name. Confirm that is the ` +
+        `same plan, and set the coverage on the earlier record so future reports pair it directly.`,
+      );
+    }
     if (!newPlan) {
       notices.push(
         `${name}: there is no plan record for plan year ${renewal.planYear}. ` +
         `Set it up so the new rates and design can be reported.`,
       );
     }
+    // This plan shares its name with another plan this year and with one earlier
+    // plan that has no coverage recorded, so it is one side of a suspected split.
+    // It gets its own explanation rather than the generic rename warning, which
+    // would point at unrelated dropped plans while ignoring the same-named plan
+    // sitting in the prior year.
+    const coverageSplit = !priorPlan && !firstYearOnRecord
+      && drift.backfill.ambiguous.has(optPlan.planName);
+
     // A plan with no earlier namesake is rendered as all new. That is right for
     // a genuinely new plan and wrong for a renamed one, and the pairing cannot
     // tell them apart, so say so instead of letting it pass silently.
     // When this is the client's first plan year, the absence of a comparison is
     // already stated once at the top. Repeating it per plan is noise, and the
     // plan section carries its own note anyway.
-    const unmatchedNew = !priorPlan && !firstYearOnRecord;
+    const unmatchedNew = !priorPlan && !firstYearOnRecord && !coverageSplit;
     if (unmatchedNew) {
       notices.push(
         `${name}: no plan of this name exists in any earlier plan year, so it is reported as ` +
@@ -407,13 +556,25 @@ async function buildRenewalReportPayload(renewalId: number) {
 
     const subject = newPlan ?? optPlan;
     planPayloads.push({
-      plan_name: name,
+      plan_name: subject.planName,
+      // Coverage is the benefit; plan_name is the benefit level within it. Sent
+      // separately so the report can tell one client's Standard dental plan from
+      // their Standard vision plan instead of printing the same heading twice.
+      coverage: labelOf(PLAN_COVERAGE_TYPE_LABELS, subject.coverageType),
       accepted_option: opt.acceptedOption,
       fee_basis: subject.feeBasis ?? "PEPM",
       has_prior: !!priorPlan,
       has_new: !!newPlan,
       unmatched_new: unmatchedNew,
       rename_candidates: unmatchedNew ? drift.dropped : [],
+      // One side of a suspected coverage split: same name as another plan this
+      // year and as one earlier plan that has no coverage recorded.
+      coverage_split: coverageSplit,
+      coverage_split_prior_year: coverageSplit ? drift.priorYear : null,
+      // Paired across a coverage records gap on the name alone. Being the only
+      // candidate is not proof of identity, so the section says so.
+      coverage_backfilled: !!coverageBackfillPair,
+      coverage_backfilled_year: coverageBackfillPair ? coverageBackfillPair.planYear : null,
       prior_plan_year: priorPlan?.planYear ?? null,
       new_plan_year: newPlan?.planYear ?? null,
       design: designRows(priorPlan, newPlan),
@@ -438,12 +599,28 @@ async function buildRenewalReportPayload(renewalId: number) {
     );
   }
 
+  // One earlier plan with no coverage recorded, and several plans of that name
+  // this year. Almost always a single plan that split into separate dental and
+  // vision plans. Which one continues the original decides where the prior
+  // year's history belongs, and nothing in the data says, so it is asked rather
+  // than guessed. Without this the reader would only see each plan reported as
+  // new, with no hint that a records gap caused it.
+  for (const name of Array.from(drift.backfill.ambiguous)) {
+    const split = drift.newYearPlans.filter(p => p.planName === name).map(planLabel);
+    notices.push(
+      `${name}: no coverage was recorded on the ${drift.priorYear} plan of this name, and ` +
+      `${renewal.planYear} has more than one plan called ${name} (${orList(split)}). It cannot be ` +
+      `told which one continues it, so each is reported as new. Set the coverage on the ` +
+      `${drift.priorYear} record to pair them up.`,
+    );
+  }
+
   // A rename candidate the reader cannot find a section for is worse than no
   // candidate at all, so account for new year plans this report does not cover.
   for (const p of drift.newYearPlans) {
-    if (reportedNames.has(p.planName)) continue;
+    if (reportedKeys.has(planKey(p))) continue;
     notices.push(
-      `${p.planName}: on record for plan year ${renewal.planYear} but no option has been ` +
+      `${planLabel(p)}: on record for plan year ${renewal.planYear} but no option has been ` +
       `accepted for it, so this report does not cover it.`,
     );
   }

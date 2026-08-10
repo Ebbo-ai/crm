@@ -917,7 +917,14 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
   const { toast } = useToast();
   const isEdit = !!plan;
   const [form, setForm] = useState({
-    planName: plan?.planName || "",
+    // New plans default to Standard. Many clients carry a single plan, which
+    // otherwise gets named after its coverage ("Dental"), repeating the benefit
+    // in the name field instead of naming a benefit level. Standard is accurate
+    // for a single plan client and leaves room to add Premium later without
+    // renaming the original, and renaming breaks a plan's year over year history
+    // in the renewal report. Free text on purpose: clients run Gold/Silver,
+    // Low/High, Union/Non Union, First Year, Retiree Standard and more.
+    planName: plan?.planName ?? "Standard",
     coverageType: plan?.coverageType || "",
     effectiveDate: plan?.effectiveDate ? format(parseLocalDate(plan.effectiveDate), "yyyy-MM-dd") : "",
     planBasis: plan?.planBasis || "PROCEDURE_BASED",

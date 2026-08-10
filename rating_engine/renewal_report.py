@@ -46,7 +46,15 @@ Expected interface (must be preserved in any replacement):
 
         Plan shape
         ----------
-        plan_name        str
+        plan_name        str          the benefit level within the coverage,
+                                      for example Standard or Premium. Free
+                                      text: clients use Gold/Silver, Low/High,
+                                      Union/Non Union and similar
+        coverage         str | None   the benefit provided, for example
+                                      "dental" or "dental and vision". Plans are
+                                      identified by coverage AND name, because
+                                      one client can carry Standard on dental
+                                      and Standard again on vision
         accepted_option  str | None   VALUE | RECOMMENDED | PROTECTIVE
         fee_basis        str          PEPM | FIXED_MONTHLY
         has_prior        bool         is there a prior plan year to compare to
@@ -55,9 +63,23 @@ Expected interface (must be preserved in any replacement):
                                       record but none carries this plan name,
                                       so this may be a rename rather than a new
                                       plan and the two cannot be told apart
-        rename_candidates list of str prior year plan names left without a
+        rename_candidates list of str prior year plans left without a
                                       counterpart, the possible other half of a
-                                      rename. Empty unless unmatched_new
+                                      rename. Already carry their coverage in
+                                      the text. Empty unless unmatched_new
+        coverage_split   bool         one side of a suspected split: shares its
+                                      name with another plan this year and with
+                                      one earlier plan that has no coverage
+                                      recorded, so it cannot be paired without
+                                      guessing. Mutually exclusive with
+                                      unmatched_new
+        coverage_split_prior_year int | None  the year of that earlier plan
+        coverage_backfilled bool          paired to an earlier plan that has no
+                                      coverage recorded, on the name alone. It
+                                      was the only candidate, which is not proof
+                                      of identity, so the comparison is shown as
+                                      provisional
+        coverage_backfilled_year int | None  the year of that earlier plan
         prior_plan_year  int | None
         new_plan_year    int | None
         design           list of design rows (see below)
@@ -366,6 +388,20 @@ def _fees_section(plan: dict) -> str:
     return block + f'<p class="basis">{_esc(basis)}</p>'
 
 
+def _plan_heading(plan: dict) -> str:
+    """
+    Coverage and plan name are two different things. Coverage is the benefit
+    provided; the name is the benefit level within it. A client can carry a
+    Standard on dental and a Standard on vision, so the heading has to name both
+    or two unrelated sections read as though they were the same plan.
+    """
+    name = str(plan.get("plan_name") or "").strip() or "Plan"
+    # Deliberately not _plain(): an unrecorded coverage should leave the heading
+    # as the bare plan name, not print a "not recorded" placeholder in brackets.
+    coverage = str(plan.get("coverage") or "").strip()
+    return f"{name} ({coverage})" if coverage else name
+
+
 def _plan_section(plan: dict) -> str:
     accepted = plan.get("accepted_option")
     accepted_label = OPTION_LABELS.get(accepted, _plain(accepted))
@@ -386,10 +422,25 @@ def _plan_section(plan: dict) -> str:
             '<p class="warn">There is no plan record for the new plan year yet. '
             "The new values below cannot be reported until it is set up.</p>"
         )
+    elif plan.get("coverage_split"):
+        # Same name as another plan this year, and as one earlier plan carrying
+        # no coverage. Almost always one plan that split into separate dental and
+        # vision plans. Which side inherits the history is a judgement call the
+        # data cannot make, so it is put to the reader plainly.
+        prior = plan.get("coverage_split_prior_year")
+        when = f"the {prior}" if prior else "an earlier"
+        warn = (
+            '<p class="warn">No coverage was recorded on '
+            f"{_esc(when)} plan of this name, and more than one plan this year shares it, "
+            "so this plan cannot be paired to it without guessing and everything below is "
+            "reported as new. If this plan continues that one, set the coverage on the "
+            "earlier record and regenerate before sending.</p>"
+        )
     elif plan.get("unmatched_new"):
-        # Plans are paired across years by name. A renamed plan and a genuinely
-        # new plan both fail to match, and only one of them is correct to show
-        # as all new, so the reader is told rather than left to assume.
+        # Plans are paired across years by coverage and name. A renamed plan and
+        # a genuinely new plan both fail to match, and only one of them is
+        # correct to show as all new, so the reader is told rather than left to
+        # assume.
         cands = plan.get("rename_candidates") or []
         tail = (
             f"{_or_list(cands)} was carried last plan year and has no counterpart this year. "
@@ -399,18 +450,33 @@ def _plan_section(plan: dict) -> str:
             else "Confirm this is a new plan and not a rename before sending."
         )
         warn = (
-            '<p class="warn">No plan of this name exists in any earlier plan year, so '
-            f"everything below is reported as new. {_esc(tail)}</p>"
+            '<p class="warn">No plan with this coverage and name exists in any earlier '
+            f"plan year, so everything below is reported as new. {_esc(tail)}</p>"
         )
     elif not plan.get("has_prior"):
         warn = (
             '<p class="warn">There is no prior plan year on record for this plan, '
             "so no comparison is possible. The values below are the new plan year.</p>"
         )
+    elif plan.get("coverage_backfilled"):
+        # Paired to an earlier plan that has no coverage recorded. It was the only
+        # candidate, but being the only candidate is not proof of identity: the
+        # earlier plan could have been a different coverage that ended, with this
+        # one merely sharing its name. Treated as provisional so nobody reads the
+        # comparison below as settled.
+        prior = plan.get("coverage_backfilled_year")
+        when = f"the {prior}" if prior else "an earlier"
+        warn = (
+            '<p class="warn">This comparison is provisional. No coverage was recorded on '
+            f"{_esc(when)} plan of this name, so it was matched on the name alone. It is the "
+            "only plan it could be, but that is not proof it is the same plan rather than a "
+            "different one that ended. Confirm it, and set the coverage on the earlier record "
+            "so future reports pair it outright.</p>"
+        )
 
     return f"""
     <section class="plan">
-      <h2>{_esc(plan.get("plan_name", "Plan"))}</h2>
+      <h2>{_esc(_plan_heading(plan))}</h2>
       <div class="meta">
         <span class="pill">Accepted option: {_esc(accepted_label)}</span>
         <span class="years">{_esc(years)}</span>

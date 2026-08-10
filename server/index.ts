@@ -62,9 +62,11 @@ app.use((req, res, next) => {
 
 (async () => {
   // Startup migrations: add missing columns, tables, and enums.
-  // The plans uniqueness constraint (client_id, plan_name, plan_year) is managed
-  // by the Drizzle schema and applied to production by the publish flow; it is not
-  // added here. Plan data is guaranteed unique by the constraint itself once in place.
+  // The plans uniqueness constraint is declared in the Drizzle schema and applied
+  // to production by the publish flow. Phase 12 below additionally migrates an
+  // existing database from the older name-only key to the coverage-aware one,
+  // because that swap has to happen in one statement and cannot be expressed as a
+  // schema diff.
   try {
     const { pool } = await import("./db");
     await pool.query(`
@@ -633,6 +635,35 @@ app.use((req, res, next) => {
                   AND other.id < pt.id)
             )
         );
+    `);
+
+    // ── Phase 12: Coverage-aware plan uniqueness ──────────────────────────────
+    // Sits before Phase 10 in the file because Phase 10 must stay last. Must run
+    // after Phase 2c, which is what adds the coverage_type column.
+    //
+    // Swaps the old (client, name, year) key for (client, coverage, name, year).
+    // The old key treated the plan name as though it fully identified a plan, which
+    // blocked legitimate real plans: a client can offer a combined dental and vision
+    // "Standard" plus a vision only "Standard", or run Standard and Premium on dental
+    // and again on vision.
+    //
+    // NULLS NOT DISTINCT is required, not cosmetic. Coverage is nullable and is still
+    // being backfilled, and Postgres counts NULLs as distinct by default, so a plain
+    // unique key would stop protecting every row with no coverage recorded. This keeps
+    // the previous protection exactly intact for those rows.
+    //
+    // Guarded on the constraint name so it is a no-op on later boots.
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'plans_client_coverage_name_year_unique'
+        ) THEN
+          ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_client_name_year_unique;
+          DROP INDEX IF EXISTS plans_client_name_year_unique;
+          ALTER TABLE plans ADD CONSTRAINT plans_client_coverage_name_year_unique
+            UNIQUE NULLS NOT DISTINCT (client_id, coverage_type, plan_name, plan_year);
+        END IF;
+      END $$;
     `);
 
     // ── Phase 10: Renewals as year-specific records ───────────────────────────

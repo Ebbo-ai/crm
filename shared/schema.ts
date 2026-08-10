@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, decimal, pgEnum, serial, uniqueIndex, unique, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -191,7 +191,26 @@ export const plans = pgTable("plans", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
-  clientNameYearUnique: uniqueIndex("plans_client_name_year_unique").on(table.clientId, table.planName, table.planYear),
+  // A plan is identified by client + coverage + name + year, not by name alone.
+  //
+  // Coverage is the benefit being provided (dental, vision, dental and vision
+  // together), in the same way an employer might offer medical, life or
+  // disability. The plan name is the benefit level *within* that coverage:
+  // Standard, Premium, Gold, Low/High, Union/Non Union. Because those are two
+  // different things, one client can legitimately carry the same name twice:
+  // a combined dental and vision "Standard" alongside a vision only "Standard",
+  // or Standard and Premium on dental and Standard and Premium again on vision.
+  // Those are not duplicates, so the name alone cannot be the key.
+  //
+  // nullsNotDistinct is load bearing. Postgres treats NULLs as distinct by
+  // default, so adding a nullable column to a unique key silently stops it
+  // enforcing anything on rows where that column is unset. Coverage is still
+  // being filled in, so without this the constraint would weaken rather than
+  // tighten. With it, two plans that share a client, name and year and have no
+  // coverage recorded still collide exactly as they did before.
+  clientCoverageNameYearUnique: unique("plans_client_coverage_name_year_unique")
+    .on(table.clientId, table.coverageType, table.planName, table.planYear)
+    .nullsNotDistinct(),
 }));
 
 export const rateCards = pgTable("rate_cards", {
