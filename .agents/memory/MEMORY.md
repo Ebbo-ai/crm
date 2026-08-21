@@ -8,3 +8,4 @@
 - [Renewal report](renewal-report.md) — breaks out broker compensation; plans paired by name across years, so rename vs new plan is never guessed; fee traps that hide broker; no em dashes.
 - [CRM spreadsheet import](crm-import.md) — upsert on business keys; client codes spelled S-020 and S-20 both exist so match on normalised padding but never rewrite the stored code.
 - [Dev server reload](dev-server-reload.md) — no watch flag, so new API routes silently return Vite's SPA shell with a 200 until the workflow restarts.
+- [Plan termination date](plan-termination.md) — plans.terminationDate is separate from isArchived and from client-level status; enforced in renewals, claims import, PPR, and client detail.
