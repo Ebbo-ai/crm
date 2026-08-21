@@ -158,6 +158,14 @@ export const plans = pgTable("plans", {
   // column of its own rather than being dropped on the way in.
   dollarTier3Limit: decimal("dollar_tier3_limit", { precision: 10, scale: 2 }),
   isArchived: boolean("is_archived").notNull().default(false),
+  // Nullable, empty by default. No date means the plan is active; a date means the
+  // plan is terminated as of that date. Deliberately a single date rather than a
+  // separate boolean, so a status and a date can never disagree with each other.
+  // Distinct from isArchived, which means "superseded by a newer plan year" — a
+  // plan can be terminated mid-year while still being this year's current record.
+  // Terminating a plan never touches the client record; a client can be fully
+  // active with one terminated plan and one active plan.
+  terminationDate: timestamp("termination_date"),
   planYear: integer("plan_year").notNull(),
   // Nullable: wording such as "Included in the $2,000 maximum" describes an
   // orthodontia benefit without saying who is eligible. Storing NONE there would

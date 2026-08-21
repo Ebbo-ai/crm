@@ -708,6 +708,17 @@ app.use((req, res, next) => {
         ALTER COLUMN monthly_premium DROP NOT NULL;
     `);
 
+    // ── Phase 14: Plan-level termination date ─────────────────────────────────
+    // Sits before Phase 10 in the file because Phase 10 must stay last.
+    //
+    // Nullable, empty by default. No date means active; a date means terminated as
+    // of that date. Deliberately one column rather than a date plus a boolean, so a
+    // status and a date can never disagree. Distinct from is_archived, which means
+    // "superseded by a newer plan year" — a plan can be terminated mid-year while
+    // still being the current record for that year. Terminating a plan never
+    // touches the client record.
+    await pool.query(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS termination_date TIMESTAMP;`);
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at

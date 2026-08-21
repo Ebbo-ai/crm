@@ -1,0 +1,20 @@
+Before changing anything, read the plans schema and the places plan status is consulted, and tell me what you found: does a plan already carry any status, active flag, or termination date of its own, separate from the client's? Also tell me every place the code decides whether a plan is "in force" — renewals, PPR generation, monthly claims matching, the client detail plans list, and anywhere else. Report back before you write code.
+
+Then make this change:
+
+Add a termination date to the plan record, nullable and empty by default. A plan with no date is active; a plan with a date is terminated as of that date. Do not add a separate boolean status field — one date, so there is no way for a status and a date to disagree.
+
+Terminating a plan must never touch the client record. A client with one terminated plan and one active plan stays fully active.
+
+Apply it in these places:
+
+Renewals. A terminated plan is excluded from the per-plan accepted-option section of an open renewal. If every plan on a client is terminated, do not open a renewal for that client at all — but do not mark the client terminated either; just skip it and leave it visible.
+Monthly claims import. A claims row landing on a terminated plan for a month after the termination date is held with a clear reason, not imported and not silently dropped. Rows for months at or before the termination date import normally, because run-out claims are legitimate.
+PPR generation. A terminated plan still renders for the plan year it was in force, through its termination month. It does not render months after that. It stops appearing in new plan years entirely.
+Client detail. Terminated plans stay visible but clearly marked with the date, and sit below the active ones. Do not hide them — the history matters.
+
+The terminated plan and its rate cards are never deleted. Prior-year PPRs must still reproduce exactly.
+
+Do the schema change and the migration first, verify the database state, then do the four usage sites in parallel.
+
+After the migration, set Bonnell's dental plan as terminated and leave its vision plan active. Then show me: Bonnell's client status, both of Bonnell's plans with their dates, and confirmation that Bonnell still appears as an active client with an open renewal covering vision only.

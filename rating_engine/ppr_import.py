@@ -123,6 +123,18 @@ def _str_or_none(v):
     return s.upper() if s else None
 
 
+def _date_or_none(v):
+    """Plan termination_date arrives as an ISO timestamp string from the Node
+    layer (JSON has no native date type). Only year/month are ever compared
+    against a report period, so a plain date is enough."""
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
 def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
     """
     Parse a combined monthly PPR file and classify each row as
@@ -212,6 +224,20 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
             hold_reasons.append("Invalid or missing report_month (must be 1–12)")
         if report_year is None or report_year < 2000:
             hold_reasons.append("Invalid or missing report_year")
+
+        # A terminated plan still legitimately receives claims for months at or
+        # before its termination date — run-out claims are real and import
+        # normally. A claims row for a month after termination is held rather
+        # than imported or silently dropped, since it points at coverage that
+        # no longer existed for that month.
+        if plan and plan.get("termination_date") and report_month and report_year:
+            term = _date_or_none(plan["termination_date"])
+            if term and (report_year, report_month) > (term.year, term.month):
+                hold_reasons.append(
+                    f"Plan '{plan_name}' was terminated effective {term.isoformat()}; "
+                    f"this row is for {report_year}-{report_month:02d}, after termination. "
+                    "Run-out claims for the termination month or earlier import normally."
+                )
 
         if submitted is not None and paid is not None and paid > submitted:
             hold_reasons.append(

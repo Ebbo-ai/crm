@@ -674,6 +674,12 @@ async function renderRenewalReport(payload: any, format: "html" | "pdf") {
 async function ensureOpenRenewal(client: any, today = new Date()) {
   if (!client?.anniversaryDate || client.clientStatus === "TERMINATED") return null;
 
+  // A client with every plan terminated has nothing to renew. Skip opening a
+  // renewal for them, but the client itself is never touched — it stays fully
+  // active and visible, exactly like a client with no plans configured yet.
+  const clientPlans = await storage.getPlans(client.id);
+  if (clientPlans.length > 0 && clientPlans.every(p => p.terminationDate)) return null;
+
   const anniversary = getUpcomingAnniversary(new Date(client.anniversaryDate), today);
   const leadMonths = (client.renewalLeadMonths ?? 3) as number;
   const proposalDue = new Date(anniversary);
@@ -2671,6 +2677,7 @@ export async function registerRoutes(
           id: p.id, client_id: p.clientId, plan_name: p.planName,
           effective_date: p.effectiveDate, plan_year: p.planYear,
           coverage_type: p.coverageType ?? null,
+          termination_date: p.terminationDate ?? null,
         })),
         current_facts: allFacts.map(f => ({
           id: f.id, client_id: f.clientId, plan_id: f.planId,
@@ -2931,12 +2938,24 @@ export async function registerRoutes(
     for (const plan of clientPlans) {
       const effDate = new Date(plan.effectiveDate);
       const startMonth = effDate.getMonth() + 1; // 1-12
-      const planMonths: { month: number; year: number }[] = [];
+      let planMonths: { month: number; year: number }[] = [];
       for (let i = 0; i < 12; i++) {
         let m = startMonth + i;
         let y = reportPlanYear!;
         if (m > 12) { m -= 12; y++; }
         planMonths.push({ month: m, year: y });
+      }
+
+      // A terminated plan still renders for the plan year it was in force,
+      // through its termination month, then stops. It never appears in a plan
+      // year that begins entirely after its termination — otherwise a plan
+      // gone for years would keep resurfacing on every later PPR.
+      if (plan.terminationDate) {
+        const term = new Date(plan.terminationDate);
+        const termYm = term.getFullYear() * 12 + term.getMonth();
+        const windowStartYm = planMonths[0].year * 12 + (planMonths[0].month - 1);
+        if (termYm < windowStartYm) continue;
+        planMonths = planMonths.filter(({ month, year }) => year * 12 + (month - 1) <= termYm);
       }
 
       const planFacts = allFacts.filter(f => f.planId === plan.id);

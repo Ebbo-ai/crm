@@ -424,11 +424,13 @@ export default function ClientDetailPage() {
                       </div>
                     </div>
 
-                    {/* Accepted option per plan */}
-                    {clientPlans.length > 0 && (
+                    {/* Accepted option per plan. Terminated plans have nothing to
+                        renew, so they are excluded here entirely rather than shown
+                        disabled — they still appear, clearly marked, on the Plans tab. */}
+                    {clientPlans.filter((p: any) => !p.terminationDate).length > 0 && (
                       <div className="border-t pt-3 space-y-2">
                         <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide">Accepted option by plan</p>
-                        {clientPlans.map((plan: any) => {
+                        {clientPlans.filter((p: any) => !p.terminationDate).map((plan: any) => {
                           const opt = openRenewal.planOptions?.find((o: any) => o.planId === plan.id);
                           return (
                             <div key={plan.id} className="flex items-center justify-between gap-3 flex-wrap">

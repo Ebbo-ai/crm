@@ -58,7 +58,13 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
     queryKey: ["/api/clients", String(clientId), "plans"],
   });
 
-  const currentPlans = plans.filter((p: any) => !p.isArchived);
+  // isArchived (superseded by a later plan year) and terminationDate (mid-lifecycle
+  // cancellation) are different concepts. A terminated plan is never hidden here —
+  // it stays in the current list, clearly marked with its date, just sorted below
+  // the still-active ones.
+  const currentPlans = plans
+    .filter((p: any) => !p.isArchived)
+    .sort((a: any, b: any) => (a.terminationDate ? 1 : 0) - (b.terminationDate ? 1 : 0));
   const archivedPlans = plans.filter((p: any) => p.isArchived);
 
   const renewMutation = useMutation({
@@ -444,9 +450,15 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 ? <span className="text-[10px] px-2 py-1 rounded-full font-medium bg-[#F5A623]/10 text-[#F5A623] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Due Soon</span>
                 : null
           )}
-          <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${archived ? "bg-gray-200 text-gray-600" : "bg-[#22C55E]/10 text-[#22C55E]"}`}>
-            {archived ? "Archived" : "Current"}
-          </span>
+          {plan.terminationDate ? (
+            <span className="text-[10px] px-2 py-1 rounded-full font-medium bg-[#EF4444]/10 text-[#EF4444]">
+              Terminated {format(parseLocalDate(plan.terminationDate), "MMM d, yyyy")}
+            </span>
+          ) : (
+            <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${archived ? "bg-gray-200 text-gray-600" : "bg-[#22C55E]/10 text-[#22C55E]"}`}>
+              {archived ? "Archived" : "Current"}
+            </span>
+          )}
           {expanded ? <ChevronUp className="w-4 h-4 text-[#94A3B8]" /> : <ChevronDown className="w-4 h-4 text-[#94A3B8]" />}
         </div>
       </div>
