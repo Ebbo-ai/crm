@@ -46,6 +46,29 @@ builds its client lookup on the exact code string, so renaming a client to tidy 
 spelling breaks matching in a subsystem that has nothing to do with the import. Report
 the difference and let it be decided deliberately.
 
+### The unpadded spelling is the one that has to match
+
+The two import paths disagree, and only one of them forgives padding:
+
+- The workbook import normalises padding before matching.
+- The monthly report path does not. It derives the code from the *filename* with a
+  verbatim digit capture, then looks the client up by strict string equality. No
+  normalisation anywhere in that chain.
+
+The monthly files are named unpadded (`s20apostlesppr2026.xlsx` yields `S-20`), which
+makes unpadded the spelling that actually has to be stored. A client stored padded is
+not reported as a mismatch — the upload is skipped with "client not found", which reads
+like a missing client rather than a spelling problem.
+
+**Why:** this was measured, not assumed. Against a stored book using padded codes, a
+real monthly batch silently skipped a fifth of its files; every one of them was a client
+that existed, spelled with a leading zero.
+
+**How to apply:** treat unpadded as the target spelling for stored codes, and when
+diagnosing a skipped monthly upload check padding before believing the client is absent.
+The durable fix is to normalise in the lookup rather than to re-spell stored codes,
+since the filename convention is outside this system's control.
+
 ## A file owns a column only when the column is present
 
 Corrections arrive as partial workbooks listing the identifying columns and the few
