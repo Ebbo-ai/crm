@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database, Trash2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -210,6 +210,19 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               >
                 <Database className="w-4.5 h-4.5 flex-shrink-0" />
                 {!collapsed && <span>CRM Import</span>}
+              </div>
+            </Link>
+            <Link href="/settings/data-reset">
+              <div
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                  isActive("/settings/data-reset")
+                    ? "bg-white/15 text-white"
+                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                } ${collapsed ? "justify-center" : ""}`}
+                data-testid="nav-data-reset"
+              >
+                <Trash2 className="w-4.5 h-4.5 flex-shrink-0" />
+                {!collapsed && <span>Data Reset</span>}
               </div>
             </Link>
           </>

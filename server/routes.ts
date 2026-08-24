@@ -6,6 +6,13 @@ import { renewals, renewalPlanOptions } from "@shared/schema";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
+import {
+  buildCommunicationLinkExport,
+  buildResetPreview,
+  runDataReset,
+  reattachCommunicationLinks,
+  ResetNotConfirmedError,
+} from "./data-reset";
 import { matchEmailToClients, processEmail, queryClientCommunications } from "./claude";
 import bcrypt from "bcryptjs";
 import multer from "multer";
@@ -2187,6 +2194,96 @@ export async function registerRoutes(
       res.status(500).json({ message: err.message });
     }
   });
+
+  // ─── Communication link export / data reset / re-attach (admin only) ────────
+  //
+  // These three bracket the client re-import. The export is taken immediately before
+  // the reset, because the mailbox keeps receiving and any older snapshot is stale.
+
+  app.get("/api/admin/communication-links/export", requireAdmin, async (req, res) => {
+    try {
+      const payload = await buildCommunicationLinkExport();
+      const stamp = payload.exportedAt.replace(/[:.]/g, "-");
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="communication-links-${stamp}.json"`,
+      );
+      res.send(JSON.stringify(payload, null, 2));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Counts only, for the screen to show what is about to be exported.
+  app.get("/api/admin/communication-links/preview", requireAdmin, async (req, res) => {
+    try {
+      const payload = await buildCommunicationLinkExport();
+      res.json(payload.counts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // What the reset would destroy right now, plus the phrase that unlocks it.
+  app.get("/api/admin/data-reset/preview", requireAdmin, async (req, res) => {
+    try {
+      res.json(await buildResetPreview());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/data-reset", requireAdmin, async (req, res) => {
+    try {
+      const report = await runDataReset(req.body?.confirm);
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "reset",
+        entity: "database",
+        details: (() => {
+          const removed = report.deleted
+            .filter((d) => d.rows > 0)
+            .map((d) => `${d.table} ${d.rows}`)
+            .join(", ");
+          return removed
+            ? `Client data reset. Deleted: ${removed}.`
+            : "Client data reset. Nothing to delete.";
+        })(),
+      });
+      res.json(report);
+    } catch (err: any) {
+      if (err instanceof ResetNotConfirmedError) {
+        return res.status(400).json({ message: err.message });
+      }
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post(
+    "/api/admin/communication-links/reattach",
+    requireAdmin,
+    memUpload.single("file"),
+    async (req, res) => {
+      try {
+        if (!req.file) return res.status(400).json({ message: "No file was uploaded." });
+        const report = await reattachCommunicationLinks(req.file.buffer.toString("utf8"));
+        await storage.createAuditLog({
+          userId: (req.user as any).id,
+          userName: (req.user as any).fullName,
+          action: "reattached",
+          entity: "communication_links",
+          details:
+            `Restored ${report.links.restored} email links and ${report.tasks.restored} task links. ` +
+            `${report.unmatched.length} code(s) no longer match a client.`,
+        });
+        res.json(report);
+      } catch (err: any) {
+        res.status(400).json({ message: err.message });
+      }
+    },
+  );
 
   // ─── Email attachment upload (for email webhook + manual) ───────────────────
   const emailAttachDir = path.join(uploadDir, "email-attachments");
