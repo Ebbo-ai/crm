@@ -6,3 +6,10 @@ id = "UKKg4eLOfA190la3y9fPG"
 uri = "file://production_export.xlsx"
 type = "table"
 title = "Production Database Export — Clients, Plans, Rate Cards"
+
+[[outputs]]
+id = "diFYShHQt_SkGbXAdmZZt"
+uri = "file://reports/active-client-data-gaps-2026-08-24.xlsx"
+type = "table"
+title = "Active Client Data Gap Report — 55 clients"
+description = "Contact, broker and data-completeness gaps across all 55 active clients. Three tabs: per-client contact & broker gaps with email-match priority, other data gaps, and a summary count sheet."
