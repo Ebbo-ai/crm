@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { US_STATES, formatPhone } from "@/lib/constants";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Save, Plus, Trash2 } from "lucide-react";
 
 const planTypeOptions = [
   { value: "DENTAL", label: "Dental" },
@@ -20,6 +20,36 @@ const planTypeOptions = [
   { value: "DENTAL_VISION", label: "Dental / Vision" },
   { value: "HEARING_VISION", label: "Hearing / Vision" },
   { value: "DENTAL_HEARING_VISION", label: "Dental / Hearing / Vision" },
+];
+
+/**
+ * One person at the brokerage. A brokerage typically names a lead (Account Advisor,
+ * Account Executive, Implementation Manager) plus a service representative, and
+ * occasionally a third, so these are edited as a list rather than fixed fields.
+ */
+interface BrokerContactRow {
+  contactName: string;
+  email: string;
+  phone: string;
+  role: string;
+  isPrimary: boolean;
+}
+
+const emptyBrokerContact = (isPrimary = false): BrokerContactRow => ({
+  contactName: "",
+  email: "",
+  phone: "",
+  role: "",
+  isPrimary,
+});
+
+/** Suggestions only — brokerages use titles this list will never fully cover. */
+const BROKER_ROLE_SUGGESTIONS = [
+  "Account Advisor",
+  "Account Executive",
+  "Account Manager",
+  "Implementation Manager",
+  "Service Representative",
 ];
 
 function isLastDayOfMonth(date: Date): boolean {
@@ -78,6 +108,7 @@ export default function ClientFormPage() {
   });
 
   const [form, setForm] = useState(emptyForm);
+  const [brokerContacts, setBrokerContacts] = useState<BrokerContactRow[]>([]);
   const [sameAsPrimary, setSameAsPrimary] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [codeChecking, setCodeChecking] = useState(false);
@@ -162,15 +193,48 @@ export default function ClientFormPage() {
     form.decisionMakerEmail,
   ]);
 
+  // Load the contact rows for an existing client. A brokerage assigns a lead plus a
+  // service rep, so this is a list rather than one fixed set of fields.
+  const { data: existingContacts } = useQuery<any[]>({
+    queryKey: ["/api/clients", params.id, "broker-contacts"],
+    queryFn: () =>
+      fetch(`/api/clients/${params.id}/broker-contacts`, { credentials: "include" })
+        .then(r => (r.ok ? r.json() : [])),
+    enabled: isEdit && !!params.id,
+  });
+
+  useEffect(() => {
+    if (!existingContacts) return;
+    if (existingContacts.length > 0) {
+      setBrokerContacts(existingContacts.map((c: any) => ({
+        contactName: c.contactName || "",
+        email: c.email || "",
+        phone: c.phone || "",
+        role: c.role || "",
+        isPrimary: !!c.isPrimary,
+      })));
+    } else if (existingClient?.brokerContactName || existingClient?.brokerEmail) {
+      // Never edited as a list — seed one row from the flat columns so saving the
+      // form does not silently drop the contact already on file.
+      setBrokerContacts([{
+        contactName: existingClient.brokerContactName || existingClient.brokerEmail || "",
+        email: existingClient.brokerEmail || "",
+        phone: existingClient.brokerPhone || "",
+        role: "",
+        isPrimary: true,
+      }]);
+    }
+  }, [existingContacts, existingClient]);
+
   const mutation = useMutation({
     mutationFn: async (data: any) => {
-      if (isEdit) {
-        const res = await apiRequest("PUT", `/api/clients/${params.id}`, data);
-        return res.json();
-      } else {
-        const res = await apiRequest("POST", "/api/clients", data);
-        return res.json();
-      }
+      // Contacts travel with the client in one request. Two requests would let the
+      // client save and the contacts fail, leaving the flat broker columns describing
+      // somebody the contact list does not contain.
+      const res = isEdit
+        ? await apiRequest("PUT", `/api/clients/${params.id}`, data)
+        : await apiRequest("POST", "/api/clients", data);
+      return await res.json();
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
@@ -195,8 +259,20 @@ export default function ClientFormPage() {
       errs.decisionMakerEmail = "Invalid email format";
     if (form.adminContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminContactEmail))
       errs.adminContactEmail = "Invalid email format";
-    if (form.brokerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.brokerEmail))
-      errs.brokerEmail = "Invalid email format";
+    if (form.hasBroker) {
+      brokerContacts.forEach((c, i) => {
+        if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email))
+          errs[`brokerContact-${i}-email`] = "Invalid email format";
+        if (!c.contactName.trim() && (c.email || c.phone || c.role))
+          errs[`brokerContact-${i}-name`] = "Name is required when other details are filled in";
+      });
+      const named = brokerContacts.filter(c => c.contactName.trim());
+      const dupe = named.find((c, i) =>
+        named.findIndex(o => o.contactName.trim().toLowerCase() === c.contactName.trim().toLowerCase()) !== i);
+      if (dupe) errs.brokerContacts = `"${dupe.contactName}" is listed twice.`;
+      if (named.length > 0 && !named.some(c => c.isPrimary))
+        errs.brokerContacts = "Mark one contact as the primary.";
+    }
     if (form.zipCode && !/^\d{5}(-\d{4})?$/.test(form.zipCode))
       errs.zipCode = "Invalid ZIP format (00000 or 00000-0000)";
 
@@ -243,11 +319,31 @@ export default function ClientFormPage() {
       data.terminationDate = null;
     }
     if (!data.networkActive) data.dentalNetworkName = null;
+    const contacts = brokerContacts
+      .filter(c => c.contactName.trim())
+      .map(c => ({
+        contactName: c.contactName.trim(),
+        email: c.email.trim() || null,
+        phone: c.phone.trim() || null,
+        role: c.role.trim() || null,
+        isPrimary: c.isPrimary,
+      }));
+    data.brokerContacts = contacts;
+
     if (!data.hasBroker) {
       data.brokerFirmName = null;
       data.brokerContactName = null;
       data.brokerPhone = null;
       data.brokerEmail = null;
+      data.brokerContacts = [];
+    } else {
+      // Mirror the lead onto the flat columns in the same write that creates the
+      // client, so a reader that has not been moved to the contacts table never sees
+      // a client with a broker and no contact details.
+      const primary = contacts.find(c => c.isPrimary) ?? contacts[0] ?? null;
+      data.brokerContactName = primary?.contactName ?? null;
+      data.brokerPhone = primary?.phone ?? null;
+      data.brokerEmail = primary?.email ?? null;
     }
     // Nullify empty strings for optional fields
     if (!data.bankingType) data.bankingType = null;
@@ -270,6 +366,34 @@ export default function ClientFormPage() {
   const updateField = (field: string, value: any) => {
     setForm(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; });
+  };
+
+  const updateBrokerContact = (index: number, patch: Partial<BrokerContactRow>) => {
+    setBrokerContacts(prev => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+    setErrors(prev => {
+      const n = { ...prev };
+      delete n[`brokerContact-${index}-email`];
+      delete n[`brokerContact-${index}-name`];
+      delete n.brokerContacts;
+      return n;
+    });
+  };
+
+  /** Exactly one primary — the database enforces the same rule. */
+  const setPrimaryBrokerContact = (index: number) => {
+    setBrokerContacts(prev => prev.map((c, i) => ({ ...c, isPrimary: i === index })));
+    setErrors(prev => { const n = { ...prev }; delete n.brokerContacts; return n; });
+  };
+
+  const removeBrokerContact = (index: number) => {
+    setBrokerContacts(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      // Removing the lead promotes the next person rather than leaving the client with
+      // contacts but no primary, which is what the flat columns mirror from.
+      if (next.length > 0 && !next.some(c => c.isPrimary)) next[0] = { ...next[0], isPrimary: true };
+      return next;
+    });
+    setErrors(prev => { const n = { ...prev }; delete n.brokerContacts; return n; });
   };
 
   const FieldError = ({ field }: { field: string }) =>
@@ -532,26 +656,119 @@ export default function ClientFormPage() {
               <Label className="text-sm text-[#2C3E50]">Has Broker</Label>
             </div>
             {form.hasBroker && (
-              <div className="space-y-3">
-                <p className="text-xs text-[#94A3B8]">Enter whatever you have — all broker fields are optional</p>
+              <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <OptionalLabel htmlFor="brokerFirmName">Broker Firm Name</OptionalLabel>
                     <Input id="brokerFirmName" value={form.brokerFirmName} onChange={e => updateField("brokerFirmName", e.target.value)} data-testid="input-broker-firm" />
                   </div>
-                  <div>
-                    <OptionalLabel htmlFor="brokerContactName">Broker Contact Name</OptionalLabel>
-                    <Input id="brokerContactName" value={form.brokerContactName} onChange={e => updateField("brokerContactName", e.target.value)} data-testid="input-broker-contact" />
+                </div>
+
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <Label className="text-sm font-medium text-[#2C3E50]">Broker Contacts</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => setBrokerContacts(prev => [...prev, emptyBrokerContact(prev.length === 0)])}
+                      data-testid="button-add-broker-contact"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Contact
+                    </Button>
                   </div>
-                  <div>
-                    <OptionalLabel htmlFor="brokerPhone">Phone</OptionalLabel>
-                    <Input id="brokerPhone" value={form.brokerPhone} onChange={e => updateField("brokerPhone", e.target.value)} onBlur={e => updateField("brokerPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" data-testid="input-broker-phone" />
+                  <p className="text-xs text-[#94A3B8] mb-3">
+                    The brokerage usually names a lead plus a service representative. Mark the lead as
+                    primary — that is the one shown wherever a single broker contact is displayed.
+                  </p>
+
+                  {brokerContacts.length === 0 && (
+                    <p className="text-xs text-[#94A3B8] italic py-2" data-testid="text-no-broker-contacts">
+                      No contacts recorded yet.
+                    </p>
+                  )}
+
+                  <div className="space-y-3">
+                    {brokerContacts.map((c, i) => (
+                      <div
+                        key={i}
+                        className="rounded-md border border-[#E2E8F0] p-3 space-y-3"
+                        data-testid={`row-broker-contact-${i}`}
+                      >
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <OptionalLabel htmlFor={`bc-name-${i}`}>Name</OptionalLabel>
+                            <Input
+                              id={`bc-name-${i}`}
+                              value={c.contactName}
+                              onChange={e => updateBrokerContact(i, { contactName: e.target.value })}
+                              data-testid={`input-broker-contact-name-${i}`}
+                            />
+                            <FieldError field={`brokerContact-${i}-name`} />
+                          </div>
+                          <div>
+                            <OptionalLabel htmlFor={`bc-role-${i}`}>Role</OptionalLabel>
+                            <Input
+                              id={`bc-role-${i}`}
+                              list="broker-role-suggestions"
+                              value={c.role}
+                              onChange={e => updateBrokerContact(i, { role: e.target.value })}
+                              placeholder="Account Advisor, Service Representative…"
+                              data-testid={`input-broker-contact-role-${i}`}
+                            />
+                          </div>
+                          <div>
+                            <OptionalLabel htmlFor={`bc-email-${i}`}>Email</OptionalLabel>
+                            <Input
+                              id={`bc-email-${i}`}
+                              type="email"
+                              value={c.email}
+                              onChange={e => updateBrokerContact(i, { email: e.target.value })}
+                              data-testid={`input-broker-contact-email-${i}`}
+                            />
+                            <FieldError field={`brokerContact-${i}-email`} />
+                          </div>
+                          <div>
+                            <OptionalLabel htmlFor={`bc-phone-${i}`}>Phone</OptionalLabel>
+                            <Input
+                              id={`bc-phone-${i}`}
+                              value={c.phone}
+                              onChange={e => updateBrokerContact(i, { phone: e.target.value })}
+                              onBlur={e => updateBrokerContact(i, { phone: formatPhone(e.target.value) })}
+                              placeholder="(XXX) XXX-XXXX"
+                              data-testid={`input-broker-contact-phone-${i}`}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 text-xs text-[#2C3E50] cursor-pointer">
+                            <Checkbox
+                              checked={c.isPrimary}
+                              onCheckedChange={() => setPrimaryBrokerContact(i)}
+                              data-testid={`checkbox-broker-contact-primary-${i}`}
+                            />
+                            Primary contact
+                          </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-[#EF4444] hover:text-[#EF4444] gap-1.5"
+                            onClick={() => removeBrokerContact(i)}
+                            data-testid={`button-remove-broker-contact-${i}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Remove
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <OptionalLabel htmlFor="brokerEmail">Email</OptionalLabel>
-                    <Input id="brokerEmail" type="email" value={form.brokerEmail} onChange={e => updateField("brokerEmail", e.target.value)} data-testid="input-broker-email" />
-                    <FieldError field="brokerEmail" />
-                  </div>
+
+                  <datalist id="broker-role-suggestions">
+                    {BROKER_ROLE_SUGGESTIONS.map(r => <option key={r} value={r} />)}
+                  </datalist>
+                  <FieldError field="brokerContacts" />
                 </div>
               </div>
             )}

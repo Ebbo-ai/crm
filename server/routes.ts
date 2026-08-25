@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, type BrokerContactInput } from "./storage";
 import { db } from "./db";
 import { renewals, renewalPlanOptions } from "@shared/schema";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
@@ -84,6 +84,58 @@ const openRenewalPredicate = () =>
  * the year is historical. This projects it onto the next occurrence from today.
  * Used to decide WHICH plan year to open a renewal for.
  */
+/**
+ * Read a broker contact set off a request body.
+ *
+ * Returns `contacts: undefined` when the key is absent — the caller is not speaking
+ * about contacts, so the stored set is left alone. An empty array is a real statement
+ * that the client has none. Any request that names contacts is rejected outright rather
+ * than partly applied, because the write replaces the whole set.
+ */
+function parseBrokerContacts(body: any): { contacts?: BrokerContactInput[]; error?: string } {
+  if (body?.brokerContacts === undefined || body?.brokerContacts === null) return {};
+  if (!Array.isArray(body.brokerContacts)) return { error: "brokerContacts must be a list." };
+
+  const contacts: BrokerContactInput[] = [];
+  for (const c of body.brokerContacts) {
+    const contactName = String(c?.contactName ?? "").trim();
+    if (!contactName) continue;
+    const parseDate = (v: any, field: string): Date | null | string => {
+      if (v === undefined || v === null || v === "") return null;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? `"${v}" is not a valid ${field} for ${contactName}.` : d;
+    };
+    const effectiveDate = parseDate(c?.effectiveDate, "effective date");
+    if (typeof effectiveDate === "string") return { error: effectiveDate };
+    const terminationDate = parseDate(c?.terminationDate, "termination date");
+    if (typeof terminationDate === "string") return { error: terminationDate };
+
+    contacts.push({
+      contactName,
+      email: c?.email ? String(c.email).trim() : null,
+      phone: c?.phone ? String(c.phone).trim() : null,
+      role: c?.role ? String(c.role).trim() : null,
+      isPrimary: Boolean(c?.isPrimary),
+      effectiveDate,
+      terminationDate,
+    });
+  }
+
+  // The business key is (client, name), so a duplicate would silently collapse two
+  // people into one row rather than failing.
+  const seen = new Set<string>();
+  for (const c of contacts) {
+    const key = c.contactName.toLowerCase();
+    if (seen.has(key)) return { error: `"${c.contactName}" is listed twice. One row per person.` };
+    seen.add(key);
+  }
+
+  const primaries = contacts.filter(c => c.isPrimary && !c.terminationDate);
+  if (primaries.length > 1) return { error: "Only one serving contact can be the primary." };
+
+  return { contacts };
+}
+
 function getUpcomingAnniversary(anniversaryDate: Date, today: Date): Date {
   const upcoming = new Date(anniversaryDate);
   upcoming.setFullYear(today.getFullYear());
@@ -794,7 +846,12 @@ export async function registerRoutes(
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
       }
-      const client = await storage.createClient(body);
+      // Contacts travel with the client so both land in one transaction — see
+      // parseBrokerContacts for why an absent key differs from an empty list.
+      const { contacts, error } = parseBrokerContacts(body);
+      if (error) return res.status(400).json({ message: error });
+      delete body.brokerContacts;
+      const client = await storage.createClient(body, contacts);
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
@@ -1090,9 +1147,12 @@ export async function registerRoutes(
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
       }
+      const { contacts, error } = parseBrokerContacts(body);
+      if (error) return res.status(400).json({ message: error });
+      delete body.brokerContacts;
       // Renewal lifecycle fields are no longer on the client record — they are
       // edited through PUT /api/renewals/:id against a specific plan year.
-      const updated = await storage.updateClient(parseInt(req.params.id), body);
+      const updated = await storage.updateClient(parseInt(req.params.id), body, contacts);
       if (!updated) return res.status(404).json({ message: "Client not found" });
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -1103,6 +1163,42 @@ export async function registerRoutes(
         details: `Updated client "${updated.clientName}"`,
       });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/clients/:id/broker-contacts", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getBrokerContacts(parseInt(req.params.id)));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Replaces the whole set for the client. The form edits contacts as a list, so a
+  // partial update would leave no way to remove someone.
+  app.put("/api/clients/:id/broker-contacts", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.id);
+      if (isNaN(clientId)) return res.status(400).json({ message: "Invalid client id." });
+
+      const client = await storage.getClient(clientId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+
+      const { contacts, error } = parseBrokerContacts({ brokerContacts: req.body?.contacts ?? [] });
+      if (error) return res.status(400).json({ message: error });
+
+      const saved = await storage.replaceBrokerContacts(clientId, contacts ?? []);
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "updated",
+        entity: "client",
+        entityId: clientId,
+        details: `Updated broker contacts (${saved.length} on file)`,
+      });
+      res.json(saved);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2394,12 +2490,19 @@ export async function registerRoutes(
 
       // ── STEP 3: Claude enrichment (parallel) ───────────────────────────────
       const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
-      const allClients = await storage.getClients();
+      // Only live clients are candidates. The terminated ones still carry broker firms
+      // and contact emails, so leaving them in the list lets a closed account win a
+      // domain or firm match against the active client the email is actually about.
+      const allClients = (await storage.getClients()).filter(c => c.isActive);
+      // Every person the brokerage has on the account, not just the lead. Correspondence
+      // routinely arrives from the service rep, who is not the mirrored flat address.
+      const brokerEmailMap = await storage.getBrokerEmailsByClient();
 
       const [matches, processed] = await Promise.all([
         matchEmailToClients(fullText, allClients.map(c => ({
           id: c.id, clientCode: c.clientCode, clientName: c.clientName,
-          brokerEmail: c.brokerEmail, brokerFirmName: c.brokerFirmName,
+          brokerEmails: brokerEmailMap.get(c.id) ?? [c.brokerEmail].filter(Boolean) as string[],
+          brokerFirmName: c.brokerFirmName,
           adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
         }))),
         processEmail(fullText, attachmentTexts),

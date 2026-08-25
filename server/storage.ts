@@ -2,7 +2,7 @@ import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
 import {
   users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs,
-  communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory,
+  communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   type RenewalProgress,
   type User, type InsertUser,
@@ -20,10 +20,22 @@ import {
   type CommunicationAttachment, type InsertCommunicationAttachment,
   type CommunicationTask, type InsertCommunicationTask,
   type BrokerHistory,
+  type BrokerContact,
   type PlanPerformanceFacts, type InsertPlanPerformanceFacts,
   type PprImportBatch, type InsertPprImportBatch,
   type PprHeldRow, type InsertPprHeldRow,
 } from "@shared/schema";
+
+/** One person at the brokerage, as supplied by the form or the workbook import. */
+export interface BrokerContactInput {
+  contactName: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  isPrimary?: boolean;
+  effectiveDate?: Date | null;
+  terminationDate?: Date | null;
+}
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
@@ -35,8 +47,8 @@ export interface IStorage {
   getClients(search?: string, status?: string): Promise<(Client & { activeIssueCount: number })[]>;
   getClient(id: number): Promise<Client | undefined>;
   getClientByCode(code: string): Promise<Client | undefined>;
-  createClient(client: InsertClient): Promise<Client>;
-  updateClient(id: number, data: Partial<InsertClient>): Promise<Client | undefined>;
+  createClient(client: InsertClient, contacts?: BrokerContactInput[]): Promise<Client>;
+  updateClient(id: number, data: Partial<InsertClient>, contacts?: BrokerContactInput[]): Promise<Client | undefined>;
 
   getPlans(clientId: number): Promise<Plan[]>;
   getPlan(id: number): Promise<Plan | undefined>;
@@ -113,6 +125,10 @@ export interface IStorage {
   getBrokerHistory(clientId: number): Promise<BrokerHistory[]>;
   addBrokerChange(clientId: number, newBroker: { brokerFirmName: string | null; brokerContactName: string | null; brokerPhone: string | null; brokerEmail: string | null; effectiveDate: Date }): Promise<void>;
 
+  getBrokerContacts(clientId: number): Promise<BrokerContact[]>;
+  replaceBrokerContacts(clientId: number, contacts: BrokerContactInput[]): Promise<BrokerContact[]>;
+  getBrokerEmailsByClient(): Promise<Map<number, string[]>>;
+
   getClientsByBrokerFirm(firm: string): Promise<(Client & { plans: Plan[] })[]>;
 
   getRenewalProgress(planId: number): Promise<RenewalProgress | null>;
@@ -140,6 +156,91 @@ export interface IStorage {
   createPprHeldRow(data: InsertPprHeldRow): Promise<PprHeldRow>;
   getPprHeldRows(batchId?: number): Promise<PprHeldRow[]>;
   updatePprHeldRow(id: number, data: Partial<PprHeldRow>): Promise<PprHeldRow | undefined>;
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Write a client's broker contacts as a set and re-mirror the flat columns.
+ *
+ * Takes a transaction rather than opening one, because the mirror on `clients` and the
+ * rows in `broker_contacts` must never be separately committable — a half-applied save
+ * leaves the client showing a broker contact who is no longer on the account.
+ *
+ * Replace-set semantics: rows are matched to the people already on file by name,
+ * and anyone the caller no longer lists is removed. That is what makes "this person
+ * has left the account" expressible; a row-by-row upsert can only ever add.
+ */
+async function applyBrokerContacts(
+  tx: Tx,
+  clientId: number,
+  contacts: BrokerContactInput[],
+): Promise<BrokerContact[]> {
+  const clean = contacts
+    .map(c => ({ ...c, contactName: (c.contactName ?? "").trim() }))
+    .filter(c => c.contactName.length > 0);
+
+  const existing = await tx.select().from(brokerContacts).where(eq(brokerContacts.clientId, clientId));
+  const byName = new Map(existing.map(r => [r.contactName.trim().toLowerCase(), r]));
+
+  // Cleared first: only one serving primary is allowed per client, so swapping the
+  // lead between two people would otherwise collide part-way through the update.
+  await tx.update(brokerContacts).set({ isPrimary: false })
+    .where(eq(brokerContacts.clientId, clientId));
+
+  const keptIds: number[] = [];
+  for (const c of clean) {
+    const prior = byName.get(c.contactName.toLowerCase());
+    const values = {
+      contactName: c.contactName,
+      email: c.email?.trim() || null,
+      phone: c.phone?.trim() || null,
+      role: c.role?.trim() || null,
+      effectiveDate: c.effectiveDate ?? prior?.effectiveDate ?? null,
+      terminationDate: c.terminationDate ?? null,
+      updatedAt: new Date(),
+    };
+    if (prior) {
+      await tx.update(brokerContacts).set(values).where(eq(brokerContacts.id, prior.id));
+      keptIds.push(prior.id);
+    } else {
+      const [created] = await tx.insert(brokerContacts)
+        .values({ clientId, ...values, isPrimary: false })
+        .returning({ id: brokerContacts.id });
+      keptIds.push(created.id);
+    }
+  }
+
+  const removed = existing.filter(r => !keptIds.includes(r.id));
+  if (removed.length) {
+    await tx.delete(brokerContacts).where(inArray(brokerContacts.id, removed.map(r => r.id)));
+  }
+
+  // Primary is set last, once every other row is known to be non-primary, and is only
+  // ever chosen from the people still serving. A terminated contact must not become the
+  // lead: the flat columns mirror the primary, so that would publish a former contact
+  // as the client's broker while somebody current is sitting right there.
+  const servingIdx = clean.findIndex(c => c.isPrimary && !c.terminationDate);
+  const primaryIdx = servingIdx >= 0 ? servingIdx : clean.findIndex(c => !c.terminationDate);
+  const primaryId = primaryIdx >= 0 ? keptIds[primaryIdx] : undefined;
+  if (primaryId !== undefined) {
+    await tx.update(brokerContacts).set({ isPrimary: true }).where(eq(brokerContacts.id, primaryId));
+  }
+
+  const rows = await tx.select().from(brokerContacts).where(eq(brokerContacts.clientId, clientId));
+  const primary = rows.find(r => r.isPrimary) ?? null;
+
+  // Mirror onto the flat columns. Everything that read a single broker contact before
+  // this table existed still reads one, and it is the lead person. No serving contact
+  // means the mirror is cleared rather than left pointing at somebody who has gone.
+  await tx.update(clients).set({
+    brokerContactName: primary?.contactName ?? null,
+    brokerEmail: primary?.email ?? null,
+    brokerPhone: primary?.phone ?? null,
+    updatedAt: new Date(),
+  }).where(eq(clients.id, clientId));
+
+  return rows.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.contactName.localeCompare(b.contactName));
 }
 
 export class DatabaseStorage implements IStorage {
@@ -203,14 +304,37 @@ export class DatabaseStorage implements IStorage {
     return client;
   }
 
-  async createClient(client: InsertClient): Promise<Client> {
-    const [created] = await db.insert(clients).values(client).returning();
-    return created;
+  /**
+   * `brokerContacts` undefined means the caller is not speaking about contacts and they
+   * are left alone; an array (including an empty one) replaces the set. Both writes share
+   * one transaction so a client can never be saved with its contact set half-applied.
+   */
+  async createClient(client: InsertClient, contacts?: BrokerContactInput[]): Promise<Client> {
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(clients).values(client).returning();
+      if (contacts !== undefined) {
+        await applyBrokerContacts(tx, created.id, contacts);
+        const [refreshed] = await tx.select().from(clients).where(eq(clients.id, created.id));
+        return refreshed;
+      }
+      return created;
+    });
   }
 
-  async updateClient(id: number, data: Partial<InsertClient>): Promise<Client | undefined> {
-    const [updated] = await db.update(clients).set({ ...data, updatedAt: new Date() }).where(eq(clients.id, id)).returning();
-    return updated;
+  /** See `createClient` for what an undefined vs. empty `contacts` means. */
+  async updateClient(id: number, data: Partial<InsertClient>, contacts?: BrokerContactInput[]): Promise<Client | undefined> {
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(clients).set({ ...data, updatedAt: new Date() }).where(eq(clients.id, id)).returning();
+      if (!updated) return undefined;
+      if (contacts !== undefined) {
+        // Runs after the client write so the mirror it produces is what survives, rather
+        // than any flat broker field the same request happened to carry.
+        await applyBrokerContacts(tx, id, contacts);
+        const [refreshed] = await tx.select().from(clients).where(eq(clients.id, id));
+        return refreshed;
+      }
+      return updated;
+    });
   }
 
   async getPlans(clientId: number): Promise<Plan[]> {
@@ -912,50 +1036,138 @@ export class DatabaseStorage implements IStorage {
     const termDate = new Date(newBroker.effectiveDate);
     termDate.setDate(0);
 
-    const [currentRecord] = await db.select().from(brokerHistory)
+    // One transaction: broker_history, the flat columns on the client and
+    // broker_contacts are three descriptions of the same fact. A partial failure here
+    // is exactly the drift that keeping two tables invites.
+    await db.transaction(async (tx) => {
+    const [currentRecord] = await tx.select().from(brokerHistory)
       .where(and(eq(brokerHistory.clientId, clientId), isNull(brokerHistory.terminationDate)))
       .orderBy(desc(brokerHistory.effectiveDate))
       .limit(1);
 
-    if (!currentRecord) {
-      const client = await this.getClient(clientId);
-      if (client?.hasBroker && (client.brokerFirmName || client.brokerContactName)) {
-        const d = new Date(client.createdAt);
-        const seedDate = new Date(d.getFullYear(), d.getMonth(), 1);
-        await db.insert(brokerHistory).values({
-          clientId,
-          brokerFirmName: client.brokerFirmName,
-          brokerContactName: client.brokerContactName,
-          brokerPhone: client.brokerPhone,
-          brokerEmail: client.brokerEmail,
-          effectiveDate: seedDate,
-          terminationDate: termDate,
-        });
+      const [client] = await tx.select().from(clients).where(eq(clients.id, clientId));
+      if (!client) throw new Error(`Client ${clientId} not found`);
+
+      if (!currentRecord) {
+        if (client.hasBroker && (client.brokerFirmName || client.brokerContactName)) {
+          const d = new Date(client.createdAt);
+          const seedDate = new Date(d.getFullYear(), d.getMonth(), 1);
+          await tx.insert(brokerHistory).values({
+            clientId,
+            brokerFirmName: client.brokerFirmName,
+            brokerContactName: client.brokerContactName,
+            brokerPhone: client.brokerPhone,
+            brokerEmail: client.brokerEmail,
+            effectiveDate: seedDate,
+            terminationDate: termDate,
+          });
+        }
+      } else {
+        await tx.update(brokerHistory)
+          .set({ terminationDate: termDate })
+          .where(eq(brokerHistory.id, currentRecord.id));
       }
-    } else {
-      await db.update(brokerHistory)
-        .set({ terminationDate: termDate })
-        .where(eq(brokerHistory.id, currentRecord.id));
-    }
 
-    await db.insert(brokerHistory).values({
-      clientId,
-      brokerFirmName: newBroker.brokerFirmName,
-      brokerContactName: newBroker.brokerContactName,
-      brokerPhone: newBroker.brokerPhone,
-      brokerEmail: newBroker.brokerEmail,
-      effectiveDate: newBroker.effectiveDate,
-      terminationDate: null,
+      await tx.insert(brokerHistory).values({
+        clientId,
+        brokerFirmName: newBroker.brokerFirmName,
+        brokerContactName: newBroker.brokerContactName,
+        brokerPhone: newBroker.brokerPhone,
+        brokerEmail: newBroker.brokerEmail,
+        effectiveDate: newBroker.effectiveDate,
+        terminationDate: null,
+      });
+
+      await tx.update(clients).set({
+        brokerFirmName: newBroker.brokerFirmName,
+        brokerContactName: newBroker.brokerContactName,
+        brokerPhone: newBroker.brokerPhone,
+        brokerEmail: newBroker.brokerEmail,
+        hasBroker: true,
+        updatedAt: new Date(),
+      }).where(eq(clients.id, clientId));
+
+      // A change of broker of record replaces the people too. Terminating the outgoing
+      // contacts on the same date keeps broker_contacts and broker_history telling the
+      // same story — leaving the old firm's staff attached to the new firm is exactly
+      // the drift that having two tables invites.
+      await tx.update(brokerContacts)
+        .set({ terminationDate: termDate, isPrimary: false, updatedAt: new Date() })
+        .where(and(eq(brokerContacts.clientId, clientId), isNull(brokerContacts.terminationDate)));
+
+      if (newBroker.brokerContactName || newBroker.brokerEmail) {
+        const contactName = newBroker.brokerContactName ?? newBroker.brokerEmail!;
+        // The incoming lead may be someone already on file under a past firm — the
+        // business key is (client, name), so re-insert would collide. Reinstate instead.
+        const [prior] = await tx.select().from(brokerContacts)
+          .where(and(
+            eq(brokerContacts.clientId, clientId),
+            sql`lower(${brokerContacts.contactName}) = lower(${contactName})`,
+          ));
+        if (prior) {
+          await tx.update(brokerContacts).set({
+            email: newBroker.brokerEmail,
+            phone: newBroker.brokerPhone,
+            isPrimary: true,
+            effectiveDate: newBroker.effectiveDate,
+            terminationDate: null,
+            updatedAt: new Date(),
+          }).where(eq(brokerContacts.id, prior.id));
+        } else {
+          await tx.insert(brokerContacts).values({
+            clientId,
+            contactName,
+            email: newBroker.brokerEmail,
+            phone: newBroker.brokerPhone,
+            isPrimary: true,
+            effectiveDate: newBroker.effectiveDate,
+          });
+        }
+      }
     });
+  }
 
-    await db.update(clients).set({
-      brokerFirmName: newBroker.brokerFirmName,
-      brokerContactName: newBroker.brokerContactName,
-      brokerPhone: newBroker.brokerPhone,
-      brokerEmail: newBroker.brokerEmail,
-      hasBroker: true,
-      updatedAt: new Date(),
-    }).where(eq(clients.id, clientId));
+  async getBrokerContacts(clientId: number): Promise<BrokerContact[]> {
+    return db.select().from(brokerContacts)
+      .where(eq(brokerContacts.clientId, clientId))
+      .orderBy(desc(brokerContacts.isPrimary), asc(brokerContacts.contactName));
+  }
+
+  /**
+   * Writes the whole contact set for one client.
+   *
+   * Rows are matched to existing ones by name so that re-running a corrections file
+   * updates the person already on file instead of adding a second copy, and so that
+   * effective/termination dates survive an edit that only changed an email.
+   *
+   * The primary flag is cleared across the client first: the database allows only one
+   * serving primary per client, and clearing up front means a swap between two people
+   * does not momentarily violate it.
+   */
+  async replaceBrokerContacts(clientId: number, contacts: BrokerContactInput[]): Promise<BrokerContact[]> {
+    return db.transaction(async (tx) => applyBrokerContacts(tx, clientId, contacts));
+  }
+
+  /**
+   * Every serving broker address per client, for the email matcher. Includes the flat
+   * column so a client whose contacts were never populated still contributes its one
+   * address rather than dropping out of matching entirely.
+   */
+  async getBrokerEmailsByClient(): Promise<Map<number, string[]>> {
+    const rows = await db.select({
+      clientId: brokerContacts.clientId,
+      email: brokerContacts.email,
+    }).from(brokerContacts).where(isNull(brokerContacts.terminationDate));
+
+    const map = new Map<number, string[]>();
+    for (const r of rows) {
+      const email = r.email?.trim();
+      if (!email) continue;
+      const list = map.get(r.clientId) ?? [];
+      if (!list.some(e => e.toLowerCase() === email.toLowerCase())) list.push(email);
+      map.set(r.clientId, list);
+    }
+    return map;
   }
 
   // ── Renewal pipeline ────────────────────────────────────────────────────────

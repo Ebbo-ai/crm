@@ -26,7 +26,8 @@ interface ImportResult {
   mode: "validate" | "apply";
   applied: boolean;
   issues: ImportIssue[];
-  counts: { clients: EntityCounts; plans: EntityCounts; rateCards: EntityCounts };
+  counts: { clients: EntityCounts; plans: EntityCounts; rateCards: EntityCounts; brokerContacts: EntityCounts };
+  brokerContactsRemoved: number;
   tiersRemoved: number;
   notInFile: { clients: string[]; plans: string[] };
   flagged: { ref: string; note: string }[];
@@ -229,10 +230,18 @@ export default function CrmImportPage() {
                 <CountRow label="Clients" counts={result.counts.clients} />
                 <CountRow label="Plans" counts={result.counts.plans} />
                 <CountRow label="Rate card rows" counts={result.counts.rateCards} />
+                <CountRow label="Broker contacts" counts={result.counts.brokerContacts} />
                 {result.tiersRemoved > 0 && (
                   <p className="text-xs text-[#94A3B8] mt-3">
                     {result.tiersRemoved} tier{result.tiersRemoved === 1 ? "" : "s"} no longer listed for a plan in the
                     workbook {result.applied ? "were removed" : "will be removed"}.
+                  </p>
+                )}
+                {result.brokerContactsRemoved > 0 && (
+                  <p className="text-xs text-[#94A3B8] mt-3">
+                    {result.brokerContactsRemoved} broker contact
+                    {result.brokerContactsRemoved === 1 ? "" : "s"} no longer listed for a client in the workbook{" "}
+                    {result.applied ? "were removed" : "will be removed"}.
                   </p>
                 )}
               </CardContent>

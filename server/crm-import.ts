@@ -33,7 +33,7 @@
 import * as XLSX from "xlsx";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { clients, plans, planTiers, rateCards } from "@shared/schema";
+import { clients, plans, planTiers, rateCards, brokerContacts } from "@shared/schema";
 
 // ─── Result shapes ──────────────────────────────────────────────────────────
 
@@ -62,7 +62,10 @@ export interface ImportResult {
     clients: EntityCounts;
     plans: EntityCounts;
     rateCards: EntityCounts;
+    brokerContacts: EntityCounts;
   };
+  /** Contacts dropped because the workbook no longer lists them for that client. */
+  brokerContactsRemoved: number;
   /** Tier rows removed because the workbook no longer lists that tier for the plan. */
   tiersRemoved: number;
   /** In the database but absent from the workbook. Reported only — never deleted. */
@@ -467,10 +470,49 @@ interface ParsedRate {
   note: string | null;
 }
 
+/**
+ * One person at the brokerage, as the workbook supplies them.
+ *
+ * `provided` records which optional columns the source sheet actually carried, so the
+ * same ownership rule that governs client columns applies here: a column that is not in
+ * the sheet is never written. Without it, a file listing only names and emails would
+ * silently wipe every stored phone number and role.
+ */
+export interface ParsedBrokerContact {
+  contactName: string;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  isPrimary: boolean;
+  effectiveDate: Date | null;
+  terminationDate: Date | null;
+  provided: {
+    email: boolean;
+    phone: boolean;
+    role: boolean;
+    effectiveDate: boolean;
+    terminationDate: boolean;
+  };
+}
+
+/**
+ * The whole contact set for one client. Contacts are written as a set, not row by
+ * row, because that is the only way the file can express someone leaving the account.
+ * A set is only ever built when the workbook actually carries contact columns — see
+ * `owned()` — so a corrections file listing fees cannot wipe a client's contacts.
+ */
+export interface ParsedBrokerContactSet {
+  row: number;
+  sheet: string;
+  clientCode: string;
+  contacts: ParsedBrokerContact[];
+}
+
 export interface ParsedWorkbook {
   clients: ParsedClient[];
   plans: ParsedPlan[];
   rates: ParsedRate[];
+  brokerContacts: ParsedBrokerContactSet[];
   issues: ImportIssue[];
   flagged: { ref: string; note: string }[];
 }
@@ -495,7 +537,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
       issues.push({ severity: "error", sheet, message: `Sheet "${sheet}" is missing from the workbook.` });
     }
   }
-  if (issues.length) return { clients: [], plans: [], rates: [], issues, flagged };
+  if (issues.length) return { clients: [], plans: [], rates: [], brokerContacts: [], issues, flagged };
 
   const rowsOf = (name: string) =>
     XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[name], { defval: null });
@@ -521,7 +563,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
       });
     }
   }
-  if (issues.some((i) => i.severity === "error")) return { clients: [], plans: [], rates: [], issues, flagged };
+  if (issues.some((i) => i.severity === "error")) return { clients: [], plans: [], rates: [], brokerContacts: [], issues, flagged };
 
   const hasSurplusAsOf = headersOf("Plans").includes("surplus_deficit_as_of");
 
@@ -627,6 +669,183 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
       },
     });
   });
+
+  // ── Broker contacts ──
+  //
+  // A brokerage assigns a lead plus a service rep, sometimes a third. Two ways to
+  // carry them, both optional:
+  //
+  //   1. Numbered columns on the Clients sheet — broker_contact_role for the person
+  //      already named in broker_contact_name, then broker_contact2_* and
+  //      broker_contact3_*. Covers the common lead-plus-service-rep case in the sheet
+  //      that is already there.
+  //   2. A "Broker Contacts" sheet — one row per person, unlimited. Where both are
+  //      supplied this sheet wins for the clients it lists, because it is the more
+  //      explicit statement.
+  //
+  // Neither present means contacts are never touched. This is the same ownership rule
+  // as `owned()`: a fee corrections file must not be read as "this client has no
+  // broker contacts". Where a source IS present, it owns the whole set for that
+  // client, which is what makes removing someone expressible.
+  const parsedBrokerContacts: ParsedBrokerContactSet[] = [];
+  const contactSetByCode = new Map<string, ParsedBrokerContactSet>();
+
+  const CONTACT_COLS = [
+    "broker_contact_role",
+    "broker_contact2_name", "broker_contact2_email", "broker_contact2_phone", "broker_contact2_role",
+    "broker_contact3_name", "broker_contact3_email", "broker_contact3_phone", "broker_contact3_role",
+  ];
+  const clientsSheetCarriesContacts = CONTACT_COLS.some((c) => clientCols.has(c));
+
+  if (clientsSheetCarriesContacts) {
+    rowsOf("Clients").forEach((r, i) => {
+      const row = i + 2;
+      const clientCode = str(r.client_code);
+      if (!clientCode) return;
+
+      const contacts: ParsedBrokerContact[] = [];
+      const push = (
+        prefix: { name: string; email: string; phone: string; role: string },
+        isPrimary: boolean,
+      ) => {
+        const name = str(r[prefix.name]);
+        const email = str(r[prefix.email]);
+        if (!name && !email) return;
+        contacts.push({
+          contactName: name ?? email!,
+          email,
+          phone: str(r[prefix.phone]),
+          role: str(r[prefix.role]),
+          isPrimary,
+          effectiveDate: null,
+          terminationDate: null,
+          // Dates are never carried by the Clients sheet, so they are never owned here.
+          provided: {
+            email: clientCols.has(prefix.email),
+            phone: clientCols.has(prefix.phone),
+            role: clientCols.has(prefix.role),
+            effectiveDate: false,
+            terminationDate: false,
+          },
+        });
+      };
+      push({ name: "broker_contact_name", email: "broker_email", phone: "broker_phone", role: "broker_contact_role" }, true);
+      push({ name: "broker_contact2_name", email: "broker_contact2_email", phone: "broker_contact2_phone", role: "broker_contact2_role" }, false);
+      push({ name: "broker_contact3_name", email: "broker_contact3_email", phone: "broker_contact3_phone", role: "broker_contact3_role" }, false);
+
+      const set: ParsedBrokerContactSet = { row, sheet: "Clients", clientCode, contacts };
+      contactSetByCode.set(normalizeCode(clientCode), set);
+      parsedBrokerContacts.push(set);
+    });
+  }
+
+  if (wb.SheetNames.includes("Broker Contacts")) {
+    const bcCols = colsOf("Broker Contacts");
+    const missing = ["client_code", "contact_name"].filter((c) => !bcCols.has(c));
+    if (missing.length) {
+      issues.push({
+        severity: "error",
+        sheet: "Broker Contacts",
+        message: `Sheet "Broker Contacts" is missing required column(s): ${missing.join(", ")}.`,
+      });
+    } else {
+      // The sheet replaces anything the Clients columns produced for these clients.
+      const fromSheet = new Map<string, ParsedBrokerContactSet>();
+      rowsOf("Broker Contacts").forEach((r, i) => {
+        const row = i + 2;
+        const clientCode = str(r.client_code);
+        const contactName = str(r.contact_name);
+        if (!clientCode || !contactName) {
+          issues.push({
+            severity: "error",
+            sheet: "Broker Contacts",
+            row,
+            message: "client_code and contact_name are both required.",
+          });
+          return;
+        }
+        const key = normalizeCode(clientCode);
+        const set = fromSheet.get(key) ?? { row, sheet: "Broker Contacts", clientCode, contacts: [] };
+        set.contacts.push({
+          contactName,
+          email: str(r.contact_email),
+          phone: str(r.contact_phone),
+          role: str(r.role),
+          isPrimary: bool(r.is_primary) === true,
+          effectiveDate: date(r.effective_date),
+          terminationDate: date(r.termination_date),
+          provided: {
+            email: bcCols.has("contact_email"),
+            phone: bcCols.has("contact_phone"),
+            role: bcCols.has("role"),
+            effectiveDate: bcCols.has("effective_date"),
+            terminationDate: bcCols.has("termination_date"),
+          },
+        });
+        fromSheet.set(key, set);
+      });
+
+      for (const [key, set] of Array.from(fromSheet.entries())) {
+        const superseded = contactSetByCode.get(key);
+        if (superseded) {
+          const idx = parsedBrokerContacts.indexOf(superseded);
+          if (idx >= 0) parsedBrokerContacts.splice(idx, 1);
+        }
+        contactSetByCode.set(key, set);
+        parsedBrokerContacts.push(set);
+      }
+    }
+  }
+
+  // Validated before anything is written, for the same reason the client-name clash
+  // is: a constraint violation halfway through an import is the worst way to find out.
+  for (const set of parsedBrokerContacts) {
+    const seenNames = new Map<string, number>();
+    for (const c of set.contacts) {
+      const key = c.contactName.trim().toLowerCase();
+      seenNames.set(key, (seenNames.get(key) ?? 0) + 1);
+      if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) {
+        issues.push({
+          severity: "warning",
+          sheet: set.sheet,
+          row: set.row,
+          ref: set.clientCode,
+          message: `"${c.email}" for ${c.contactName} is not a valid email address. Stored as given — correct it at source rather than here.`,
+        });
+      }
+    }
+    for (const [name, n] of Array.from(seenNames.entries())) {
+      if (n > 1) {
+        issues.push({
+          severity: "error",
+          sheet: set.sheet,
+          row: set.row,
+          ref: set.clientCode,
+          message: `"${name}" is listed ${n} times for this client. One row per person.`,
+        });
+      }
+    }
+    const serving = set.contacts.filter((c) => !c.terminationDate);
+    const primaries = serving.filter((c) => c.isPrimary);
+    if (primaries.length > 1) {
+      issues.push({
+        severity: "error",
+        sheet: set.sheet,
+        row: set.row,
+        ref: set.clientCode,
+        message: `${primaries.length} contacts are marked primary (${primaries.map((c) => c.contactName).join(", ")}). Exactly one lead per client.`,
+      });
+    }
+    if (serving.length > 0 && primaries.length === 0) {
+      issues.push({
+        severity: "warning",
+        sheet: set.sheet,
+        row: set.row,
+        ref: set.clientCode,
+        message: "No contact marked primary — the first listed will be used as the lead, and is what the flat broker columns will mirror.",
+      });
+    }
+  }
 
   // ── Plans ──
   const parsedPlans: ParsedPlan[] = [];
@@ -860,7 +1079,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
     }
   }
 
-  return { clients: parsedClients, plans: parsedPlans, rates: parsedRates, issues, flagged };
+  return { clients: parsedClients, plans: parsedPlans, rates: parsedRates, brokerContacts: parsedBrokerContacts, issues, flagged };
 }
 
 // ─── Applying ───────────────────────────────────────────────────────────────
@@ -901,7 +1120,9 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
       clients: { created: 0, updated: 0, unchanged: 0 },
       plans: { created: 0, updated: 0, unchanged: 0 },
       rateCards: { created: 0, updated: 0, unchanged: 0 },
+      brokerContacts: { created: 0, updated: 0, unchanged: 0 },
     },
+    brokerContactsRemoved: 0,
     tiersRemoved: 0,
     notInFile: { clients: [], plans: [] },
     flagged: parsed.flagged,
@@ -1033,6 +1254,118 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
           result.counts.clients.created++;
           clientIdByCode.set(normalizeCode(c.clientCode), created.id);
         }
+      }
+
+      // ── Broker contacts ──
+      //
+      // Written as a set per client: rows matched to the person already on file by
+      // name, anyone the workbook no longer lists removed. That is what lets a
+      // corrections file record someone leaving the account, which a row-by-row
+      // upsert cannot express.
+      for (const set of parsed.brokerContacts) {
+        const norm = normalizeCode(set.clientCode);
+        let clientId = clientIdByCode.get(norm);
+        if (clientId === undefined) {
+          // Only reachable from the Broker Contacts sheet, which may name a client the
+          // Clients sheet does not repeat.
+          const candidates = byNormCode.get(norm) ?? [];
+          if (candidates.length !== 1) {
+            result.issues.push({
+              severity: "error",
+              sheet: set.sheet,
+              row: set.row,
+              ref: set.clientCode,
+              message: candidates.length === 0
+                ? `No stored client matches "${set.clientCode}".`
+                : `"${set.clientCode}" matches more than one stored client. Resolve the duplicate first.`,
+            });
+            continue;
+          }
+          clientId = candidates[0].id;
+        }
+
+        const existing = await tx.select().from(brokerContacts).where(eq(brokerContacts.clientId, clientId));
+        const byName = new Map(existing.map((r) => [r.contactName.trim().toLowerCase(), r]));
+
+        // Cleared first: only one serving primary per client is allowed, so a swap
+        // between two people would otherwise collide mid-update.
+        await tx.update(brokerContacts).set({ isPrimary: false }).where(eq(brokerContacts.clientId, clientId));
+
+        const keptIds: number[] = [];
+        for (const c of set.contacts) {
+          const prior = byName.get(c.contactName.trim().toLowerCase());
+          // A column the sheet does not carry keeps whatever is already on file, so a
+          // names-and-emails file cannot wipe stored phone numbers, roles, or the
+          // termination date that says somebody has left.
+          const keep = <T>(supplied: boolean, value: T, stored: T | undefined): T =>
+            supplied ? value : (stored ?? value);
+          const values = {
+            contactName: c.contactName.trim(),
+            email: keep(c.provided.email, c.email, prior?.email),
+            phone: keep(c.provided.phone, c.phone, prior?.phone),
+            role: keep(c.provided.role, c.role, prior?.role),
+            effectiveDate: c.provided.effectiveDate
+              ? c.effectiveDate
+              : (prior?.effectiveDate ?? c.effectiveDate),
+            terminationDate: keep(c.provided.terminationDate, c.terminationDate, prior?.terminationDate),
+            updatedAt: new Date(),
+          };
+          if (prior) {
+            const changed = changedFields(prior as any, values);
+            if (changed.length) {
+              await tx.update(brokerContacts).set(values).where(eq(brokerContacts.id, prior.id));
+              result.counts.brokerContacts.updated++;
+            } else {
+              result.counts.brokerContacts.unchanged++;
+            }
+            keptIds.push(prior.id);
+          } else {
+            const [created] = await tx.insert(brokerContacts)
+              .values({ clientId, ...values, isPrimary: false })
+              .returning({ id: brokerContacts.id });
+            result.counts.brokerContacts.created++;
+            keptIds.push(created.id);
+          }
+        }
+
+        const removed = existing.filter((r) => !keptIds.includes(r.id));
+        if (removed.length) {
+          await tx.delete(brokerContacts).where(inArray(brokerContacts.id, removed.map((r) => r.id)));
+          result.brokerContactsRemoved += removed.length;
+          for (const r of removed) {
+            result.issues.push({
+              severity: "warning",
+              sheet: set.sheet,
+              row: set.row,
+              ref: set.clientCode,
+              message: `Removed broker contact "${r.contactName}" — the workbook no longer lists them for this client.`,
+            });
+          }
+        }
+
+        // Primary last, once every other row is known to be non-primary.
+        const servingIdx = set.contacts.findIndex((c) => c.isPrimary && !c.terminationDate);
+        const fallbackIdx = set.contacts.findIndex((c) => !c.terminationDate);
+        const primaryIdx = servingIdx >= 0 ? servingIdx : fallbackIdx;
+        const primaryId = primaryIdx >= 0 ? keptIds[primaryIdx] : undefined;
+        if (primaryId !== undefined) {
+          await tx.update(brokerContacts).set({ isPrimary: true }).where(eq(brokerContacts.id, primaryId));
+        }
+
+        // Mirror the lead onto the flat columns so every reader that predates this
+        // table keeps working, and keeps showing the lead rather than whoever was
+        // written last. Read back rather than mirroring the workbook row: a column the
+        // sheet did not carry was preserved above, and the mirror has to agree with
+        // what is actually stored.
+        const [primary] = primaryId === undefined
+          ? [undefined]
+          : await tx.select().from(brokerContacts).where(eq(brokerContacts.id, primaryId));
+        await tx.update(clients).set({
+          brokerContactName: primary?.contactName ?? null,
+          brokerEmail: primary?.email ?? null,
+          brokerPhone: primary?.phone ?? null,
+          updatedAt: new Date(),
+        }).where(eq(clients.id, clientId));
       }
 
       // ── Plans ──

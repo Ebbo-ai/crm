@@ -13,3 +13,10 @@ uri = "file://reports/active-client-data-gaps-2026-08-24.xlsx"
 type = "table"
 title = "Active Client Data Gap Report — 55 clients"
 description = "Contact, broker and data-completeness gaps across all 55 active clients. Three tabs: per-client contact & broker gaps with email-match priority, other data gaps, and a summary count sheet."
+
+[[outputs]]
+id = "gRSl_x8QcKy7okqTw2Owj"
+uri = "file://reports/broker-contact-corrections-2026-08-25.xlsx"
+type = "table"
+title = "Broker contact corrections — 25 Aug 2026"
+description = "Importable workbook covering S-29, S-31, S-375, S-200 and S-216. Load it through CRM Import in preview mode first — the Review Notes sheet lists what was deliberately left alone."

@@ -469,6 +469,39 @@ export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit(
 export type BrokerHistory = typeof brokerHistory.$inferSelect;
 export type InsertBrokerHistory = z.infer<typeof insertBrokerHistorySchema>;
 
+/**
+ * The people a brokerage assigns to one client. A brokerage typically names a lead
+ * (Account Advisor, Account Executive, Implementation Manager) plus a service
+ * representative, and occasionally a third.
+ *
+ * Keyed to the client, not to a firm. The same firm serves different clients through
+ * different people — HUB International covers six clients through three separate
+ * contacts — so the contact belongs to the client-broker relationship. The firm name
+ * stays on the client record, where there is exactly one per client.
+ *
+ * `clients.broker_contact_name / broker_phone / broker_email` remain populated from
+ * whichever row is primary, so every existing reader keeps working unchanged.
+ */
+export const brokerContacts = pgTable("broker_contacts", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  contactName: text("contact_name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  /** Free text — the titles brokerages use vary and are not worth constraining. */
+  role: text("role"),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  /** Same dating pattern as broker_history: null termination means currently serving. */
+  effectiveDate: timestamp("effective_date"),
+  terminationDate: timestamp("termination_date"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertBrokerContactSchema = createInsertSchema(brokerContacts).omit({ id: true, createdAt: true, updatedAt: true });
+export type BrokerContact = typeof brokerContacts.$inferSelect;
+export type InsertBrokerContact = z.infer<typeof insertBrokerContactSchema>;
+
 // ── Renewal records (one per client per plan year) ────────────────────────────
 // A renewal opens automatically 30 days before the proposal due date
 // (anniversary − lead months − 30 days), giving staff time to produce the

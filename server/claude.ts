@@ -6,7 +6,8 @@ export interface ClientRef {
   id: number;
   clientCode: string;
   clientName: string;
-  brokerEmail?: string | null;
+  /** Every serving broker address for the client — a brokerage assigns more than one. */
+  brokerEmails?: (string | null)[] | null;
   brokerFirmName?: string | null;
   adminContactEmail?: string | null;
   decisionMakerEmail?: string | null;
@@ -34,7 +35,10 @@ export async function matchEmailToClients(
   if (!process.env.ANTHROPIC_API_KEY) return [];
 
   const clientList = clients
-    .map(c => `ID:${c.id} | Code:${c.clientCode} | Name:${c.clientName} | Broker:${c.brokerFirmName ?? ""} | BrokerEmail:${c.brokerEmail ?? ""} | AdminEmail:${c.adminContactEmail ?? ""}`)
+    .map(c => {
+      const brokerEmails = (c.brokerEmails ?? []).map(e => (e ?? "").trim()).filter(Boolean).join(", ");
+      return `ID:${c.id} | Code:${c.clientCode} | Name:${c.clientName} | Broker:${c.brokerFirmName ?? ""} | BrokerEmails:${brokerEmails} | AdminEmail:${c.adminContactEmail ?? ""} | DecisionMakerEmail:${c.decisionMakerEmail ?? ""}`;
+    })
     .join("\n");
 
   const prompt = `You are a CRM assistant for a dental/vision/hearing benefits TPA company called Simple Benefits (also known as 90 Degree Benefits).
@@ -51,6 +55,8 @@ Your job: identify which client(s) this email is about. Look for:
 - Client names mentioned in the email body
 - Group numbers like S-20, S-906, or just "Group 20"
 - Broker firm names that match a client's broker
+- Sender or recipient address appearing in a client's BrokerEmails. A client may list
+  several people at the same brokerage; a match on any one of them counts equally.
 - Email domain of sender matching a client's admin or decision maker email
 - Any other clear references
 

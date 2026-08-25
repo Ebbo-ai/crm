@@ -679,6 +679,15 @@ function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
     effectiveYear: String(currentYear),
   });
 
+  // The brokerage assigns a lead plus a service rep, sometimes a third. The flat
+  // columns on the client still mirror the primary, but the card lists everyone.
+  const { data: contacts = [] } = useQuery<any[]>({
+    queryKey: ["/api/clients", String(clientId), "broker-contacts"],
+    queryFn: () =>
+      fetch(`/api/clients/${clientId}/broker-contacts`, { credentials: "include" })
+        .then(r => r.ok ? r.json() : []),
+  });
+
   const { data: history = [], isLoading: historyLoading } = useQuery<any[]>({
     queryKey: ["/api/clients", String(clientId), "broker-history"],
     queryFn: () =>
@@ -700,6 +709,7 @@ function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId)] });
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "broker-history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "broker-contacts"] });
       setChangeOpen(false);
       setForm(f => ({ ...f, brokerFirmName: "", brokerContactName: "", brokerPhone: "", brokerEmail: "" }));
       toast({ title: "Broker updated", description: "The broker has been changed and history recorded." });
@@ -750,19 +760,58 @@ function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
             <Building2 className="w-4 h-4 text-[#94A3B8]" />
             <p className="text-sm font-medium text-[#2C3E50]">{client.brokerFirmName}</p>
           </div>
-          <p className="text-sm text-[#2C3E50] pl-6">{client.brokerContactName}</p>
-          <div className="flex flex-wrap gap-3 pl-6">
-            {client.brokerPhone && (
-              <a href={`tel:${client.brokerPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                <Phone className="w-3 h-3" /> {client.brokerPhone}
-              </a>
-            )}
-            {client.brokerEmail && (
-              <a href={`mailto:${client.brokerEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
-                <Mail className="w-3 h-3" /> {client.brokerEmail}
-              </a>
-            )}
-          </div>
+          {contacts.length > 0 ? (
+            <div className="pl-6 space-y-3" data-testid="list-broker-contacts">
+              {contacts.map((bc: any) => (
+                <div key={bc.id} data-testid={`broker-contact-${bc.id}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm text-[#2C3E50]">{bc.contactName}</p>
+                    {bc.isPrimary && (
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#1A5276]/10 text-[#1A5276]">
+                        Primary
+                      </span>
+                    )}
+                    {bc.role && <span className="text-xs text-[#94A3B8]">{bc.role}</span>}
+                    {bc.terminationDate && (
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#94A3B8]/15 text-[#64748B]">
+                        Former
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-3 mt-0.5">
+                    {bc.phone && (
+                      <a href={`tel:${bc.phone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Phone className="w-3 h-3" /> {bc.phone}
+                      </a>
+                    )}
+                    {bc.email && (
+                      <a href={`mailto:${bc.email}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                        <Mail className="w-3 h-3" /> {bc.email}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            // No contact rows yet — fall back to the flat columns so a client whose
+            // contacts have never been edited still shows whatever is on file.
+            <>
+              <p className="text-sm text-[#2C3E50] pl-6">{client.brokerContactName}</p>
+              <div className="flex flex-wrap gap-3 pl-6">
+                {client.brokerPhone && (
+                  <a href={`tel:${client.brokerPhone}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                    <Phone className="w-3 h-3" /> {client.brokerPhone}
+                  </a>
+                )}
+                {client.brokerEmail && (
+                  <a href={`mailto:${client.brokerEmail}`} className="flex items-center gap-1 text-xs text-[#2E86C1]">
+                    <Mail className="w-3 h-3" /> {client.brokerEmail}
+                  </a>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

@@ -34,6 +34,7 @@ import {
   pprMetrics,
   planPerformanceFacts,
   brokerHistory,
+  brokerContacts,
   communicationClients,
   communicationTasks,
   communications,
@@ -158,6 +159,9 @@ export const DELETE_ORDER = [
   // anything, and be misread as the new clients' history.
   { table: "ppr_metrics", rel: pprMetrics },
   { table: "broker_history", rel: brokerHistory },
+  // Cascades from clients, but deleted explicitly so the row count is reported like
+  // every other table rather than vanishing silently in the client delete.
+  { table: "broker_contacts", rel: brokerContacts },
   { table: "documents", rel: documents },
   { table: "renewal_plan_options", rel: renewalPlanOptions },
   { table: "renewal_progress", rel: renewalProgress },

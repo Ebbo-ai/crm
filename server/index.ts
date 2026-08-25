@@ -769,6 +769,71 @@ app.use((req, res, next) => {
         ON renewal_plan_options (renewal_id, plan_id);
     `);
 
+    // ── Phase 15: Broker contacts as their own rows ───────────────────────────
+    //
+    // A brokerage assigns a lead plus a service rep to an account, sometimes a third.
+    // The four flat columns on clients hold exactly one person, so a second could only
+    // be recorded by overwriting the first. Contacts are keyed to the client rather
+    // than to a firm: the same firm serves different clients through different people.
+    //
+    // The flat columns stay, mirrored from whichever row is primary, so every existing
+    // reader keeps working.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS broker_contacts (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        contact_name TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        role TEXT,
+        is_primary BOOLEAN NOT NULL DEFAULT false,
+        effective_date TIMESTAMP,
+        termination_date TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Business key for the workbook import: one row per named person per client.
+    // Re-running a corrections file must update that person, never add a second copy.
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS broker_contacts_client_name_unique
+        ON broker_contacts (client_id, lower(contact_name));
+    `);
+
+    // At most one serving primary per client. Enforced in the database because the
+    // flat mirror on clients reads from it — two primaries would make the mirrored
+    // value depend on row order.
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS broker_contacts_one_primary_per_client
+        ON broker_contacts (client_id)
+        WHERE is_primary AND termination_date IS NULL;
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS broker_contacts_client_idx ON broker_contacts (client_id);
+    `);
+
+    // Seed from the flat columns so the table is populated on first boot rather than
+    // sitting empty the way broker_history did. Only for clients that have no rows
+    // yet, so this cannot overwrite contacts entered later — it re-runs every boot.
+    // COALESCE to the email: a client holding an address but no name would otherwise
+    // be dropped from the contact list while still showing in the flat mirror.
+    await pool.query(`
+      INSERT INTO broker_contacts (client_id, contact_name, email, phone, is_primary, effective_date)
+      SELECT c.id,
+             COALESCE(NULLIF(TRIM(c.broker_contact_name), ''), TRIM(c.broker_email)),
+             NULLIF(TRIM(c.broker_email), ''),
+             NULLIF(TRIM(c.broker_phone), ''),
+             true,
+             c.created_at
+      FROM clients c
+      WHERE c.has_broker
+        AND COALESCE(NULLIF(TRIM(c.broker_contact_name), ''), NULLIF(TRIM(c.broker_email), '')) IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM broker_contacts bc WHERE bc.client_id = c.id)
+      ON CONFLICT DO NOTHING;
+    `);
+
     await pool.query(`
       DO $$ BEGIN
         -- Documents can attach to a specific renewal year (proposal, signed form,
