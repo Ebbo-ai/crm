@@ -786,12 +786,19 @@ app.use((req, res, next) => {
         email TEXT,
         phone TEXT,
         role TEXT,
+        notes TEXT,
         is_primary BOOLEAN NOT NULL DEFAULT false,
         effective_date TIMESTAMP,
         termination_date TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
+    `);
+
+    // Free-text notes on a contact. Separate ALTER because the table above is only
+    // created once: installs that already ran Phase 15 would never see the column.
+    await pool.query(`
+      ALTER TABLE broker_contacts ADD COLUMN IF NOT EXISTS notes TEXT;
     `);
 
     // Business key for the workbook import: one row per named person per client.

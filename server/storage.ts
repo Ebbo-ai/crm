@@ -32,6 +32,7 @@ export interface BrokerContactInput {
   email?: string | null;
   phone?: string | null;
   role?: string | null;
+  notes?: string | null;
   isPrimary?: boolean;
   effectiveDate?: Date | null;
   terminationDate?: Date | null;
@@ -196,8 +197,13 @@ async function applyBrokerContacts(
       email: c.email?.trim() || null,
       phone: c.phone?.trim() || null,
       role: c.role?.trim() || null,
+      notes: c.notes?.trim() || null,
       effectiveDate: c.effectiveDate ?? prior?.effectiveDate ?? null,
-      terminationDate: c.terminationDate ?? null,
+      // Only cleared when the caller actually said null. An omitted termination date
+      // is a caller that does not edit dates, not an assertion that the person is
+      // back on the account — and re-serving them would also make them eligible to
+      // become the primary again, which the flat mirror then publishes.
+      terminationDate: c.terminationDate !== undefined ? c.terminationDate : (prior?.terminationDate ?? null),
       updatedAt: new Date(),
     };
     if (prior) {

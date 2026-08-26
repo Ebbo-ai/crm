@@ -56,3 +56,19 @@ missing TLD, a transposed letter in a domain.
 becomes a plausible-looking match target for incoming mail.
 
 **How to apply:** store the value as given, warn, and let a human decide.
+
+## A contact set write must distinguish "omitted" from "explicitly null"
+
+The whole contact set is replaced on every write, so a caller that does not know about a
+field still sends a row without it. Treating that silence as null is what loses data.
+
+**Why:** the contact editor carries name, role, email, phone and notes but not the dates.
+Reading its silence as "clear the termination date" meant saving any unrelated field
+resurrected a departed contact — and because the flat columns mirror the primary, that
+person could then be republished as the client's broker.
+
+**How to apply:** at the API boundary check whether the key is *present*, not whether the
+value is truthy, and pass `undefined` through when it is absent. The writer keeps the
+stored value on `undefined` and only clears on an explicit `null`. The workbook importer
+already encodes the same idea one level up, per column rather than per cell: a column
+absent from the sheet is never written, a present-but-blank cell is a real null.

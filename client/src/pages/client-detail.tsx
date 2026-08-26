@@ -790,6 +790,14 @@ function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
                       </a>
                     )}
                   </div>
+                  {bc.notes && (
+                    <p
+                      className="mt-1 text-xs text-[#64748B] italic whitespace-pre-wrap"
+                      data-testid={`broker-contact-notes-${bc.id}`}
+                    >
+                      {bc.notes}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

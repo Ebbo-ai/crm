@@ -490,6 +490,13 @@ export const brokerContacts = pgTable("broker_contacts", {
   phone: text("phone"),
   /** Free text — the titles brokerages use vary and are not worth constraining. */
   role: text("role"),
+  /**
+   * Free text for anything the structured fields cannot hold — "from the 2024
+   * workbook, may no longer be on the account", "prefers phone", a second address
+   * the person also uses. Deliberately unstructured: the alternative is inventing a
+   * column every time a one-off fact turns up.
+   */
+  notes: text("notes"),
   isPrimary: boolean("is_primary").notNull().default(false),
   /** Same dating pattern as broker_history: null termination means currently serving. */
   effectiveDate: timestamp("effective_date"),

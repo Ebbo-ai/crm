@@ -1,0 +1,22 @@
+client_code,client_name,contact_type,contact_name,contact_email,contact_phone,role,is_primary,firm,evidence
+S-29,Gainesville City Schools,broker,Alexis Stein,alexis.stein@hubinternational.com,,Account Advisor,TRUE,"Alexander & Company, a division of HUB International Gulf South",own signature block
+S-29,Gainesville City Schools,broker,Andrea Hagen,andrea.hagen@hubinternational.com,,,FALSE,"Alexander & Company, a division of HUB International Gulf South",copied on all Gainesville mail; Karen Hickey confirmed
+S-375,Murray County Schools,broker,Alexis Stein,alexis.stein@hubinternational.com,,Account Advisor,TRUE,"Alexander & Company, a division of HUB International Gulf South",CORRECTS stored astein@hubinternational.com
+S-375,Murray County Schools,broker,Andrea Hagen,andrea.hagen@hubinternational.com,,,FALSE,"Alexander & Company, a division of HUB International Gulf South",copied on Murray mail
+S-31,Gordon County Schools,broker,Karen Hickey,karen.hickey@hubinternational.com,,Implementation Manager,TRUE,"Alexander & Company, a division of HUB International Gulf South",CORRECTS stored Alexis Stein - wrong broker
+S-31,Gordon County Schools,broker,Nicholas Williams,nicholas.williams@hubinternational.com,,,FALSE,"Alexander & Company, a division of HUB International Gulf South",cc on Gordon renewal correspondence
+S-200,Saturn of St. Paul,broker,Thea Sklenar,Thea.Sklenar@usi.com,,,TRUE,USI Insurance Services,Missy renewal correspondence
+S-200,Saturn of St. Paul,broker,Tammy Anderson,tammy.anderson@usi.com,,,FALSE,USI Insurance Services,cc on Saturn correspondence
+S-480,MountainSeed Appraisal Management,broker,Amy Towe,amy.towe@imacorp.com,,VP Senior Client Executive,TRUE,IMA Corp / The Benefit Company,asked directly to be added to communication list Aug 2026
+S-480,MountainSeed Appraisal Management,broker,Christine Muro,Christine.Muro@imacorp.com,,,FALSE,IMA Corp / The Benefit Company,also uses cmuro@benefitcompany.com; renewal sent here Aug 13
+S-480,MountainSeed Appraisal Management,client,Cherie Pritchard,cpritchard@mountainseed.com,,,TRUE,,90DB agreement list + Missy correspondence
+S-465,Alamosa State Bank,broker,Audra Velasquez,audra-velasquez@leavitt.com,,,TRUE,Leavitt Group,renewal sent Aug 17; DB currently has_broker=FALSE which is WRONG
+S-465,Alamosa State Bank,broker,Christina Scanga,christina-scanga@leavitt.com,,Health & Life Account Coordinator,FALSE,Leavitt Group,active Aug 19-21 correspondence
+S-465,Alamosa State Bank,client,Kate Ruybal,,,,TRUE,,90DB agreement list - email not found
+S-459,Grand County Schools,broker,Dan Dixon,dan@directbenefits.biz,,,TRUE,Direct Benefits,renewal sent Jul 24; signed copy returned
+S-459,Grand County Schools,client,Krista Wilson,,,,TRUE,,90DB agreement list - email not found
+S-455,Thomas County,broker,Annette Griffin,annette@totemsolutions.com,,,TRUE,Totem Solutions,90DB agreement list marked Agent + Colquitt correspondence
+S-46,Ware County Schools,broker,Annette Griffin,annette@totemsolutions.com,,,TRUE,Totem Solutions,90DB agreement list marked Agent
+S-216,"Consulting Radiologists, LTD.",client,Kellie Haehnel,kellie.haehnel@crlmed.com,,,TRUE,,Missy handoff note; has_broker should be FALSE; terminating 9/30/26
+S-472,"Cini-Little International, Inc.",broker,Paula Brennan,,,,TRUE,Gallagher,Allison correspondence re contract request
+S-472,"Cini-Little International, Inc.",client,Kate Petrovich,,,,TRUE,,90DB agreement list - email not found

@@ -483,6 +483,7 @@ export interface ParsedBrokerContact {
   email: string | null;
   phone: string | null;
   role: string | null;
+  notes: string | null;
   isPrimary: boolean;
   effectiveDate: Date | null;
   terminationDate: Date | null;
@@ -490,6 +491,7 @@ export interface ParsedBrokerContact {
     email: boolean;
     phone: boolean;
     role: boolean;
+    notes: boolean;
     effectiveDate: boolean;
     terminationDate: boolean;
   };
@@ -716,14 +718,17 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
           email,
           phone: str(r[prefix.phone]),
           role: str(r[prefix.role]),
+          notes: null,
           isPrimary,
           effectiveDate: null,
           terminationDate: null,
-          // Dates are never carried by the Clients sheet, so they are never owned here.
+          // Dates and notes are never carried by the Clients sheet, so they are never
+          // owned here — use the Broker Contacts sheet to write them.
           provided: {
             email: clientCols.has(prefix.email),
             phone: clientCols.has(prefix.phone),
             role: clientCols.has(prefix.role),
+            notes: false,
             effectiveDate: false,
             terminationDate: false,
           },
@@ -771,6 +776,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
           email: str(r.contact_email),
           phone: str(r.contact_phone),
           role: str(r.role),
+          notes: str(r.notes),
           isPrimary: bool(r.is_primary) === true,
           effectiveDate: date(r.effective_date),
           terminationDate: date(r.termination_date),
@@ -778,6 +784,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
             email: bcCols.has("contact_email"),
             phone: bcCols.has("contact_phone"),
             role: bcCols.has("role"),
+            notes: bcCols.has("notes"),
             effectiveDate: bcCols.has("effective_date"),
             terminationDate: bcCols.has("termination_date"),
           },
@@ -1304,6 +1311,7 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
             email: keep(c.provided.email, c.email, prior?.email),
             phone: keep(c.provided.phone, c.phone, prior?.phone),
             role: keep(c.provided.role, c.role, prior?.role),
+            notes: keep(c.provided.notes, c.notes, prior?.notes),
             effectiveDate: c.provided.effectiveDate
               ? c.effectiveDate
               : (prior?.effectiveDate ?? c.effectiveDate),

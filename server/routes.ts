@@ -100,14 +100,20 @@ function parseBrokerContacts(body: any): { contacts?: BrokerContactInput[]; erro
   for (const c of body.brokerContacts) {
     const contactName = String(c?.contactName ?? "").trim();
     if (!contactName) continue;
-    const parseDate = (v: any, field: string): Date | null | string => {
+    // An absent key and an explicit null mean different things, and the difference
+    // matters: the contact editor does not carry the dates at all, so treating its
+    // silence as "clear them" would wipe the termination date that records somebody
+    // having left the account every time an unrelated field is saved. Absent leaves
+    // the stored value alone; null clears it.
+    const parseDate = (present: boolean, v: any, field: string): Date | null | string | undefined => {
+      if (!present) return undefined;
       if (v === undefined || v === null || v === "") return null;
       const d = new Date(v);
       return isNaN(d.getTime()) ? `"${v}" is not a valid ${field} for ${contactName}.` : d;
     };
-    const effectiveDate = parseDate(c?.effectiveDate, "effective date");
+    const effectiveDate = parseDate(c != null && "effectiveDate" in c, c?.effectiveDate, "effective date");
     if (typeof effectiveDate === "string") return { error: effectiveDate };
-    const terminationDate = parseDate(c?.terminationDate, "termination date");
+    const terminationDate = parseDate(c != null && "terminationDate" in c, c?.terminationDate, "termination date");
     if (typeof terminationDate === "string") return { error: terminationDate };
 
     contacts.push({
@@ -115,6 +121,7 @@ function parseBrokerContacts(body: any): { contacts?: BrokerContactInput[]; erro
       email: c?.email ? String(c.email).trim() : null,
       phone: c?.phone ? String(c.phone).trim() : null,
       role: c?.role ? String(c.role).trim() : null,
+      notes: c?.notes ? String(c.notes).trim() : null,
       isPrimary: Boolean(c?.isPrimary),
       effectiveDate,
       terminationDate,

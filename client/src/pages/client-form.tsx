@@ -4,6 +4,7 @@ import { useLocation, useParams } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -32,6 +33,7 @@ interface BrokerContactRow {
   email: string;
   phone: string;
   role: string;
+  notes: string;
   isPrimary: boolean;
 }
 
@@ -40,6 +42,7 @@ const emptyBrokerContact = (isPrimary = false): BrokerContactRow => ({
   email: "",
   phone: "",
   role: "",
+  notes: "",
   isPrimary,
 });
 
@@ -211,6 +214,7 @@ export default function ClientFormPage() {
         email: c.email || "",
         phone: c.phone || "",
         role: c.role || "",
+        notes: c.notes || "",
         isPrimary: !!c.isPrimary,
       })));
     } else if (existingClient?.brokerContactName || existingClient?.brokerEmail) {
@@ -221,6 +225,7 @@ export default function ClientFormPage() {
         email: existingClient.brokerEmail || "",
         phone: existingClient.brokerPhone || "",
         role: "",
+        notes: "",
         isPrimary: true,
       }]);
     }
@@ -326,6 +331,7 @@ export default function ClientFormPage() {
         email: c.email.trim() || null,
         phone: c.phone.trim() || null,
         role: c.role.trim() || null,
+        notes: c.notes.trim() || null,
         isPrimary: c.isPrimary,
       }));
     data.brokerContacts = contacts;
@@ -740,6 +746,17 @@ export default function ClientFormPage() {
                               data-testid={`input-broker-contact-phone-${i}`}
                             />
                           </div>
+                        </div>
+                        <div>
+                          <OptionalLabel htmlFor={`bc-notes-${i}`}>Notes</OptionalLabel>
+                          <Textarea
+                            id={`bc-notes-${i}`}
+                            rows={2}
+                            value={c.notes}
+                            onChange={e => updateBrokerContact(i, { notes: e.target.value })}
+                            placeholder="Anything the fields above cannot hold — history on the account, a second address, how they prefer to be reached…"
+                            data-testid={`input-broker-contact-notes-${i}`}
+                          />
                         </div>
                         <div className="flex items-center justify-between">
                           <label className="flex items-center gap-2 text-xs text-[#2C3E50] cursor-pointer">
