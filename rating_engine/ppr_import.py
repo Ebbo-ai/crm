@@ -225,18 +225,35 @@ def process_file(file_bytes: bytes, file_ext: str, context: dict) -> dict:
         if report_year is None or report_year < 2000:
             hold_reasons.append("Invalid or missing report_year")
 
-        # A terminated plan still legitimately receives claims for months at or
-        # before its termination date — run-out claims are real and import
-        # normally. A claims row for a month after termination is held rather
-        # than imported or silently dropped, since it points at coverage that
-        # no longer existed for that month.
-        if plan and plan.get("termination_date") and report_month and report_year:
-            term = _date_or_none(plan["termination_date"])
-            if term and (report_year, report_month) > (term.year, term.month):
+        # Termination does not stop claims arriving. Run-out claims are paid for
+        # three months past the termination date and are entirely legitimate, so
+        # they import normally; only rows after the run-out window has closed are
+        # held. `claims_cutoff_ym` is the last year-month that may still import,
+        # computed by the Node layer (shared/client-state.ts) so the run-out
+        # length is defined in exactly one place and the two sides cannot drift.
+        row_ym = None
+        if report_month and report_year:
+            row_ym = report_year * 12 + (report_month - 1)
+
+        def _closed_reason(what: str, raw_term) -> str:
+            term = _date_or_none(raw_term)
+            effective = f" effective {term.isoformat()}" if term else ""
+            return (
+                f"{what} terminated{effective} and the three-month run-out window "
+                f"has closed; this row is for {report_year}-{report_month:02d}. "
+                "Claims within the run-out window import normally."
+            )
+
+        if row_ym is not None and plan and plan.get("claims_cutoff_ym") is not None:
+            if row_ym > plan["claims_cutoff_ym"]:
                 hold_reasons.append(
-                    f"Plan '{plan_name}' was terminated effective {term.isoformat()}; "
-                    f"this row is for {report_year}-{report_month:02d}, after termination. "
-                    "Run-out claims for the termination month or earlier import normally."
+                    _closed_reason(f"Plan '{plan_name}' was", plan.get("termination_date"))
+                )
+
+        if row_ym is not None and client and client.get("claims_cutoff_ym") is not None:
+            if row_ym > client["claims_cutoff_ym"]:
+                hold_reasons.append(
+                    _closed_reason(f"Client {client_code} was", client.get("termination_date"))
                 )
 
         if submitted is not None and paid is not None and paid > submitted:

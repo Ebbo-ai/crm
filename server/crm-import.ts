@@ -1240,12 +1240,13 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
           // The difference is reported instead, as something to decide deliberately.
           if (existing.clientCode !== values.clientCode) delete values.clientCode;
 
-          // clientStatus is a workflow field the application owns, not a column the
-          // workbook supplies. Only reconcile it when it plainly contradicts the
-          // active flag, and never overwrite PROSPECT — that is a stage the
-          // spreadsheet knows nothing about.
-          if (values.isActive === false && existing.clientStatus === "ACTIVE") values.clientStatus = "TERMINATED";
-          else if (values.isActive === true && existing.clientStatus === "TERMINATED") values.clientStatus = "ACTIVE";
+          // clientStatus is never reconciled against the active flag here. It now
+          // carries prospect-versus-client only; whether a client is active,
+          // terminating, in run-out or closed is derived from the termination date
+          // (see shared/client-state.ts). Writing TERMINATED because a workbook
+          // said is_active=false is exactly the contradiction that model removes:
+          // it would flatten a client with a known future departure into a closed
+          // one and cut off their run-out PPRs and claims.
 
           const changed = changedFields(existing as any, values);
           if (changed.length) {
@@ -1256,7 +1257,10 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
           }
           clientIdByCode.set(normalizeCode(c.clientCode), existing.id);
         } else {
-          values.clientStatus = values.isActive === false ? "TERMINATED" : "ACTIVE";
+          // clientStatus is deliberately not inferred here either. A new row with
+          // is_active=false and no termination date already derives as CLOSED,
+          // which is exactly the legacy shape; writing a duplicate lifecycle
+          // status alongside the date is what let the two disagree before.
           const [created] = await tx.insert(clients).values(values as any).returning({ id: clients.id });
           result.counts.clients.created++;
           clientIdByCode.set(normalizeCode(c.clientCode), created.id);

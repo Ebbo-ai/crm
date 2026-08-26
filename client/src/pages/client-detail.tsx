@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle, CalendarClock } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
+import { ClientStateBadge, clientStateSummary } from "@/components/client-state-badge";
 import { getClientCompleteness } from "@/lib/client-completeness";
 import {
   getRenewalTimingWarning, getProposalDueDate,
@@ -158,19 +159,11 @@ export default function ClientDetailPage() {
               <p className="text-sm text-[#94A3B8]">{client.city}, {client.state}</p>
             </div>
           </div>
-          <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ml-2 ${
-            client.clientStatus === "ACTIVE" || (!client.clientStatus && client.isActive)
-              ? "bg-[#22C55E]/10 text-[#22C55E]"
-              : client.clientStatus === "PROSPECT"
-                ? "bg-[#2E86C1]/10 text-[#2E86C1]"
-                : "bg-[#EF4444]/10 text-[#EF4444]"
-          }`} data-testid="badge-client-status">
-            {client.clientStatus === "ACTIVE" || (!client.clientStatus && client.isActive)
-              ? "Active"
-              : client.clientStatus === "PROSPECT"
-                ? "Prospect"
-                : "Terminated"}
-          </span>
+          <ClientStateBadge
+            client={client}
+            className="text-xs px-2.5 py-1 ml-2"
+            testId="badge-client-status"
+          />
           {client.zeroPayFlag && (
             <span
               className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#F97316]/10 text-[#F97316] flex items-center gap-1"
@@ -271,7 +264,22 @@ export default function ClientDetailPage() {
                   </span>
                 </InfoRow>
                 {client.networkActive && <InfoRow label="Network" value={client.dentalNetworkName || "Active"} />}
-                {client.terminationDate && <InfoRow label="Termination Date" value={new Date(client.terminationDate).toLocaleDateString()} />}
+                {client.terminationDate && (
+                  <InfoRow label="Termination Date" value={new Date(client.terminationDate).toLocaleDateString()} />
+                )}
+                {/* Spelled out rather than left as arithmetic on the termination
+                    date, so nobody has to count three months forward in their head
+                    to know whether claims and PPRs are still expected. */}
+                {client.terminationDate && (() => {
+                  const { state, closes } = clientStateSummary(client);
+                  if (!closes) return null;
+                  return (
+                    <InfoRow
+                      label={state === "CLOSED" ? "Run-Out Ended" : "Run-Out Closes"}
+                      value={closes.toLocaleDateString()}
+                    />
+                  );
+                })()}
               </CardContent>
             </Card>
 
@@ -563,7 +571,16 @@ export default function ClientDetailPage() {
         </TabsContent>
 
         <TabsContent value="pipeline">
-          <PipelineTab clientId={clientId} clientStatus={client.clientStatus ?? (client.isActive ? "ACTIVE" : "TERMINATED")} />
+          {/* The pipeline tab only distinguishes prospect, live and gone. A
+              terminating or run-out client is still live: renewals are suppressed
+              but the pipeline history stays on view. */}
+          <PipelineTab
+            clientId={clientId}
+            clientStatus={(() => {
+              const s = clientStateSummary(client).state;
+              return s === "PROSPECT" ? "PROSPECT" : s === "CLOSED" ? "TERMINATED" : "ACTIVE";
+            })()}
+          />
         </TabsContent>
 
         <TabsContent value="banking">

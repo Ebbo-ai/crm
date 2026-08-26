@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { countsAsActive, deriveClientState } from "@shared/client-state";
 import {
   Users, UserCheck, UserX, AlertCircle, CalendarClock, Search, CheckCircle2,
   Upload, FileText, TrendingUp, TrendingDown, Minus, BarChart2, RefreshCw,
@@ -285,7 +286,9 @@ function DashboardCreateIssueDialog({ open, onClose }: { open: boolean; onClose:
 
   const { data: allClients = [] } = useQuery<any[]>({ queryKey: ["/api/clients"], enabled: open });
 
-  const activeClients = allClients.filter((c: any) => c.isActive);
+  // Terminating and run-out clients are still being serviced, so issues can still
+  // be raised against them. Only genuinely closed accounts drop off the list.
+  const activeClients = allClients.filter((c: any) => countsAsActive(deriveClientState(c)));
 
   const mutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/clients/${clientId}/issues`, { title, description, issueType: issueType || null }),

@@ -4,6 +4,7 @@ import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, 
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
+import { ClientStateBadge } from "@/components/client-state-badge";
 
 export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const [location] = useLocation();
@@ -123,11 +124,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
                       <div className="text-sm font-medium text-[#2C3E50]">{client.clientName}</div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-xs text-[#94A3B8]">{client.city}, {client.state}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                          client.isActive ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                        }`}>
-                          {client.isActive ? "Active" : "Terminated"}
-                        </span>
+                        <ClientStateBadge client={client} className="text-[10px] px-1.5 py-0.5" />
                       </div>
                     </div>
                   </Link>

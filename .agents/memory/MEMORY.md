@@ -11,3 +11,4 @@
 - [Dev server reload](dev-server-reload.md) — no watch flag, so new API routes silently return Vite's SPA shell with a 200 until the workflow restarts.
 - [Client data reset](client-data-reset.md) — wipe/re-import carries mail links by client code; snapshot must share the delete's transaction; re-attach normalises padding, storage never does.
 - [Plan termination date](plan-termination.md) — plans.terminationDate is separate from isArchived and from client-level status; enforced in renewals, claims import, PPR, and client detail.
+- [Client termination and run-out](client-termination.md) — a termination date stops renewals only; state is derived from the date alone and PPRs/claims continue through a fixed three-month run-out.

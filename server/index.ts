@@ -238,11 +238,17 @@ app.use((req, res, next) => {
         SELECT * FROM plan_performance_facts
         WHERE superseded_at IS NULL;
 
-      -- Back-fill clientStatus for existing terminated clients
-      UPDATE clients
-        SET client_status = 'TERMINATED'
-        WHERE (is_active = false OR termination_date IS NOT NULL)
-          AND client_status = 'ACTIVE';
+      -- NOTE: there was a back-fill here that set client_status = 'TERMINATED'
+      -- wherever (is_active = false OR termination_date IS NOT NULL). It has been
+      -- removed deliberately and must not come back.
+      --
+      -- Client lifecycle state is now derived from termination_date (see
+      -- shared/client-state.ts). A date one to four months out means TERMINATING:
+      -- the renewal stops but the client stays active and serviced. Because this
+      -- statement re-ran on every boot, it would convert exactly that case into a
+      -- flatly terminated client at the next restart, which is the opposite of
+      -- what the date now means. Legacy dateless terminations are handled in the
+      -- derivation instead, so nothing needs back-filling here.
     `);
 
     // Phase 2: Import batches & held rows

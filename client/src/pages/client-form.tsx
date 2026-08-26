@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { US_STATES, formatPhone } from "@/lib/constants";
+import { deriveClientState, runOutEndDate } from "@shared/client-state";
 import { ArrowLeft, Save, Plus, Trash2 } from "lucide-react";
 
 const planTypeOptions = [
@@ -281,8 +282,11 @@ export default function ClientFormPage() {
     if (form.zipCode && !/^\d{5}(-\d{4})?$/.test(form.zipCode))
       errs.zipCode = "Invalid ZIP format (00000 or 00000-0000)";
 
-    // Termination date must be end-of-month
-    if (form.clientStatus === "TERMINATED" && form.terminationDate) {
+    // Termination date must be end-of-month. Checked for any client carrying a
+    // date, not just an already-closed one: the common case now is recording a
+    // future departure while the client is still active, and the whole state
+    // model compares whole months, so a mid-month date would read oddly.
+    if (form.clientStatus !== "PROSPECT" && form.terminationDate) {
       const d = new Date(form.terminationDate + "T00:00:00");
       if (!isLastDayOfMonth(d))
         errs.terminationDate = "Termination date must be the last day of a calendar month";
@@ -318,7 +322,10 @@ export default function ClientFormPage() {
       numberOfEmployees: form.numberOfEmployees !== "" ? Number(form.numberOfEmployees) : null,
     };
     data.isActive = data.clientStatus === "ACTIVE";
-    if (data.clientStatus === "TERMINATED" && data.terminationDate) {
+    // A termination date is now recorded on a client that is still active: that
+    // is what a known future departure looks like. Only prospects, which are not
+    // on the termination axis at all, force it back to null.
+    if (data.clientStatus !== "PROSPECT" && data.terminationDate) {
       data.terminationDate = new Date(data.terminationDate + "T00:00:00");
     } else {
       data.terminationDate = null;
@@ -906,7 +913,9 @@ export default function ClientFormPage() {
                 value={form.clientStatus}
                 onValueChange={v => {
                   updateField("clientStatus", v);
-                  if (v !== "TERMINATED") updateField("terminationDate", "");
+                  // Prospects are not on the termination axis at all. Every other
+                  // status keeps whatever date has been entered.
+                  if (v === "PROSPECT") updateField("terminationDate", "");
                 }}
               >
                 <SelectTrigger id="clientStatus" data-testid="select-client-status">
@@ -915,18 +924,18 @@ export default function ClientFormPage() {
                 <SelectContent>
                   <SelectItem value="ACTIVE">Active — current client</SelectItem>
                   <SelectItem value="PROSPECT">Prospect — quoting, not yet signed</SelectItem>
-                  <SelectItem value="TERMINATED">Terminated — no longer active</SelectItem>
+                  <SelectItem value="TERMINATED">Terminated — closed, no date on file</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-[#94A3B8] mt-1">
                 {form.clientStatus === "PROSPECT"
                   ? "Prospect clients are being quoted but have not yet signed."
                   : form.clientStatus === "TERMINATED"
-                    ? "Terminated clients are retained for historical reference."
-                    : "Active clients are currently covered under a plan."}
+                    ? "Legacy state for accounts closed before termination dates were recorded. To end an account now, leave the status on Active and set a termination date below."
+                    : "To end an account, keep this on Active and set a termination date below. The client stays active and serviced until run-out closes."}
               </p>
             </div>
-            {form.clientStatus === "TERMINATED" && (
+            {form.clientStatus !== "PROSPECT" && (
               <div>
                 <OptionalLabel htmlFor="terminationDate">Termination Date</OptionalLabel>
                 <Input
@@ -936,8 +945,41 @@ export default function ClientFormPage() {
                   onChange={e => updateField("terminationDate", e.target.value)}
                   data-testid="input-termination-date"
                 />
-                <p className="text-xs text-[#94A3B8] mt-1">Must be the last day of a calendar month</p>
+                <p className="text-xs text-[#94A3B8] mt-1">
+                  Must be the last day of a calendar month. Setting it stops the renewal straight
+                  away; services, PPRs and claims continue through the run-out window.
+                </p>
                 <FieldError field="terminationDate" />
+                {form.terminationDate && (() => {
+                  const state = deriveClientState({
+                    clientStatus: form.clientStatus,
+                    isActive: true,
+                    terminationDate: form.terminationDate,
+                  });
+                  const closes = runOutEndDate(form.terminationDate);
+                  if (!closes) return null;
+                  const closesLabel = closes.toLocaleDateString(undefined, {
+                    month: "long", day: "numeric", year: "numeric",
+                  });
+                  const message =
+                    state === "TERMINATING"
+                      ? `Terminating. The renewal stops as soon as this is saved. Services, PPRs and claims continue until run-out closes on ${closesLabel}.`
+                      : state === "RUN_OUT"
+                        ? `In run-out. Services, PPRs and claims continue until run-out closes on ${closesLabel}.`
+                        : `Closed. Run-out ended ${closesLabel}, so new PPRs are no longer generated and incoming claims are held.`;
+                  return (
+                    <p
+                      className={`text-xs mt-2 rounded-md px-3 py-2 ${
+                        state === "CLOSED"
+                          ? "bg-[#EF4444]/10 text-[#EF4444]"
+                          : "bg-[#F59E0B]/10 text-[#B45309]"
+                      }`}
+                      data-testid="text-termination-effect"
+                    >
+                      {message}
+                    </p>
+                  );
+                })()}
               </div>
             )}
           </CardContent>

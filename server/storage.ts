@@ -25,6 +25,7 @@ import {
   type PprImportBatch, type InsertPprImportBatch,
   type PprHeldRow, type InsertPprHeldRow,
 } from "@shared/schema";
+import { countsAsActive, deriveClientState } from "@shared/client-state";
 
 /** One person at the brokerage, as supplied by the form or the workbook import. */
 export interface BrokerContactInput {
@@ -279,17 +280,24 @@ export class DatabaseStorage implements IStorage {
     if (search) {
       conditions.push(ilike(clients.clientName, `%${search}%`));
     }
-    if (status === "active") {
-      conditions.push(eq(clients.clientStatus, "ACTIVE" as any));
-    } else if (status === "terminated") {
-      conditions.push(eq(clients.clientStatus, "TERMINATED" as any));
-    } else if (status === "prospect") {
-      conditions.push(eq(clients.clientStatus, "PROSPECT" as any));
-    }
-
-    const clientList = conditions.length > 0
+    const matched = conditions.length > 0
       ? await db.select().from(clients).where(and(...conditions)).orderBy(asc(clients.clientName))
       : await db.select().from(clients).orderBy(asc(clients.clientName));
+
+    // Status is derived from the termination date, not filtered in SQL. The
+    // run-out boundary is month arithmetic against today, which SQL would have to
+    // re-spell and could then quietly disagree with the rest of the app. A
+    // terminating or run-out client is still being serviced, so it belongs in the
+    // Active tab, not hidden away under Terminated.
+    const clientList = status
+      ? matched.filter((c) => {
+          const state = deriveClientState(c);
+          if (status === "active") return state !== "PROSPECT" && countsAsActive(state);
+          if (status === "terminated") return state === "CLOSED";
+          if (status === "prospect") return state === "PROSPECT";
+          return true;
+        })
+      : matched;
 
     const result = await Promise.all(
       clientList.map(async (client) => {
@@ -713,8 +721,19 @@ export class DatabaseStorage implements IStorage {
 
   async getDashboardStats() {
     const [totalResult] = await db.select({ count: count() }).from(clients);
-    const [activeResult] = await db.select({ count: count() }).from(clients).where(eq(clients.isActive, true));
-    const [terminatedResult] = await db.select({ count: count() }).from(clients).where(eq(clients.isActive, false));
+    // Counted from the derived state so the tiles agree with the Clients tabs.
+    // A client in its notice period or run-out still counts as active here,
+    // because it is still being serviced.
+    const allClientRows = await db.select().from(clients);
+    const activeResult = {
+      count: allClientRows.filter((c) => {
+        const state = deriveClientState(c);
+        return state !== "PROSPECT" && countsAsActive(state);
+      }).length,
+    };
+    const terminatedResult = {
+      count: allClientRows.filter((c) => deriveClientState(c) === "CLOSED").length,
+    };
     const [issueResult] = await db.select({ count: count() }).from(issues).where(eq(issues.status, "ACTIVE"));
 
     const sixtyDaysFromNow = new Date();
@@ -780,7 +799,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDashboardRenewals(): Promise<any[]> {
-    const activeClients = await db.select().from(clients).where(eq(clients.isActive, true));
+    // Only genuinely active clients have a renewal to chase. A client with a
+    // known departure drops off this list immediately, even though it stays
+    // active everywhere else.
+    const activeClients = (await db.select().from(clients))
+      .filter((c) => deriveClientState(c) === "ACTIVE");
     const today = new Date();
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const result: any[] = [];
@@ -1257,6 +1280,9 @@ export class DatabaseStorage implements IStorage {
 
     for (const { plan, client, prog } of renewalRows) {
       if (prog?.step7Date) continue;
+      // Renewals are suppressed once a departure is known, so a terminating or
+      // run-out client must not be reported as a stalled pipeline.
+      if (deriveClientState(client) !== "ACTIVE") continue;
 
       const eff = plan.effectiveDate instanceof Date
         ? new Date(plan.effectiveDate.getTime())

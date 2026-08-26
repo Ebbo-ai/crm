@@ -3,6 +3,15 @@ import { createServer, type Server } from "http";
 import { storage, type BrokerContactInput } from "./storage";
 import { db } from "./db";
 import { renewals, renewalPlanOptions } from "@shared/schema";
+import {
+  RUN_OUT_MONTHS,
+  countsAsActive,
+  deriveClientState,
+  generatesPpr,
+  runOutEndYearMonth,
+  suppressesRenewals,
+  toYearMonth,
+} from "@shared/client-state";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
@@ -738,7 +747,13 @@ async function renderRenewalReport(payload: any, format: "html" | "pdf") {
  * make the duplicate impossible rather than merely unlikely.
  */
 async function ensureOpenRenewal(client: any, today = new Date()) {
-  if (!client?.anniversaryDate || client.clientStatus === "TERMINATED") return null;
+  if (!client?.anniversaryDate) return null;
+
+  // A known departure ends the renewal immediately, not on the termination date.
+  // Steve learns one to four months ahead, and the renewal should stop the moment
+  // he does — so this keys off the derived state (TERMINATING counts) rather than
+  // waiting for the date to pass or for a status field to be flipped by hand.
+  if (suppressesRenewals(deriveClientState(client, today))) return null;
 
   // A client with every plan terminated has nothing to renew. Skip opening a
   // renewal for them, but the client itself is never touched — it stays fully
@@ -847,9 +862,38 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * A termination date is always the last day of a calendar month. The whole
+   * lifecycle model compares whole months, and that is how the business records
+   * a departure, so a mid-month date is malformed rather than merely unusual.
+   * Checked here as well as in the form, because the form is not the only way a
+   * date reaches this column.
+   *
+   * Deliberately reads the raw request value rather than a parsed Date: a
+   * "2026-09-30" string becomes UTC midnight, which is the 29th in a
+   * negative-offset zone, and a local-time check would reject a perfectly good
+   * month-end date.
+   */
+  function terminationDateError(raw: unknown): string | null {
+    if (raw === null || raw === undefined || raw === "") return null;
+    let y: number, m: number, d: number;
+    const iso = typeof raw === "string" ? /^(\d{4})-(\d{2})-(\d{2})/.exec(raw) : null;
+    if (iso) {
+      [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+    } else if (raw instanceof Date && !isNaN(raw.getTime())) {
+      [y, m, d] = [raw.getUTCFullYear(), raw.getUTCMonth() + 1, raw.getUTCDate()];
+    } else {
+      return null; // not a shape we can judge; the column conversion will complain
+    }
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return d === lastDay ? null : "Termination date must be the last day of a calendar month";
+  }
+
   app.post("/api/clients", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
+      const termError = terminationDateError(req.body.terminationDate);
+      if (termError) return res.status(400).json({ message: termError });
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
       }
@@ -906,7 +950,10 @@ export async function registerRoutes(
       // would never fire for them, so the record would never be created — the
       // client would surface only if someone happened to open their detail page.
       for (const client of allClients) {
-        if (!client.anniversaryDate || client.clientStatus === "TERMINATED") continue;
+        if (!client.anniversaryDate) continue;
+        // Also drops any renewal opened before the departure was known: the row
+        // stays as history, it just stops being chased.
+        if (suppressesRenewals(deriveClientState(client, today))) continue;
 
         const renewal = await ensureOpenRenewal(client, today);
         if (!renewal) continue; // No open renewal — either not due yet, or finished.
@@ -1151,6 +1198,8 @@ export async function registerRoutes(
   app.put("/api/clients/:id", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
+      const termError = terminationDateError(req.body.terminationDate);
+      if (termError) return res.status(400).json({ message: termError });
       if (body.terminationDate && typeof body.terminationDate === "string") {
         body.terminationDate = new Date(body.terminationDate);
       }
@@ -2497,10 +2546,12 @@ export async function registerRoutes(
 
       // ── STEP 3: Claude enrichment (parallel) ───────────────────────────────
       const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
-      // Only live clients are candidates. The terminated ones still carry broker firms
+      // Only live clients are candidates. The closed ones still carry broker firms
       // and contact emails, so leaving them in the list lets a closed account win a
       // domain or firm match against the active client the email is actually about.
-      const allClients = (await storage.getClients()).filter(c => c.isActive);
+      // Terminating and run-out clients stay in: that is precisely when the
+      // correspondence about winding the account down arrives.
+      const allClients = (await storage.getClients()).filter(c => countsAsActive(deriveClientState(c)));
       // Every person the brokerage has on the account, not just the lead. Correspondence
       // routinely arrives from the service rep, who is not the mirrored flat address.
       const brokerEmailMap = await storage.getBrokerEmailsByClient();
@@ -2879,12 +2930,20 @@ export async function registerRoutes(
       ]);
 
       const context = {
-        clients: allClients.map(c => ({ id: c.id, client_code: c.clientCode, client_name: c.clientName })),
+        // `claims_cutoff_ym` is the last year-month whose claims may still import,
+        // computed here rather than in the parser so the run-out length is defined
+        // in exactly one place and the two sides cannot drift apart.
+        clients: allClients.map(c => ({
+          id: c.id, client_code: c.clientCode, client_name: c.clientName,
+          termination_date: c.terminationDate ?? null,
+          claims_cutoff_ym: runOutEndYearMonth(c.terminationDate),
+        })),
         plans: allPlans.map(p => ({
           id: p.id, client_id: p.clientId, plan_name: p.planName,
           effective_date: p.effectiveDate, plan_year: p.planYear,
           coverage_type: p.coverageType ?? null,
           termination_date: p.terminationDate ?? null,
+          claims_cutoff_ym: runOutEndYearMonth(p.terminationDate),
         })),
         current_facts: allFacts.map(f => ({
           id: f.id, client_id: f.clientId, plan_id: f.planId,
@@ -3126,6 +3185,17 @@ export async function registerRoutes(
     const client = await storage.getClient(clientId);
     if (!client) throw Object.assign(new Error("Client not found"), { status: 404 });
 
+    // Terminating and run-out clients keep producing PPRs; that is the service
+    // continuing through the departure. Only once run-out has closed does the
+    // client go archive-only, where previously saved reports stay readable but
+    // no new one is generated.
+    if (!generatesPpr(deriveClientState(client))) {
+      throw Object.assign(
+        new Error("This client's run-out window has closed, so new PPRs are no longer generated. Previously saved reports remain available under Documents."),
+        { status: 409 },
+      );
+    }
+
     const clientPlans = (await storage.getPlans(clientId)).filter(p => !p.isArchived);
     if (!clientPlans.length) throw Object.assign(new Error("No active plans for this client"), { status: 404 });
 
@@ -3153,16 +3223,17 @@ export async function registerRoutes(
         planMonths.push({ month: m, year: y });
       }
 
-      // A terminated plan still renders for the plan year it was in force,
-      // through its termination month, then stops. It never appears in a plan
-      // year that begins entirely after its termination — otherwise a plan
-      // gone for years would keep resurfacing on every later PPR.
+      // A terminated plan renders through its termination month AND through the
+      // run-out window after it. Those trailing months are the point: claims paid
+      // in October, November and December for a plan that ended September 30 are
+      // real, and a PPR that stopped at September would simply not show them.
+      // The plan still never appears in a plan year that begins after run-out has
+      // closed, otherwise a plan gone for years keeps resurfacing on every PPR.
       if (plan.terminationDate) {
-        const term = new Date(plan.terminationDate);
-        const termYm = term.getFullYear() * 12 + term.getMonth();
+        const lastYm = runOutEndYearMonth(plan.terminationDate)!;
         const windowStartYm = planMonths[0].year * 12 + (planMonths[0].month - 1);
-        if (termYm < windowStartYm) continue;
-        planMonths = planMonths.filter(({ month, year }) => year * 12 + (month - 1) <= termYm);
+        if (lastYm < windowStartYm) continue;
+        planMonths = planMonths.filter(({ month, year }) => year * 12 + (month - 1) <= lastYm);
       }
 
       const planFacts = allFacts.filter(f => f.planId === plan.id);
@@ -3317,7 +3388,10 @@ export async function registerRoutes(
         return res.send(pdfBytes);
       }
     } catch (err: any) {
-      if ((err as any).status === 404) return res.status(404).json({ message: err.message });
+      // Honour whatever status the thrown error carries, not just 404. The
+      // archive-only refusal for a client past run-out is a 409, and reporting it
+      // as a 500 would read as a broken server rather than a deliberate rule.
+      if ((err as any).status) return res.status((err as any).status).json({ message: err.message });
       res.status(500).json({ message: err.message });
     }
   });
@@ -3376,7 +3450,10 @@ export async function registerRoutes(
 
       res.json({ document: doc, generatorVersion, reportPlanYear });
     } catch (err: any) {
-      if ((err as any).status === 404) return res.status(404).json({ message: err.message });
+      // Honour whatever status the thrown error carries, not just 404. The
+      // archive-only refusal for a client past run-out is a 409, and reporting it
+      // as a 500 would read as a broken server rather than a deliberate rule.
+      if ((err as any).status) return res.status((err as any).status).json({ message: err.message });
       res.status(500).json({ message: err.message });
     }
   });

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Plus, Users, Building2, MapPin } from "lucide-react";
 import { PLAN_TYPE_LABELS } from "@/lib/constants";
+import { ClientStateBadge } from "@/components/client-state-badge";
 import { getClientCompleteness } from "@/lib/client-completeness";
 import {
   getRenewalTimingWarning, getProposalDueDate,
@@ -117,15 +118,11 @@ export default function ClientsPage() {
                         {client.clientName}
                       </h3>
                     </div>
-                    <span className={`text-[10px] px-2 py-1 rounded-full font-semibold flex-shrink-0 ${
-                      client.clientStatus === "ACTIVE"
-                        ? "bg-[#22C55E]/10 text-[#22C55E]"
-                        : client.clientStatus === "PROSPECT"
-                          ? "bg-[#2E86C1]/10 text-[#2E86C1]"
-                          : "bg-[#EF4444]/10 text-[#EF4444]"
-                    }`} data-testid={`badge-status-${client.id}`}>
-                      {client.clientStatus === "ACTIVE" ? "Active" : client.clientStatus === "PROSPECT" ? "Prospect" : "Terminated"}
-                    </span>
+                    <ClientStateBadge
+                      client={client}
+                      className="text-[10px] px-2 py-1"
+                      testId={`badge-status-${client.id}`}
+                    />
                   </div>
 
                   <div className="space-y-2 text-sm">

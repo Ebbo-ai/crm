@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Printer, Download, Search, FileText, Building2, Users } from "lucide-react";
 import { PLAN_TYPE_LABELS, PLAN_BASIS_LABELS, TIER_LABELS, parseLocalDate, formatCurrency } from "@/lib/constants";
+import { clientStateLabel, deriveClientState } from "@shared/client-state";
+import { CLIENT_STATE_HEX } from "@/components/client-state-badge";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -216,7 +218,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
     </div>
     <div style="background:#F5A623;padding:14px 30px;display:flex;justify-content:space-between;align-items:center;">
       <div style="font-size:20px;font-weight:800;color:#1A5276;">${client.clientName}</div>
-      <div style="background:${client.isActive ? "#22C55E" : "#EF4444"};color:white;padding:4px 14px;border-radius:20px;font-size:10px;font-weight:800;letter-spacing:1px;">${client.isActive ? "ACTIVE" : "TERMINATED"}</div>
+      <div style="background:${CLIENT_STATE_HEX[deriveClientState(client)].solid};color:white;padding:4px 14px;border-radius:20px;font-size:10px;font-weight:800;letter-spacing:1px;">${clientStateLabel(deriveClientState(client)).toUpperCase()}</div>
     </div>
     <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;border:1px solid #E2E8F0;border-top:0;border-radius:0 0 0 0;">
       <div style="padding:16px 22px;border-right:1px solid #E2E8F0;">
@@ -277,7 +279,7 @@ function buildBrokerReportHtml(firm: string, clients: any[]): string {
         <td style="padding:10px 14px;text-align:center;color:#2C3E50;">${anniversary}</td>
         <td style="padding:10px 14px;text-align:center;font-weight:700;color:#1A5276;font-size:15px;">${(c.numberOfEmployees ?? 0).toLocaleString()}</td>
         <td style="padding:10px 14px;text-align:center;">
-          <span style="background:${c.isActive ? "#DCFCE7" : "#FEE2E2"};color:${c.isActive ? "#166534" : "#991B1B"};padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;">${c.isActive ? "Active" : "Terminated"}</span>
+          <span style="background:${CLIENT_STATE_HEX[deriveClientState(c)].bg};color:${CLIENT_STATE_HEX[deriveClientState(c)].fg};padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;">${clientStateLabel(deriveClientState(c))}</span>
         </td>
       </tr>`;
   }).join("");
@@ -376,8 +378,11 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
       </div>
       <div className="bg-[#F5A623] px-7 py-3 flex justify-between items-center">
         <span className="text-[#1A5276] text-lg font-extrabold">{client.clientName}</span>
-        <span className={`text-[10px] font-bold px-3 py-1 rounded-full text-white ${client.isActive ? "bg-[#22C55E]" : "bg-[#EF4444]"}`}>
-          {client.isActive ? "ACTIVE" : "TERMINATED"}
+        <span
+          className="text-[10px] font-bold px-3 py-1 rounded-full text-white"
+          style={{ background: CLIENT_STATE_HEX[deriveClientState(client)].solid }}
+        >
+          {clientStateLabel(deriveClientState(client)).toUpperCase()}
         </span>
       </div>
 
@@ -583,8 +588,14 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
                   <td className="px-4 py-3 text-center text-[#2C3E50] text-xs">{anniversary}</td>
                   <td className="px-4 py-3 text-center font-bold text-[#1A5276]">{(c.numberOfEmployees ?? 0).toLocaleString()}</td>
                   <td className="px-4 py-3 text-center">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${c.isActive ? "bg-[#DCFCE7] text-[#166534]" : "bg-[#FEE2E2] text-[#991B1B]"}`}>
-                      {c.isActive ? "Active" : "Terminated"}
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                      style={{
+                        background: CLIENT_STATE_HEX[deriveClientState(c)].bg,
+                        color: CLIENT_STATE_HEX[deriveClientState(c)].fg,
+                      }}
+                    >
+                      {clientStateLabel(deriveClientState(c))}
                     </span>
                   </td>
                 </tr>
