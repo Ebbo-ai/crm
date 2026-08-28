@@ -783,6 +783,93 @@ app.use((req, res, next) => {
         ON communication_tasks (status, priority, sort_order);
     `);
 
+    // ── Phase 17: To-dos that did not arrive as email ─────────────────────────
+    // Sits before Phase 10 in the file because Phase 10 must stay last.
+    //
+    // Two structural limits are lifted here.
+    //
+    //   1. A task no longer needs an email behind it. Service work happens on
+    //      the phone and in conversation, and none of it could be recorded
+    //      while communication_id was NOT NULL.
+    //
+    //   2. A task can be about more than one client, through task_clients.
+    //      Until now the email path faked that by writing one duplicate row per
+    //      matched client, which meant the same job had to be resolved twice
+    //      and the same note typed twice. One row, many clients, one resolution.
+    //
+    // No rows in task_clients means the to-do belongs to the business rather
+    // than to an account. That is a legitimate outcome, not a failed match.
+    await pool.query(`ALTER TABLE communication_tasks ALTER COLUMN communication_id DROP NOT NULL;`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS task_clients (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES communication_tasks(id) ON DELETE CASCADE,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        match_confidence TEXT NOT NULL DEFAULT 'manual'
+      );
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS task_clients_task_client_idx
+        ON task_clients (task_id, client_id);
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS task_clients_client_idx ON task_clients (client_id);
+    `);
+
+    // Every task that predates the join table carries its single client across,
+    // so the client record keeps showing the same work it showed yesterday.
+    await pool.query(`
+      INSERT INTO task_clients (task_id, client_id, match_confidence)
+      SELECT t.id, t.client_id, 'migrated'
+        FROM communication_tasks t
+       WHERE t.client_id IS NOT NULL
+      ON CONFLICT (task_id, client_id) DO NOTHING;
+    `);
+
+    // Collapse the duplicates the old email path left behind, so history obeys
+    // the same rule as new work: one job, one task, resolved once.
+    //
+    // A group is only touched when it is safe to touch: same message, identical
+    // wording, every row still unresolved and not one of them carrying a note.
+    // The rows being removed are machine-written copies of each other, so
+    // nothing a person typed is lost. Any group where somebody has already
+    // resolved a copy, or written a note on one, is left exactly as it is:
+    // those notes are permanent and merging them would mean choosing which
+    // account's account of events survives.
+    //
+    // The survivor is the row that has already been prioritised onto the to-do
+    // list if there is one, otherwise the oldest, and it inherits every
+    // client the group covered.
+    const duplicateGroups = `
+      SELECT communication_id, description,
+             (array_agg(id ORDER BY (status = 'TODO') DESC, id))[1] AS keep_id,
+             array_agg(id) AS all_ids
+        FROM communication_tasks
+       WHERE communication_id IS NOT NULL
+       GROUP BY communication_id, description
+      HAVING count(*) > 1
+         AND bool_and(status IN ('OPEN', 'TODO'))
+         AND bool_and(resolution_note IS NULL)
+    `;
+    await pool.query(`
+      WITH grp AS (${duplicateGroups})
+      INSERT INTO task_clients (task_id, client_id, match_confidence)
+      SELECT g.keep_id, tc.client_id, 'migrated'
+        FROM grp g
+        JOIN task_clients tc ON tc.task_id = ANY(g.all_ids)
+      ON CONFLICT (task_id, client_id) DO NOTHING;
+    `);
+    const collapsed = await pool.query(`
+      WITH grp AS (${duplicateGroups})
+      DELETE FROM communication_tasks t
+       USING grp g
+       WHERE t.id = ANY(g.all_ids) AND t.id <> g.keep_id;
+    `);
+    if (collapsed.rowCount) {
+      log(`Startup migration: collapsed ${collapsed.rowCount} duplicate task row(s) onto shared tasks`);
+    }
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at

@@ -12,4 +12,5 @@
 - [Client data reset](client-data-reset.md) — wipe/re-import carries mail links by client code; snapshot must share the delete's transaction; re-attach normalises padding, storage never does.
 - [Plan termination date](plan-termination.md) — plans.terminationDate is separate from isArchived and from client-level status; enforced in renewals, claims import, PPR, and client detail.
 - [Communication triage](communication-triage.md) — nothing is deletable, notes are mandatory and permanent; undo only reverses an unexpired READ_NO_TASK; transitions enforced in SQL predicates.
+- [Manual to-dos and multi-client tasks](manual-todos.md) — clients live in a join table, flat client_id is a mirror; General means nothing attached; never merge duplicates carrying a human note.
 - [Client termination and run-out](client-termination.md) — a termination date stops renewals only; state is derived from the date alone and PPRs/claims continue through a fixed three-month run-out.

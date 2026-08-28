@@ -4,7 +4,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { ResolveDialog, AddToTodoDialog } from "@/components/resolution-dialogs";
-import { CheckCircle2, ListPlus, Clock, User } from "lucide-react";
+import { CheckCircle2, ListPlus, Clock, User, Building2 } from "lucide-react";
 import { format } from "date-fns";
 import { PRIORITY_LABEL, PRIORITY_STYLE, type TaskPriority } from "@shared/communication-state";
 
@@ -18,6 +18,11 @@ export interface TaskLike {
   resolvedAt: string | null;
   resolvedBy: string | null;
   origin: string;
+  /**
+   * The clients the task covers. Absent on the older callers that never had
+   * more than one; empty means the work belongs to the business.
+   */
+  clients?: { id: number; clientName: string; clientCode: string }[];
 }
 
 function dueStatus(dueDate: string | null) {
@@ -102,6 +107,20 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
             )}
             {task.origin === "MANUAL" && (
               <span className="text-[9px] text-[#94A3B8] uppercase tracking-wider">added by hand</span>
+            )}
+            {/* Shown only when the task covers more than the record you are
+                looking at, or no client at all. Repeating the current client's
+                own name on its own record would just be noise. */}
+            {task.clients && task.clients.length !== 1 && (
+              task.clients.length === 0 ? (
+                <span className="text-[9px] text-[#1A5276] uppercase tracking-wider inline-flex items-center gap-0.5" data-testid={`badge-general-${task.id}`}>
+                  <Building2 className="w-2.5 h-2.5" /> General
+                </span>
+              ) : (
+                <span className="text-[9px] text-[#94A3B8]" data-testid={`badge-task-clients-${task.id}`}>
+                  also on {task.clients.length - 1} other client{task.clients.length > 2 ? "s" : ""}
+                </span>
+              )
             )}
           </div>
 

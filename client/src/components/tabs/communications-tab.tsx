@@ -15,7 +15,7 @@ import { TaskRow, type TaskLike } from "@/components/task-actions";
 import { formatDistanceToNow, format } from "date-fns";
 import {
   Mail, Paperclip, CheckSquare, ChevronDown, ChevronUp, AlertTriangle,
-  Plus, Send, Sparkles, Loader2, Download, CheckCircle2, User,
+  Plus, Send, Sparkles, Loader2, Download, CheckCircle2, User, ListTodo,
 } from "lucide-react";
 
 interface CommAttachment {
@@ -402,6 +402,12 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
     staleTime: 0,
   });
 
+  const { data: manualTodos = [] } = useQuery<TaskLike[]>({
+    queryKey: ["/api/clients", String(clientId), "manual-todos"],
+    queryFn: () => fetch(`/api/clients/${clientId}/manual-todos`, { credentials: "include" }).then(r => r.json()),
+    staleTime: 0,
+  });
+
   const { active, resolved } = useMemo(() => ({
     active: comms.filter(c => c.status !== "RESOLVED"),
     resolved: comms.filter(c => c.status === "RESOLVED"),
@@ -491,6 +497,34 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
           <Plus className="w-3.5 h-3.5" /> Add Communication
         </Button>
       </div>
+
+      {/* Work captured by hand: a phone call, a conversation. There is no
+          message to nest it under, so it gets its own section rather than
+          disappearing because nothing was emailed. */}
+      {manualTodos.length > 0 && (
+        <Card className="border-0 shadow-sm" data-testid="card-manual-todos">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-2.5">
+              <ListTodo className="w-4 h-4 text-[#1A5276]" />
+              <span className="text-sm font-semibold text-[#1A5276]">Added by hand</span>
+              <span className="text-xs text-[#94A3B8]">{manualTodos.length}</span>
+              <span className="text-[10px] text-[#94A3B8] ml-1">no email behind these</span>
+            </div>
+            <div className="space-y-1.5">
+              {manualTodos.map(t => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  extraKeys={[
+                    ["/api/clients", String(clientId), "communications"],
+                    ["/api/clients", String(clientId), "manual-todos"],
+                  ]}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading ? (
         <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24" />)}</div>

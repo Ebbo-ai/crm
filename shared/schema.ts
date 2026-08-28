@@ -395,7 +395,19 @@ export const communicationAttachments = pgTable("communication_attachments", {
 
 export const communicationTasks = pgTable("communication_tasks", {
   id: serial("id").primaryKey(),
-  communicationId: integer("communication_id").notNull(),
+  /**
+   * The email this task came out of, or null when Kim typed it herself.
+   *
+   * Nullable because real service work happens on the phone and in the
+   * corridor, not only in the mailbox. A task with no communication is a
+   * manually captured to-do and has no conversation to resolve alongside it.
+   */
+  communicationId: integer("communication_id"),
+  /**
+   * Mirror of the first attached client, kept so older callers that expect a
+   * single client keep working. `task_clients` is the truth: a task can be
+   * about more than one account, and about none at all.
+   */
   clientId: integer("client_id"),
   description: text("description").notNull(),
   dueDate: timestamp("due_date"),
@@ -418,6 +430,25 @@ export const communicationTasks = pgTable("communication_tasks", {
   origin: text("origin").notNull().default("AI"),
   /** Manual drag ordering within a priority section. Lower sorts first. */
   sortOrder: integer("sort_order").notNull().default(0),
+});
+
+/**
+ * Which clients a task is about. Many-to-many on purpose.
+ *
+ * "Call Annette to discuss the Ware and Thomas renewals" is one job, one phone
+ * call and one resolution, but it touches two accounts and must appear on both
+ * records. Duplicating the task per client would make Kim resolve the same call
+ * twice and write the same note twice.
+ *
+ * No rows at all is a legitimate state: the to-do belongs to the business
+ * rather than to any account, and shows up as General.
+ */
+export const taskClients = pgTable("task_clients", {
+  id: serial("id").primaryKey(),
+  taskId: integer("task_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  /** high | medium | low from the AI, or "manual" when a person attached it. */
+  matchConfidence: text("match_confidence").notNull().default("manual"),
 });
 
 export const auditLogs = pgTable("audit_logs", {
@@ -449,6 +480,7 @@ export const insertCommunicationAttachmentSchema = createInsertSchema(communicat
 export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).omit({
   id: true, createdAt: true, completedAt: true, resolvedAt: true, resolvedBy: true, todoAddedAt: true,
 });
+export const insertTaskClientSchema = createInsertSchema(taskClients).omit({ id: true });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
@@ -498,6 +530,8 @@ export type CommunicationAttachment = typeof communicationAttachments.$inferSele
 export type InsertCommunicationAttachment = z.infer<typeof insertCommunicationAttachmentSchema>;
 export type CommunicationTask = typeof communicationTasks.$inferSelect;
 export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSchema>;
+export type TaskClient = typeof taskClients.$inferSelect;
+export type InsertTaskClient = z.infer<typeof insertTaskClientSchema>;
 
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;

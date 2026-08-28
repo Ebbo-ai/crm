@@ -16,14 +16,18 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ResolveDialog } from "@/components/resolution-dialogs";
 import { formatDistanceToNow } from "date-fns";
-import { GripVertical, CheckCircle2, ListTodo, ArrowRight, Clock } from "lucide-react";
+import { AddTodoDialog } from "@/components/add-todo-dialog";
+import { GripVertical, CheckCircle2, ListTodo, ArrowRight, Clock, Plus, Building2 } from "lucide-react";
 import {
   TASK_PRIORITIES, PRIORITY_LABEL, PRIORITY_STYLE, type TaskPriority,
 } from "@shared/communication-state";
 
 export interface Todo {
   id: number;
-  communicationId: number;
+  /** Null when Kim typed the to-do herself: there is no email behind it. */
+  communicationId: number | null;
+  /** Every client this to-do touches. Empty means it belongs to the business. */
+  clients: { id: number; clientName: string; clientCode: string }[];
   clientId: number | null;
   clientName: string | null;
   clientCode: string | null;
@@ -39,11 +43,12 @@ export interface Todo {
 }
 
 function SortableTodoRow({
-  todo, onResolve, onOpen,
+  todo, onResolve, onOpen, onOpenClient,
 }: {
   todo: Todo;
   onResolve: () => void;
   onOpen: () => void;
+  onOpenClient: (clientId: number) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id });
   const style = {
@@ -71,19 +76,42 @@ function SortableTodoRow({
         <GripVertical className="w-4 h-4" />
       </button>
 
-      <button onClick={onOpen} className="flex-1 min-w-0 text-left" data-testid={`button-open-todo-${todo.id}`}>
-        <p className="text-sm text-[#2C3E50] leading-snug">{todo.description}</p>
+      <div className="flex-1 min-w-0">
+        <button onClick={onOpen} className="w-full text-left" data-testid={`button-open-todo-${todo.id}`}>
+          <p className="text-sm text-[#2C3E50] leading-snug">{todo.description}</p>
+        </button>
+
+        {/* Each client is its own link: a to-do covering two accounts has two
+            places to go, and picking one for her would be a guess. */}
         <p className="text-[11px] text-[#94A3B8] mt-0.5 truncate">
-          {todo.clientName ?? "No client"}
+          {todo.clients.length === 0 ? (
+            <span className="inline-flex items-center gap-1 text-[#1A5276]" data-testid={`text-todo-general-${todo.id}`}>
+              <Building2 className="w-2.5 h-2.5" /> General
+            </span>
+          ) : (
+            todo.clients.map((c, i) => (
+              <span key={c.id}>
+                {i > 0 && <span className="mx-1">·</span>}
+                <button
+                  onClick={() => onOpenClient(c.id)}
+                  className="hover:text-[#1A5276] hover:underline"
+                  data-testid={`button-todo-client-${todo.id}-${c.id}`}
+                >
+                  {c.clientName}
+                </button>
+              </span>
+            ))
+          )}
           {todo.communicationSubject && <span className="mx-1.5">·</span>}
           {todo.communicationSubject}
         </p>
+
         <p className="text-[10px] text-[#94A3B8] mt-0.5 inline-flex items-center gap-1">
           <Clock className="w-2.5 h-2.5" />
           waiting {formatDistanceToNow(new Date(waitingSince))}
           {todo.origin === "MANUAL" && <span className="ml-1.5 text-[#1A5276]">· added by hand</span>}
         </p>
-      </button>
+      </div>
 
       <div className="flex items-center gap-1 flex-shrink-0">
         <Button
@@ -108,12 +136,13 @@ function SortableTodoRow({
 }
 
 function PrioritySection({
-  priority, todos, onResolve, onOpen,
+  priority, todos, onResolve, onOpen, onOpenClient,
 }: {
   priority: TaskPriority;
   todos: Todo[];
   onResolve: (t: Todo) => void;
   onOpen: (t: Todo) => void;
+  onOpenClient: (clientId: number) => void;
 }) {
   const { toast } = useToast();
   const style = PRIORITY_STYLE[priority];
@@ -169,7 +198,13 @@ function PrioritySection({
         <SortableContext items={order.map(t => t.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-1.5">
             {order.map(t => (
-              <SortableTodoRow key={t.id} todo={t} onResolve={() => onResolve(t)} onOpen={() => onOpen(t)} />
+              <SortableTodoRow
+                key={t.id}
+                todo={t}
+                onResolve={() => onResolve(t)}
+                onOpen={() => onOpen(t)}
+                onOpenClient={onOpenClient}
+              />
             ))}
           </div>
         </SortableContext>
@@ -187,6 +222,7 @@ export default function TodoList() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [resolving, setResolving] = useState<Todo | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const { data: todos = [], isLoading } = useQuery<Todo[]>({ queryKey: ["/api/todos"] });
 
@@ -212,9 +248,27 @@ export default function TodoList() {
     onError: (e: any) => toast({ title: "Could not resolve", description: e.message, variant: "destructive" }),
   });
 
+  const openClient = (clientId: number) => setLocation(`/clients/${clientId}?tab=communications`);
+
+  /**
+   * Where clicking the to-do itself goes.
+   *
+   * With no client it belongs to the business, so it goes to the general list.
+   * With clients it goes to the first one, and the message it came from when
+   * there was one. Where there are several clients she picks by name instead:
+   * the row lists them all.
+   */
   const open = (t: Todo) => {
-    if (!t.clientId) return;
-    setLocation(`/clients/${t.clientId}?tab=communications&comm=${t.communicationId}`);
+    const first = t.clients[0];
+    if (!first) {
+      setLocation("/general");
+      return;
+    }
+    setLocation(
+      t.communicationId
+        ? `/clients/${first.id}?tab=communications&comm=${t.communicationId}`
+        : `/clients/${first.id}?tab=communications`,
+    );
   };
 
   return (
@@ -226,6 +280,14 @@ export default function TodoList() {
           <span className="text-xs text-[#94A3B8]" data-testid="text-todo-count">
             {isLoading ? "" : todos.length}
           </span>
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => setAdding(true)}
+            className="ml-auto h-7 px-2 text-[11px] gap-1 text-[#1A5276] hover:bg-[#F0F4F8]"
+            data-testid="button-add-todo"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add new
+          </Button>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
@@ -235,7 +297,9 @@ export default function TodoList() {
           <div className="py-8 text-center">
             <ListTodo className="w-7 h-7 text-[#CBD5E1] mx-auto mb-2" />
             <p className="text-sm text-[#94A3B8]">Nothing on the list.</p>
-            <p className="text-xs text-[#94A3B8] mt-1">Tasks land here when you add them from a communication.</p>
+            <p className="text-xs text-[#94A3B8] mt-1">
+              Tasks land here from a communication, or use Add new for a phone call.
+            </p>
           </div>
         ) : (
           <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
@@ -246,11 +310,14 @@ export default function TodoList() {
                 todos={bySection[p]}
                 onResolve={setResolving}
                 onOpen={open}
+                onOpenClient={openClient}
               />
             ))}
           </div>
         )}
       </CardContent>
+
+      {adding && <AddTodoDialog onClose={() => setAdding(false)} />}
 
       {resolving && (
         <ResolveDialog

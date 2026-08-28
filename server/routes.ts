@@ -25,7 +25,8 @@ import {
   reattachCommunicationLinks,
   ResetNotConfirmedError,
 } from "./data-reset";
-import { matchEmailToClients, processEmail, queryClientCommunications } from "./claude";
+import { matchEmailToClients, matchTextToClients, processEmail, queryClientCommunications } from "./claude";
+import { buildClientRefs } from "./client-context";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
@@ -2554,18 +2555,10 @@ export async function registerRoutes(
       // domain or firm match against the active client the email is actually about.
       // Terminating and run-out clients stay in: that is precisely when the
       // correspondence about winding the account down arrives.
-      const allClients = (await storage.getClients()).filter(c => countsAsActive(deriveClientState(c)));
-      // Every person the brokerage has on the account, not just the lead. Correspondence
-      // routinely arrives from the service rep, who is not the mirrored flat address.
-      const brokerEmailMap = await storage.getBrokerEmailsByClient();
+      const clientRefs = await buildClientRefs();
 
       const [matches, processed] = await Promise.all([
-        matchEmailToClients(fullText, allClients.map(c => ({
-          id: c.id, clientCode: c.clientCode, clientName: c.clientName,
-          brokerEmails: brokerEmailMap.get(c.id) ?? [c.brokerEmail].filter(Boolean) as string[],
-          brokerFirmName: c.brokerFirmName,
-          adminContactEmail: c.adminContactEmail, decisionMakerEmail: c.decisionMakerEmail,
-        }))),
+        matchEmailToClients(fullText, clientRefs),
         processEmail(fullText, attachmentTexts),
       ]);
 
@@ -2589,15 +2582,16 @@ export async function registerRoutes(
       // ── STEP 5: Assign to clients and create tasks ─────────────────────────
       if (matches.length > 0) {
         await storage.assignCommunicationToClients(comm.id, matches);
+        // One action item is one task, however many clients it touches. It used
+        // to be written once per matched client, which meant the same job had
+        // to be resolved twice and the same note typed twice.
         for (const item of processed.actionItems) {
           const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          for (const m of matches) {
-            await storage.createCommunicationTask({
-              communicationId: comm.id, clientId: m.clientId,
-              description: item.description,
-              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-            });
-          }
+          await storage.createTaskWithClients({
+            communicationId: comm.id, clientId: matches[0].clientId,
+            description: item.description,
+            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+          }, matches);
         }
       } else {
         for (const item of processed.actionItems) {
@@ -2663,14 +2657,14 @@ export async function registerRoutes(
 
       if (parsedClientIds.length > 0) {
         await storage.assignCommunicationToClients(comm.id, parsedClientIds.map(id => ({ clientId: id, confidence: "manual" })));
+        // As with inbound mail: one action item is one task, attached to every
+        // client it concerns, resolved once.
         for (const item of processed.actionItems) {
           const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          for (const cid of parsedClientIds) {
-            await storage.createCommunicationTask({
-              communicationId: comm.id, clientId: cid, description: item.description,
-              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-            });
-          }
+          await storage.createTaskWithClients({
+            communicationId: comm.id, clientId: parsedClientIds[0], description: item.description,
+            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+          }, parsedClientIds.map(clientId => ({ clientId, confidence: "manual" })));
         }
       }
 
@@ -2963,6 +2957,128 @@ export async function registerRoutes(
       res.json({ ok: true, reordered: written });
     } catch (err: any) {
       if (err instanceof StaleOrderError) return res.status(409).json({ message: err.message });
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * Reads a sentence Kim typed and works out which clients it is about.
+   *
+   * Nothing is written here. The answer goes back to her for confirmation
+   * first, because the AI attaching the wrong account silently is worse than it
+   * attaching nothing.
+   */
+  app.post("/api/todos/match", requireAuth, async (req, res) => {
+    try {
+      const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+      if (!text) return res.status(400).json({ message: "Type what needs doing." });
+      if (text.length > 500) {
+        return res.status(400).json({ message: "Keep the to-do to 500 characters or fewer." });
+      }
+
+      const clientRefs = await buildClientRefs();
+      const matches = await matchTextToClients(text, clientRefs);
+      const byId = new Map(clientRefs.map(c => [c.id, c]));
+
+      res.json({
+        matches: matches.map(m => ({
+          clientId: m.clientId,
+          confidence: m.confidence,
+          clientName: byId.get(m.clientId)?.clientName ?? "Unknown",
+          clientCode: byId.get(m.clientId)?.clientCode ?? "",
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * A to-do with no email behind it: a phone call, a hallway conversation, a
+   * thing Kim was carrying in her head. It goes straight onto the list under
+   * the priority she picked, since she has already decided it needs doing.
+   *
+   * An empty client list is a general to-do and is a legitimate outcome.
+   */
+  app.post("/api/todos/manual", requireAuth, async (req, res) => {
+    try {
+      const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+      if (!description) return res.status(400).json({ message: "Type what needs doing." });
+      if (description.length > 500) {
+        return res.status(400).json({ message: "Keep the to-do to 500 characters or fewer." });
+      }
+
+      const priority = req.body?.priority;
+      if (!isTaskPriority(priority)) {
+        return res.status(400).json({ message: "priority must be URGENT, NORMAL or CASUAL" });
+      }
+
+      const rawClients = Array.isArray(req.body?.clients) ? req.body.clients : [];
+      const parsed = rawClients.map((c: any) => ({
+        clientId: parseInt(typeof c === "object" && c !== null ? c.clientId : c),
+        confidence: typeof c?.confidence === "string" ? c.confidence : "manual",
+      }));
+      if (parsed.some((c: { clientId: number }) => !Number.isFinite(c.clientId))) {
+        return res.status(400).json({ message: "clients must be client ids" });
+      }
+
+      // A to-do pointed at a client that does not exist would vanish from every
+      // list it should appear on, so it is refused rather than half-written.
+      if (parsed.length) {
+        const ids = parsed.map((c: { clientId: number }) => c.clientId);
+        const found = await storage.getClientsByIds(ids);
+        if (found.length !== new Set(ids).size) {
+          return res.status(400).json({ message: "One of those clients no longer exists." });
+        }
+      }
+
+      const created = await storage.createManualTodo({ description, priority, clients: parsed });
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Corrects the AI's guess: swap the clients on an unresolved to-do, or clear them. */
+  app.patch("/api/todos/:id/clients", requireAuth, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.clientIds) ? req.body.clientIds.map((v: any) => parseInt(v)) : [];
+      if (ids.some((v: number) => !Number.isFinite(v))) {
+        return res.status(400).json({ message: "clientIds must be client ids" });
+      }
+      if (ids.length) {
+        const found = await storage.getClientsByIds(ids);
+        if (found.length !== new Set(ids).size) {
+          return res.status(400).json({ message: "One of those clients no longer exists." });
+        }
+      }
+      const updated = await storage.setTodoClients(parseInt(req.params.id), ids);
+      if (!updated) {
+        return res.status(409).json({ message: "That to-do is missing or already resolved, so its clients stand." });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * The general list: work that belongs to the business rather than to any one
+   * account. Open items and the resolved history, same shape as a client record.
+   */
+  app.get("/api/general/todos", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getGeneralTodos({ resolved: req.query.resolved === "true" }));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Manually captured to-dos on a client record: no email, so nothing to nest under. */
+  app.get("/api/clients/:id/manual-todos", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getClientManualTodos(parseInt(req.params.id)));
+    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });

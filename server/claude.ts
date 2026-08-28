@@ -8,9 +8,44 @@ export interface ClientRef {
   clientName: string;
   /** Every serving broker address for the client — a brokerage assigns more than one. */
   brokerEmails?: (string | null)[] | null;
+  /**
+   * Every serving broker contact by name.
+   *
+   * Email carries addresses, but a typed note carries first names: "Call
+   * Annette about the Ware renewal" identifies a client only if the matcher
+   * knows Annette Griffin serves it. Without names that note matches nothing.
+   */
+  brokerNames?: (string | null)[] | null;
   brokerFirmName?: string | null;
+  adminContactName?: string | null;
   adminContactEmail?: string | null;
+  decisionMakerName?: string | null;
   decisionMakerEmail?: string | null;
+}
+
+/**
+ * One line per client, shared by both matchers so they cannot drift apart in
+ * what they know about the book of business.
+ */
+function renderClientList(clients: ClientRef[]): string {
+  return clients
+    .map(c => {
+      const join = (xs?: (string | null)[] | null) =>
+        (xs ?? []).map(v => (v ?? "").trim()).filter(Boolean).join(", ");
+      return [
+        `ID:${c.id}`,
+        `Code:${c.clientCode}`,
+        `Name:${c.clientName}`,
+        `Broker:${c.brokerFirmName ?? ""}`,
+        `BrokerContacts:${join(c.brokerNames)}`,
+        `BrokerEmails:${join(c.brokerEmails)}`,
+        `AdminContact:${c.adminContactName ?? ""}`,
+        `AdminEmail:${c.adminContactEmail ?? ""}`,
+        `DecisionMaker:${c.decisionMakerName ?? ""}`,
+        `DecisionMakerEmail:${c.decisionMakerEmail ?? ""}`,
+      ].join(" | ");
+    })
+    .join("\n");
 }
 
 export interface MatchResult {
@@ -42,12 +77,7 @@ export async function matchEmailToClients(
 ): Promise<MatchResult[]> {
   if (!process.env.ANTHROPIC_API_KEY) return [];
 
-  const clientList = clients
-    .map(c => {
-      const brokerEmails = (c.brokerEmails ?? []).map(e => (e ?? "").trim()).filter(Boolean).join(", ");
-      return `ID:${c.id} | Code:${c.clientCode} | Name:${c.clientName} | Broker:${c.brokerFirmName ?? ""} | BrokerEmails:${brokerEmails} | AdminEmail:${c.adminContactEmail ?? ""} | DecisionMakerEmail:${c.decisionMakerEmail ?? ""}`;
-    })
-    .join("\n");
+  const clientList = renderClientList(clients);
 
   const prompt = `You are a CRM assistant for a dental/vision/hearing benefits TPA company called Simple Benefits (also known as 90 Degree Benefits).
 
@@ -84,8 +114,22 @@ Return ONLY the JSON array, no other text.`;
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "[]";
-    const parsed = JSON.parse(text.match(/\[.*\]/s)?.[0] ?? "[]");
-    const result = Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+    // The model occasionally echoes an id that was not in the list it was
+    // given, or the same client twice. Both would fail on the foreign key when
+    // the task is written, taking the whole ingest down with them.
+    const known = new Set(clients.map(c => c.id));
+    const seen = new Set<number>();
+    const result: MatchResult[] = (Array.isArray(parsed) ? parsed : [])
+      .map((m: any) => ({
+        clientId: Number(m?.clientId),
+        confidence: ["high", "medium", "low"].includes(m?.confidence) ? m.confidence : "low",
+      }))
+      .filter((m: MatchResult) => {
+        if (!known.has(m.clientId) || seen.has(m.clientId)) return false;
+        seen.add(m.clientId);
+        return true;
+      });
     if (result.length === 0) {
       console.log("[claude] matchEmailToClients: no clients matched");
     } else {
@@ -94,6 +138,89 @@ Return ONLY the JSON array, no other text.`;
     return result;
   } catch (err: any) {
     console.error("[claude] matchEmailToClients error:", err?.message || String(err));
+    return [];
+  }
+}
+
+/**
+ * Reads a to-do Kim typed and works out which clients it is about.
+ *
+ * This is deliberately a different prompt from the email matcher even though it
+ * sees the same book of business. A note is not an email: there is no sender,
+ * no domain and no signature block, and the signal is almost always a bare
+ * first name ("Annette"), a shortened client name ("Ware"), or a group number.
+ * It also has to be comfortable returning nothing, because plenty of real work
+ * belongs to the business rather than to an account.
+ *
+ * Returning [] is a normal answer, not a failure.
+ */
+export async function matchTextToClients(
+  noteText: string,
+  clients: ClientRef[]
+): Promise<MatchResult[]> {
+  if (!process.env.ANTHROPIC_API_KEY) return [];
+  const text = noteText.trim();
+  if (!text) return [];
+
+  const prompt = `You are a CRM assistant for a dental/vision/hearing benefits TPA called Simple Benefits (also known as 90 Degree Benefits).
+
+Here is the list of clients in the database:
+${renderClientList(clients)}
+
+A service rep has typed herself a quick to-do note. It was not an email; it is
+usually a phone call or a conversation she is trying not to forget:
+---
+${text.slice(0, 2000)}
+---
+
+Your job: identify which client account(s), if any, this note is about.
+
+Signals that count:
+- A client name, including a shortened or partial form. "Ware" for "Ware County", "Thomas" for "Thomas County".
+- A group number like S-46, S-455, or "group 20".
+- A broker firm name.
+- A person's first name that matches one of a client's BrokerContacts, AdminContact or DecisionMaker. A bare first name is the most common case: "Call Annette" means the Annette listed on those accounts. If that first name serves several clients, only return the ones the rest of the note actually points at.
+- An email address matching BrokerEmails, AdminEmail or DecisionMakerEmail.
+
+Rules:
+- A note can be about MORE THAN ONE client. "Call Annette to discuss the Ware and Thomas renewals" is about both Ware County and Thomas County. Return every client the note genuinely covers.
+- A note can be about NO client. Internal work, a vendor, a process discussion, an ID card design, a conversation with 90 Degree about how something is done: these belong to the business, not to an account. Return [] for those. This is a correct answer and is expected often.
+- Do not reach. A person's name that matches nothing, or a topic that merely sounds like benefits work, is not a match. Guessing wrongly is worse than returning nothing, because a wrong client puts the work on the wrong record.
+
+Return ONLY a JSON array. Each match: {"clientId": <number>, "confidence": "high"|"medium"|"low"}
+- "high" = the client name or group number is in the note
+- "medium" = a broker contact name, broker firm or contact email identifies it
+- "low" = inferred from surrounding context
+
+Return ONLY the JSON array, no other text.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 512,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw = response.content[0].type === "text" ? response.content[0].text.trim() : "[]";
+    const parsed = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+    const known = new Set(clients.map(c => c.id));
+    // The model occasionally echoes an id that is not in the list it was given.
+    // Anything unrecognised is dropped rather than attached to the wrong record.
+    const result: MatchResult[] = (Array.isArray(parsed) ? parsed : [])
+      .filter((m: any) => known.has(Number(m?.clientId)))
+      .map((m: any) => ({
+        clientId: Number(m.clientId),
+        confidence: ["high", "medium", "low"].includes(m?.confidence) ? m.confidence : "low",
+      }));
+
+    console.log(
+      result.length === 0
+        ? "[claude] matchTextToClients: no clients matched — general to-do"
+        : `[claude] matchTextToClients: matched ${result.length} client(s) — ${result.map(r => `#${r.clientId} (${r.confidence})`).join(", ")}`
+    );
+    return result;
+  } catch (err: any) {
+    console.error("[claude] matchTextToClients error:", err?.message || String(err));
     return [];
   }
 }

@@ -13,6 +13,7 @@ import ClientDetailPage from "@/pages/client-detail";
 import SettingsUsersPage from "@/pages/settings-users";
 import IssuesPage from "@/pages/issues";
 import InboxPage from "@/pages/inbox";
+import GeneralPage from "@/pages/general";
 import PprBatchPage from "@/pages/ppr-batch";
 import PprImportPage from "@/pages/ppr-import";
 import ReportsPage from "@/pages/reports";
@@ -64,6 +65,7 @@ function Router() {
       <Route path="/clients/:id">{() => <ProtectedRoute component={ClientDetailPage} />}</Route>
       <Route path="/issues">{() => <ProtectedRoute component={IssuesPage} />}</Route>
       <Route path="/inbox">{() => <ProtectedRoute component={InboxPage} />}</Route>
+      <Route path="/general">{() => <ProtectedRoute component={GeneralPage} />}</Route>
       <Route path="/ppr-import">{() => <ProtectedRoute component={PprImportPage} />}</Route>
       <Route path="/ppr-batch">{() => <ProtectedRoute component={PprBatchPage} />}</Route>
       <Route path="/reports">{() => <ProtectedRoute component={ReportsPage} />}</Route>

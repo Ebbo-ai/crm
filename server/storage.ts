@@ -2,7 +2,7 @@ import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
 import {
   users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs,
-  communications, communicationClients, communicationAttachments, communicationTasks, brokerHistory, brokerContacts,
+  communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   type RenewalProgress,
   type User, type InsertUser,
@@ -28,6 +28,22 @@ import {
 import { countsAsActive, deriveClientState } from "@shared/client-state";
 import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
 
+/**
+ * A task as the UI needs it: the clients it touches, and the message it came
+ * from when there was one.
+ *
+ * `clients` may hold none, one or several. None means the work belongs to the
+ * business rather than to an account. The flat clientName/clientCode mirror the
+ * first entry for callers that only ever handled a single client.
+ */
+export type DecoratedTask = CommunicationTask & {
+  clients: { id: number; clientName: string; clientCode: string }[];
+  clientName: string | null;
+  clientCode: string | null;
+  communicationSubject: string | null;
+  communicationSender: string | null;
+};
+
 /** One person at the brokerage, as supplied by the form or the workbook import. */
 export interface BrokerContactInput {
   contactName: string;
@@ -49,6 +65,7 @@ export interface IStorage {
 
   getClients(search?: string, status?: string): Promise<(Client & { activeIssueCount: number })[]>;
   getClient(id: number): Promise<Client | undefined>;
+  getClientsByIds(ids: number[]): Promise<Client[]>;
   getClientByCode(code: string): Promise<Client | undefined>;
   createClient(client: InsertClient, contacts?: BrokerContactInput[]): Promise<Client>;
   updateClient(id: number, data: Partial<InsertClient>, contacts?: BrokerContactInput[]): Promise<Client | undefined>;
@@ -126,16 +143,25 @@ export interface IStorage {
   getCommunicationAttachment(id: number): Promise<CommunicationAttachment | undefined>;
 
   createCommunicationTask(task: InsertCommunicationTask): Promise<CommunicationTask>;
-  getOpenTasks(): Promise<(CommunicationTask & { clientName: string | null; communicationSubject: string | null })[]>;
+  /** One task covering several clients: one job, one note, one resolution. */
+  createTaskWithClients(task: InsertCommunicationTask, matches: { clientId: number; confidence: string }[]): Promise<CommunicationTask>;
+  getOpenTasks(): Promise<DecoratedTask[]>;
   /**
    * Triage. There is deliberately no delete and no bare "complete" here: a task
    * either resolves with a note or moves onto the to-do list under a priority.
    */
-  getTodos(): Promise<(CommunicationTask & { clientName: string | null; communicationSubject: string | null })[]>;
+  getTodos(): Promise<DecoratedTask[]>;
+  /** A to-do Kim typed herself, with no email behind it. */
+  createManualTodo(input: { description: string; priority: string; clients: { clientId: number; confidence: string }[] }): Promise<CommunicationTask>;
+  /** Re-points an unresolved to-do at a different set of clients, or at none. */
+  setTodoClients(taskId: number, clientIds: number[]): Promise<CommunicationTask | undefined>;
+  /** To-dos with no client attached: they belong to the business, not an account. */
+  getGeneralTodos(opts: { resolved: boolean }): Promise<DecoratedTask[]>;
+  getClientManualTodos(clientId: number): Promise<DecoratedTask[]>;
   moveTaskToTodo(id: number, priority: string): Promise<CommunicationTask | undefined>;
   resolveCommunicationTask(id: number, note: string, user: string): Promise<{ task: CommunicationTask | undefined; communicationResolved: boolean }>;
   reorderTodos(priority: string, orderedIds: number[]): Promise<number>;
-  getClientTasks(clientId: number): Promise<CommunicationTask[]>;
+  getClientTasks(clientId: number): Promise<DecoratedTask[]>;
   getUnreadCommunicationsCount(): Promise<number>;
 
   getBrokerHistory(clientId: number): Promise<BrokerHistory[]>;
@@ -144,6 +170,7 @@ export interface IStorage {
   getBrokerContacts(clientId: number): Promise<BrokerContact[]>;
   replaceBrokerContacts(clientId: number, contacts: BrokerContactInput[]): Promise<BrokerContact[]>;
   getBrokerEmailsByClient(): Promise<Map<number, string[]>>;
+  getBrokerNamesByClient(): Promise<Map<number, string[]>>;
 
   getClientsByBrokerFirm(firm: string): Promise<(Client & { plans: Plan[] })[]>;
 
@@ -337,6 +364,13 @@ export class DatabaseStorage implements IStorage {
   async getClient(id: number): Promise<Client | undefined> {
     const [client] = await db.select().from(clients).where(eq(clients.id, id));
     return client;
+  }
+
+  /** Existence check for a set of ids, used before attaching work to clients. */
+  async getClientsByIds(ids: number[]): Promise<Client[]> {
+    const unique = Array.from(new Set(ids));
+    if (!unique.length) return [];
+    return db.select().from(clients).where(inArray(clients.id, unique));
   }
 
   async getClientByCode(code: string): Promise<Client | undefined> {
@@ -970,7 +1004,7 @@ export class DatabaseStorage implements IStorage {
     if (!comms.length) return [];
     const ids = comms.map(c => c.id);
 
-    const [attachments, tasks, links] = await Promise.all([
+    const [attachments, rawTasks, links] = await Promise.all([
       db.select().from(communicationAttachments)
         .where(inArray(communicationAttachments.communicationId, ids))
         .orderBy(asc(communicationAttachments.uploadedAt)),
@@ -988,9 +1022,16 @@ export class DatabaseStorage implements IStorage {
       : [];
     const clientById = new Map(clientRows.map(c => [c.id, c]));
 
-    const groupByComm = <T extends { communicationId: number }>(rows: T[]) => {
+    // Tasks arrive decorated so a message showing a task that covers two
+    // accounts says so, rather than silently showing only the first.
+    const tasks = await this.decorateTasks(rawTasks);
+
+    // Tasks may now exist without a parent message, so the key is nullable in
+    // the type even though every row read here was fetched by communication id.
+    const groupByComm = <T extends { communicationId: number | null }>(rows: T[]) => {
       const m = new Map<number, T[]>();
       for (const r of rows) {
+        if (r.communicationId == null) continue;
         const existing = m.get(r.communicationId);
         if (existing) existing.push(r);
         else m.set(r.communicationId, [r]);
@@ -1177,40 +1218,187 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCommunicationTask(task: InsertCommunicationTask): Promise<CommunicationTask> {
-    const [created] = await db.insert(communicationTasks).values(task).returning();
-    return created;
+    // The flat clientId is mirrored into the join table so a task created by an
+    // older caller is still visible through the many-client read path.
+    return db.transaction(async tx => {
+      const [created] = await tx.insert(communicationTasks).values(task).returning();
+      if (created.clientId != null) {
+        await tx.insert(taskClients)
+          .values({ taskId: created.id, clientId: created.clientId, matchConfidence: "manual" })
+          .onConflictDoNothing();
+      }
+      return created;
+    });
   }
 
-  /** Decorates tasks with their client and subject in two queries, not 2N. */
+  /**
+   * Creates one task covering several clients.
+   *
+   * Used by email ingest, where a message matched to two accounts used to
+   * produce two duplicate tasks. One job is one task: resolving it writes one
+   * note and closes it on every account it touches.
+   */
+  async createTaskWithClients(
+    task: InsertCommunicationTask,
+    matches: { clientId: number; confidence: string }[],
+  ): Promise<CommunicationTask> {
+    return db.transaction(async tx => {
+      const [created] = await tx.insert(communicationTasks)
+        .values({ ...task, clientId: matches[0]?.clientId ?? null })
+        .returning();
+      await this.writeTaskClients(tx, created.id, matches);
+      return created;
+    });
+  }
+
+  /**
+   * A to-do Kim typed herself, with no email behind it.
+   *
+   * It goes straight onto the list under its priority: there is no triage step
+   * for something she has already decided needs doing. It lands at the bottom
+   * of its section so it does not jump ahead of work that has been waiting.
+   *
+   * An empty client list is a general to-do and is a legitimate outcome.
+   */
+  async createManualTodo(input: {
+    description: string;
+    priority: string;
+    clients: { clientId: number; confidence: string }[];
+  }): Promise<CommunicationTask> {
+    const now = new Date();
+    return db.transaction(async tx => {
+      const [{ maxOrder } = { maxOrder: null as number | null }] = await tx
+        .select({ maxOrder: sql<number | null>`max(${communicationTasks.sortOrder})` })
+        .from(communicationTasks)
+        .where(and(eq(communicationTasks.status, "TODO"), eq(communicationTasks.priority, input.priority)));
+
+      const [created] = await tx.insert(communicationTasks).values({
+        communicationId: null,
+        clientId: input.clients[0]?.clientId ?? null,
+        description: input.description,
+        dueDate: null,
+        isCompleted: false,
+        status: "TODO",
+        priority: input.priority,
+        todoAddedAt: now,
+        origin: "MANUAL",
+        sortOrder: (maxOrder ?? 0) + 1,
+      } as any).returning();
+
+      await this.writeTaskClients(tx, created.id, input.clients);
+      return created;
+    });
+  }
+
+  /**
+   * Corrects which clients a to-do is about after the AI's first guess.
+   *
+   * Only unresolved work can be re-pointed. Once a task carries a resolution
+   * note, moving it to a different account would rewrite history.
+   */
+  async setTodoClients(
+    taskId: number,
+    clientIds: number[],
+  ): Promise<CommunicationTask | undefined> {
+    return db.transaction(async tx => {
+      const [task] = await tx.select().from(communicationTasks)
+        .where(and(
+          eq(communicationTasks.id, taskId),
+          inArray(communicationTasks.status, ["OPEN", "TODO"]),
+        ));
+      if (!task) return undefined;
+
+      await this.writeTaskClients(tx, taskId, clientIds.map(clientId => ({ clientId, confidence: "manual" })));
+      const [updated] = await tx.select().from(communicationTasks).where(eq(communicationTasks.id, taskId));
+      return updated;
+    });
+  }
+
+  /**
+   * Decorates tasks with their clients and subject in three queries, not 3N.
+   *
+   * `clients` is the real answer and may hold none, one or several. The flat
+   * clientName/clientCode remain as a mirror of the first one so older callers
+   * that only ever expected a single client keep rendering.
+   */
   private async decorateTasks(tasks: CommunicationTask[]) {
     if (!tasks.length) return [];
-    const clientIds = Array.from(new Set(tasks.map(t => t.clientId).filter((v): v is number => v != null)));
-    const commIds = Array.from(new Set(tasks.map(t => t.communicationId)));
+    const taskIds = tasks.map(t => t.id);
+    const commIds = Array.from(new Set(tasks.map(t => t.communicationId).filter((v): v is number => v != null)));
 
-    const [clientRows, commRows] = await Promise.all([
-      clientIds.length
-        ? db.select({ id: clients.id, clientName: clients.clientName, clientCode: clients.clientCode })
-            .from(clients).where(inArray(clients.id, clientIds))
-        : Promise.resolve([]),
+    const [links, commRows] = await Promise.all([
+      db.select({ taskId: taskClients.taskId, clientId: taskClients.clientId })
+        .from(taskClients).where(inArray(taskClients.taskId, taskIds)),
       commIds.length
         ? db.select({ id: communications.id, subject: communications.subject, senderEmail: communications.senderEmail, senderName: communications.senderName })
             .from(communications).where(inArray(communications.id, commIds))
         : Promise.resolve([]),
     ]);
+
+    const linkedClientIds = Array.from(new Set(links.map(l => l.clientId)));
+    const clientRows = linkedClientIds.length
+      ? await db.select({ id: clients.id, clientName: clients.clientName, clientCode: clients.clientCode })
+          .from(clients).where(inArray(clients.id, linkedClientIds))
+      : [];
+
     const clientById = new Map(clientRows.map(c => [c.id, c]));
     const commById = new Map(commRows.map(c => [c.id, c]));
 
+    const clientsByTask = new Map<number, { id: number; clientName: string; clientCode: string }[]>();
+    for (const l of links) {
+      const client = clientById.get(l.clientId);
+      if (!client) continue;
+      const list = clientsByTask.get(l.taskId) ?? [];
+      list.push(client);
+      clientsByTask.set(l.taskId, list);
+    }
+    // Stable, readable order on every record and every list.
+    for (const list of Array.from(clientsByTask.values())) {
+      list.sort((a, b) => a.clientName.localeCompare(b.clientName));
+    }
+
     return tasks.map(t => {
-      const client = t.clientId != null ? clientById.get(t.clientId) : undefined;
-      const comm = commById.get(t.communicationId);
+      const attached = clientsByTask.get(t.id) ?? [];
+      const comm = t.communicationId != null ? commById.get(t.communicationId) : undefined;
       return {
         ...t,
-        clientName: client?.clientName ?? null,
-        clientCode: client?.clientCode ?? null,
+        clients: attached,
+        clientName: attached[0]?.clientName ?? null,
+        clientCode: attached[0]?.clientCode ?? null,
         communicationSubject: comm?.subject ?? null,
         communicationSender: comm?.senderName ?? comm?.senderEmail ?? null,
       };
     });
+  }
+
+  /**
+   * Rewrites which clients a task is about, inside the caller's transaction.
+   *
+   * The flat clientId is kept in step as a mirror of the first attachment so
+   * the two never disagree about who the work belongs to.
+   */
+  private async writeTaskClients(
+    tx: any,
+    taskId: number,
+    entries: { clientId: number; confidence: string }[],
+  ) {
+    const seen = new Set<number>();
+    const unique = entries.filter(e => {
+      if (!Number.isFinite(e.clientId) || seen.has(e.clientId)) return false;
+      seen.add(e.clientId);
+      return true;
+    });
+
+    await tx.delete(taskClients).where(eq(taskClients.taskId, taskId));
+    if (unique.length) {
+      await tx.insert(taskClients).values(
+        unique.map(e => ({ taskId, clientId: e.clientId, matchConfidence: e.confidence })),
+      );
+    }
+    await tx.update(communicationTasks)
+      .set({ clientId: unique[0]?.clientId ?? null })
+      .where(eq(communicationTasks.id, taskId));
+    return unique.map(e => e.clientId);
   }
 
   /** Fresh suggestions awaiting triage — not yet on the to-do list, not resolved. */
@@ -1288,6 +1476,12 @@ export class DatabaseStorage implements IStorage {
 
       if (!updated) return { task: undefined, communicationResolved: false };
 
+      // A to-do Kim typed herself has no email behind it, so there is no
+      // conversation to close out alongside it. It simply resolves.
+      if (updated.communicationId == null) {
+        return { task: updated, communicationResolved: false };
+      }
+
       // Counted inside the same transaction as the sibling updates, so a task
       // resolved concurrently cannot make both calls think they were last.
       const [remaining] = await tx.select({ n: count() }).from(communicationTasks)
@@ -1348,8 +1542,61 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getClientTasks(clientId: number): Promise<CommunicationTask[]> {
-    return db.select().from(communicationTasks).where(eq(communicationTasks.clientId, clientId)).orderBy(asc(communicationTasks.dueDate));
+  /**
+   * Every task touching this client, read through the join table so a to-do
+   * covering two accounts shows on both records rather than only the first.
+   */
+  async getClientTasks(clientId: number): Promise<DecoratedTask[]> {
+    const rows = await db.select({ task: communicationTasks })
+      .from(communicationTasks)
+      .innerJoin(taskClients, eq(taskClients.taskId, communicationTasks.id))
+      .where(eq(taskClients.clientId, clientId))
+      .orderBy(asc(communicationTasks.dueDate));
+    return this.decorateTasks(rows.map(r => r.task));
+  }
+
+  /**
+   * The manually captured to-dos on a client record: the phone calls and
+   * conversations that never arrived as mail, so have no communication to sit
+   * under. Resolved ones come back too, because the note is the point.
+   */
+  async getClientManualTodos(clientId: number) {
+    const rows = await db.select({ task: communicationTasks })
+      .from(communicationTasks)
+      .innerJoin(taskClients, eq(taskClients.taskId, communicationTasks.id))
+      .where(and(
+        eq(taskClients.clientId, clientId),
+        isNull(communicationTasks.communicationId),
+      ));
+    const decorated = await this.decorateTasks(rows.map(r => r.task));
+    return decorated.sort(compareTodos);
+  }
+
+  /**
+   * To-dos that belong to the business rather than to any account.
+   *
+   * Defined by having no client attached at all, whatever the source. Work that
+   * came in on unmatched mail and was filed onto the list belongs here too: it
+   * is genuinely not on anybody's record.
+   */
+  async getGeneralTodos(opts: { resolved: boolean }) {
+    // Outstanding work is read whole: something Kim has not dealt with is
+    // exactly what must not scroll out of view. Resolved history only grows,
+    // so it is capped at the most recent stretch of it.
+    const base = db.select().from(communicationTasks)
+      .where(and(
+        eq(communicationTasks.status, opts.resolved ? "RESOLVED" : "TODO"),
+        sql`NOT EXISTS (SELECT 1 FROM ${taskClients} WHERE ${taskClients.taskId} = ${communicationTasks.id})`,
+      ));
+
+    const rows = opts.resolved
+      ? await base.orderBy(desc(communicationTasks.resolvedAt)).limit(200)
+      : await base;
+
+    const decorated = await this.decorateTasks(rows);
+    return opts.resolved
+      ? decorated.sort((a, b) => (b.resolvedAt?.getTime() ?? 0) - (a.resolvedAt?.getTime() ?? 0))
+      : decorated.sort(compareTodos);
   }
 
   async getUnreadCommunicationsCount(): Promise<number> {
@@ -1503,6 +1750,29 @@ export class DatabaseStorage implements IStorage {
    * column so a client whose contacts were never populated still contributes its one
    * address rather than dropping out of matching entirely.
    */
+  /**
+   * Every serving broker contact name, by client.
+   *
+   * The email matcher works from addresses; a typed to-do works from names,
+   * because "Call Annette" is how the work actually gets written down.
+   */
+  async getBrokerNamesByClient(): Promise<Map<number, string[]>> {
+    const rows = await db.select({
+      clientId: brokerContacts.clientId,
+      contactName: brokerContacts.contactName,
+    }).from(brokerContacts).where(isNull(brokerContacts.terminationDate));
+
+    const map = new Map<number, string[]>();
+    for (const r of rows) {
+      const name = r.contactName?.trim();
+      if (!name) continue;
+      const list = map.get(r.clientId) ?? [];
+      if (!list.some(n => n.toLowerCase() === name.toLowerCase())) list.push(name);
+      map.set(r.clientId, list);
+    }
+    return map;
+  }
+
   async getBrokerEmailsByClient(): Promise<Map<number, string[]>> {
     const rows = await db.select({
       clientId: brokerContacts.clientId,
