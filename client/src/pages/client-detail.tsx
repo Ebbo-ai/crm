@@ -49,10 +49,17 @@ function formatEffectiveMonth(dateStr: string | null): string {
 export default function ClientDetailPage() {
   const params = useParams<{ id: string }>();
   const clientId = parseInt(params.id!);
-  const initialTab = typeof window !== "undefined"
-    ? (new URLSearchParams(window.location.search).get("tab") ?? "profile")
-    : "profile";
+  const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const initialTab = search?.get("tab") ?? "profile";
   const [activeTab, setActiveTab] = useState(initialTab);
+  // Set when the dashboard feed deep-links to one specific message, so the
+  // communications tab can scroll to it and mark it rather than dumping Kim at
+  // the top of a long history.
+  const focusCommId = (() => {
+    const raw = search?.get("comm");
+    const n = raw ? parseInt(raw) : NaN;
+    return Number.isFinite(n) ? n : null;
+  })();
 
   const { data: client, isLoading } = useQuery<any>({
     queryKey: ["/api/clients", params.id],
@@ -567,7 +574,7 @@ export default function ClientDetailPage() {
         </TabsContent>
 
         <TabsContent value="communications">
-          <CommunicationsTab clientId={clientId} />
+          <CommunicationsTab clientId={clientId} focusCommId={focusCommId} />
         </TabsContent>
 
         <TabsContent value="pipeline">

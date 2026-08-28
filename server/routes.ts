@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage, type BrokerContactInput } from "./storage";
+import { storage, StaleOrderError, type BrokerContactInput } from "./storage";
 import { db } from "./db";
 import { renewals, renewalPlanOptions } from "@shared/schema";
 import {
@@ -12,6 +12,9 @@ import {
   suppressesRenewals,
   toYearMonth,
 } from "@shared/client-state";
+import {
+  checkResolutionNote, isResolutionType, isTaskPriority, READ_NO_TASK_NOTE,
+} from "@shared/communication-state";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
@@ -2576,7 +2579,12 @@ export async function registerRoutes(
         claudeSummary: processed.summary,
         claudeActionItems: JSON.stringify(processed.actionItems),
         isUnmatched: matches.length === 0,
+        isFollowUp: processed.isFollowUp,
+        followUpReason: processed.followUpReason,
       });
+      if (processed.isFollowUp) {
+        console.log(`[email-inbound] #${comm.id} flagged as a follow-up: ${processed.followUpReason ?? "no reason given"}`);
+      }
 
       // ── STEP 5: Assign to clients and create tasks ─────────────────────────
       if (matches.length > 0) {
@@ -2643,6 +2651,7 @@ export async function registerRoutes(
         bodyText: bodyText.slice(0, 50000), bodyHtml: null,
         claudeSummary: processed.summary, claudeActionItems: JSON.stringify(processed.actionItems),
         isInternal, isUnmatched: parsedClientIds.length === 0, source: "manual",
+        isFollowUp: processed.isFollowUp, followUpReason: processed.followUpReason,
       });
 
       for (const att of attachmentMeta) {
@@ -2699,6 +2708,78 @@ export async function registerRoutes(
   app.get("/api/communications/unread-count", requireAuth, async (req, res) => {
     try {
       res.json({ count: await storage.getUnreadCommunicationsCount() });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * The dashboard triage feed. Declared ahead of "/:id" so the literal path is
+   * not swallowed by the parameterised one.
+   */
+  app.get("/api/communications/feed", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getCommunicationFeed());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * Resolve a communication. Two paths, and both leave a note behind:
+   *  - READ_NO_TASK writes a standard note for information-only mail.
+   *  - RESOLVED demands Kim's own words, capped at 500 characters.
+   */
+  app.post("/api/communications/:id/resolve", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const comm = await storage.getCommunication(id);
+      if (!comm) return res.status(404).json({ message: "Not found" });
+      if (comm.status === "RESOLVED") {
+        return res.status(409).json({ message: "This communication is already resolved." });
+      }
+
+      const resolutionType = req.body?.resolutionType;
+      if (!isResolutionType(resolutionType)) {
+        return res.status(400).json({ message: "resolutionType must be READ_NO_TASK or RESOLVED" });
+      }
+
+      let note: string;
+      if (resolutionType === "READ_NO_TASK") {
+        note = READ_NO_TASK_NOTE;
+      } else {
+        const check = checkResolutionNote(req.body?.note);
+        if (!check.ok) return res.status(400).json({ message: check.error });
+        note = check.value;
+      }
+
+      const user = (req.user as any)?.fullName ?? "Unknown";
+      const resolvedAt = await storage.resolveCommunication(id, { resolutionType, note, user });
+      // Null means someone else resolved it between the check above and the
+      // write. Their note stands; we do not overwrite it.
+      if (!resolvedAt) return res.status(409).json({ message: "This communication was just resolved by someone else." });
+      res.json({ ok: true, resolvedAt, resolutionNote: note });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Undo for a mis-click, before the row finishes fading out of the feed. */
+  app.post("/api/communications/:id/unresolve", requireAuth, async (req, res) => {
+    try {
+      const outcome = await storage.unresolveCommunication(parseInt(req.params.id));
+      if (outcome === "not_resolved") {
+        return res.status(409).json({ message: "Nothing to undo — this communication is not resolved." });
+      }
+      // A typed resolution note is the audit trail, so undo is limited to the
+      // "read, no task needed" click and only for as long as the row is fading.
+      if (outcome === "has_note") {
+        return res.status(409).json({ message: "This was resolved with a note, which stays on the record." });
+      }
+      if (outcome === "expired") {
+        return res.status(409).json({ message: "The undo window has passed. This is now on the record." });
+      }
+      res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2777,11 +2858,111 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/communication-tasks/:id/complete", requireAuth, async (req, res) => {
+  /**
+   * Free-form task Kim typed herself. The AI misses things, and she needs to be
+   * able to record what she sees without waiting for it to notice.
+   */
+  app.post("/api/communication-tasks", requireAuth, async (req, res) => {
     try {
-      await storage.completeCommunicationTask(parseInt(req.params.id));
-      res.json({ ok: true });
+      const communicationId = parseInt(req.body?.communicationId);
+      if (!Number.isFinite(communicationId)) {
+        return res.status(400).json({ message: "communicationId is required" });
+      }
+      const comm = await storage.getCommunication(communicationId);
+      if (!comm) return res.status(404).json({ message: "Communication not found" });
+      // New work cannot be hung off a message that already reads as finished,
+      // or the communication would sit resolved with an open task under it.
+      if (comm.status === "RESOLVED") {
+        return res.status(409).json({ message: "This communication is resolved. Reopen the conversation before adding work to it." });
+      }
+
+      const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+      if (!description) return res.status(400).json({ message: "Describe the task." });
+      if (description.length > 500) {
+        return res.status(400).json({ message: "Keep the task to 500 characters or fewer." });
+      }
+
+      const clientId = req.body?.clientId != null ? parseInt(req.body.clientId) : null;
+      const dueDate = req.body?.dueDate ? new Date(req.body.dueDate) : null;
+      if (dueDate && Number.isNaN(dueDate.getTime())) {
+        return res.status(400).json({ message: "Due date is not a valid date." });
+      }
+
+      const created = await storage.createCommunicationTask({
+        communicationId,
+        clientId: Number.isFinite(clientId as number) ? clientId : null,
+        description,
+        dueDate,
+        isCompleted: false,
+        status: "OPEN",
+        origin: "MANUAL",
+        priority: null,
+        resolutionNote: null,
+        sortOrder: 0,
+      } as any);
+      res.json(created);
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Resolve a task. The note is mandatory and is the audit trail. */
+  app.post("/api/communication-tasks/:id/resolve", requireAuth, async (req, res) => {
+    try {
+      const check = checkResolutionNote(req.body?.note);
+      if (!check.ok) return res.status(400).json({ message: check.error });
+
+      const user = (req.user as any)?.fullName ?? "Unknown";
+      const result = await storage.resolveCommunicationTask(parseInt(req.params.id), check.value, user);
+      if (!result.task) {
+        return res.status(409).json({ message: "That task is missing or was already resolved, so its note stands." });
+      }
+      res.json({ ok: true, communicationResolved: result.communicationResolved });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Push a task onto the to-do list under a priority. */
+  app.post("/api/communication-tasks/:id/todo", requireAuth, async (req, res) => {
+    try {
+      const priority = req.body?.priority;
+      if (!isTaskPriority(priority)) {
+        return res.status(400).json({ message: "priority must be URGENT, NORMAL or CASUAL" });
+      }
+      const updated = await storage.moveTaskToTodo(parseInt(req.params.id), priority);
+      if (!updated) {
+        return res.status(409).json({ message: "That task is missing or already resolved, so it cannot be added to the list." });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/todos", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getTodos());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Persists drag ordering for one priority section. */
+  app.post("/api/todos/reorder", requireAuth, async (req, res) => {
+    try {
+      const priority = req.body?.priority;
+      if (!isTaskPriority(priority)) {
+        return res.status(400).json({ message: "priority must be URGENT, NORMAL or CASUAL" });
+      }
+      const ids = Array.isArray(req.body?.orderedIds) ? req.body.orderedIds.map((v: any) => parseInt(v)) : [];
+      if (ids.some((v: number) => !Number.isFinite(v))) {
+        return res.status(400).json({ message: "orderedIds must be task ids" });
+      }
+      const written = await storage.reorderTodos(priority, ids);
+      res.json({ ok: true, reordered: written });
+    } catch (err: any) {
+      if (err instanceof StaleOrderError) return res.status(409).json({ message: err.message });
       res.status(500).json({ message: err.message });
     }
   });

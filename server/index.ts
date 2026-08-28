@@ -725,6 +725,64 @@ app.use((req, res, next) => {
     // touches the client record.
     await pool.query(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS termination_date TIMESTAMP;`);
 
+    // ── Phase 16: Communication triage state ──────────────────────────────────
+    // Sits before Phase 10 in the file because Phase 10 must stay last.
+    //
+    // Two rules from the service desk are encoded here:
+    //
+    //   1. Nothing is deletable, only resolvable. There is no DELETE anywhere in
+    //      this feature. A communication or task leaves the working views by
+    //      moving to a terminal status, never by disappearing.
+    //   2. A resolution carries a mandatory note. The column is nullable at the
+    //      database level only because rows predating this phase have no note to
+    //      backfill; every new resolution is validated before it is written.
+    //
+    // Existing communications all begin ACTIVE. That is the honest starting
+    // state: nothing in the mailbox has been triaged yet, so nothing should
+    // start out looking as if it had been.
+    await pool.query(`
+      ALTER TABLE communications
+        ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE',
+        ADD COLUMN IF NOT EXISTS resolution_type TEXT,
+        ADD COLUMN IF NOT EXISTS resolution_note TEXT,
+        ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS resolved_by TEXT,
+        ADD COLUMN IF NOT EXISTS is_follow_up BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS follow_up_reason TEXT;
+    `);
+
+    await pool.query(`
+      ALTER TABLE communication_tasks
+        ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'OPEN',
+        ADD COLUMN IF NOT EXISTS priority TEXT,
+        ADD COLUMN IF NOT EXISTS todo_added_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS resolution_note TEXT,
+        ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS resolved_by TEXT,
+        ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'AI',
+        ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+    `);
+
+    // Tasks ticked off under the old checkbox have no note and never will, but
+    // their status must still agree with is_completed or they would reappear as
+    // open work. The two columns are written in lockstep from here on; this
+    // statement only repairs rows that predate the status column.
+    await pool.query(`
+      UPDATE communication_tasks SET status = 'RESOLVED'
+       WHERE is_completed = true AND status = 'OPEN';
+    `);
+
+    // The feed reads every unresolved message on every load, and the to-do list
+    // reads by status and priority. Both deserve an index rather than a scan.
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS communications_status_received_idx
+        ON communications (status, received_at DESC);
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS communication_tasks_status_idx
+        ON communication_tasks (status, priority, sort_order);
+    `);
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at

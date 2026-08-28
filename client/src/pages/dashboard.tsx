@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { MONTHS, parseLocalDate } from "@/lib/constants";
+import CommunicationFeed from "@/components/communication-feed";
+import TodoList from "@/components/todo-list";
 
 const ISSUE_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   FUNDING:      { label: "Funding",     color: "bg-blue-100 text-blue-700" },
@@ -460,6 +462,17 @@ export default function DashboardPage() {
             <StatCard label="Renewals Due"    value={renewalsDueCount + overdueCount} icon={CalendarClock} color="bg-[#F5A623]" alert={overdueCount > 0} />
           </div>
         )}
+
+        {/* Triage: the feed and the to-do list sit above everything else, because
+            this is the screen the service desk works from first thing. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <div className="lg:col-span-2">
+            <CommunicationFeed />
+          </div>
+          <div>
+            <TodoList />
+          </div>
+        </div>
 
         {/* Three panels */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">

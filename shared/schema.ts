@@ -357,6 +357,22 @@ export const communications = pgTable("communications", {
   isUnmatched: boolean("is_unmatched").notNull().default(false),
   source: text("source").notNull().default("email"),
   rawPayload: text("raw_payload"),
+  /**
+   * ACTIVE | RESOLVED. A communication stays ACTIVE — and therefore stays in
+   * Kim's dashboard feed — until it is explicitly resolved. It never ages out.
+   */
+  status: text("status").notNull().default("ACTIVE"),
+  /** READ_NO_TASK (information only) | RESOLVED (worked, note required). */
+  resolutionType: text("resolution_type"),
+  resolutionNote: text("resolution_note"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: text("resolved_by"),
+  /**
+   * The sender is chasing something Simple already dropped. Judged by the AI
+   * per message, not by keyword matching.
+   */
+  isFollowUp: boolean("is_follow_up").notNull().default(false),
+  followUpReason: text("follow_up_reason"),
 });
 
 export const communicationClients = pgTable("communication_clients", {
@@ -386,6 +402,22 @@ export const communicationTasks = pgTable("communication_tasks", {
   isCompleted: boolean("is_completed").notNull().default(false),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  /**
+   * OPEN | TODO | RESOLVED. OPEN is a fresh suggestion, TODO has been pushed
+   * onto the to-do list with a priority, RESOLVED carries a mandatory note.
+   * `isCompleted` is kept in lockstep with RESOLVED for older callers.
+   */
+  status: text("status").notNull().default("OPEN"),
+  /** URGENT | NORMAL | CASUAL. Set only once the task is on the to-do list. */
+  priority: text("priority"),
+  todoAddedAt: timestamp("todo_added_at"),
+  resolutionNote: text("resolution_note"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: text("resolved_by"),
+  /** AI (extracted from the message) | MANUAL (Kim typed it). */
+  origin: text("origin").notNull().default("AI"),
+  /** Manual drag ordering within a priority section. Lower sorts first. */
+  sortOrder: integer("sort_order").notNull().default(0),
 });
 
 export const auditLogs = pgTable("audit_logs", {
@@ -414,7 +446,9 @@ export const brokerHistory = pgTable("broker_history", {
 export const insertCommunicationSchema = createInsertSchema(communications).omit({ id: true, receivedAt: true });
 export const insertCommunicationClientSchema = createInsertSchema(communicationClients).omit({ id: true });
 export const insertCommunicationAttachmentSchema = createInsertSchema(communicationAttachments).omit({ id: true, uploadedAt: true });
-export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).omit({ id: true, createdAt: true, completedAt: true });
+export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).omit({
+  id: true, createdAt: true, completedAt: true, resolvedAt: true, resolvedBy: true, todoAddedAt: true,
+});
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });

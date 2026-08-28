@@ -26,6 +26,7 @@ import {
   type PprHeldRow, type InsertPprHeldRow,
 } from "@shared/schema";
 import { countsAsActive, deriveClientState } from "@shared/client-state";
+import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
 
 /** One person at the brokerage, as supplied by the form or the workbook import. */
 export interface BrokerContactInput {
@@ -111,6 +112,12 @@ export interface IStorage {
   getCommunication(id: number): Promise<Communication | undefined>;
   getClientCommunications(clientId: number): Promise<(Communication & { attachments: CommunicationAttachment[]; tasks: CommunicationTask[] })[]>;
   getAllCommunications(filters?: { senderDomain?: string; senderName?: string; clientId?: number; unmatched?: boolean; isInternal?: boolean }): Promise<(Communication & { clientNames: string[]; attachments: CommunicationAttachment[]; tasks: CommunicationTask[] })[]>;
+  /** Everything still unresolved, newest first. Nothing ages out of this list. */
+  getCommunicationFeed(): Promise<(Communication & { clientNames: string[]; attachments: CommunicationAttachment[]; tasks: CommunicationTask[] })[]>;
+  /** Returns null when the message was already resolved by someone else. */
+  resolveCommunication(id: number, opts: { resolutionType: string; note: string; user: string }): Promise<Date | null>;
+  /** Undo is limited to an unexpired "read, no task needed"; notes are permanent. */
+  unresolveCommunication(id: number): Promise<"ok" | "not_resolved" | "has_note" | "expired">;
   assignCommunicationToClients(commId: number, assignments: { clientId: number; confidence: string }[]): Promise<void>;
   updateClientAssignment(commId: number, clientId: number): Promise<void>;
   getDistinctSenders(): Promise<{ senderEmail: string; senderName: string | null; senderDomain: string | null }[]>;
@@ -120,7 +127,14 @@ export interface IStorage {
 
   createCommunicationTask(task: InsertCommunicationTask): Promise<CommunicationTask>;
   getOpenTasks(): Promise<(CommunicationTask & { clientName: string | null; communicationSubject: string | null })[]>;
-  completeCommunicationTask(id: number): Promise<void>;
+  /**
+   * Triage. There is deliberately no delete and no bare "complete" here: a task
+   * either resolves with a note or moves onto the to-do list under a priority.
+   */
+  getTodos(): Promise<(CommunicationTask & { clientName: string | null; communicationSubject: string | null })[]>;
+  moveTaskToTodo(id: number, priority: string): Promise<CommunicationTask | undefined>;
+  resolveCommunicationTask(id: number, note: string, user: string): Promise<{ task: CommunicationTask | undefined; communicationResolved: boolean }>;
+  reorderTodos(priority: string, orderedIds: number[]): Promise<number>;
   getClientTasks(clientId: number): Promise<CommunicationTask[]>;
   getUnreadCommunicationsCount(): Promise<number>;
 
@@ -161,6 +175,18 @@ export interface IStorage {
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Thrown when a drag-reorder payload no longer matches the section on the
+ * server, which means the browser was working from a list that has since
+ * changed. The caller should refetch rather than write a half-correct order.
+ */
+export class StaleOrderError extends Error {
+  constructor() {
+    super("This list changed while you were dragging. It has been refreshed.");
+    this.name = "StaleOrderError";
+  }
+}
 
 /**
  * Write a client's broker contacts as a set and re-mirror the flat columns.
@@ -932,10 +958,60 @@ export class DatabaseStorage implements IStorage {
     return comm;
   }
 
-  private async enrichComm(comm: Communication) {
-    const attachments = await db.select().from(communicationAttachments).where(eq(communicationAttachments.communicationId, comm.id)).orderBy(asc(communicationAttachments.uploadedAt));
-    const tasks = await db.select().from(communicationTasks).where(eq(communicationTasks.communicationId, comm.id)).orderBy(asc(communicationTasks.dueDate));
-    return { ...comm, attachments, tasks };
+  /**
+   * Loads attachments, tasks and client names for a whole batch of
+   * communications in a fixed number of queries rather than three per row.
+   *
+   * The previous per-row version issued roughly 3N round trips, which was
+   * tolerable for one client's history but not for the dashboard feed, which
+   * reads every unresolved message on every poll.
+   */
+  private async enrichComms(comms: Communication[]) {
+    if (!comms.length) return [];
+    const ids = comms.map(c => c.id);
+
+    const [attachments, tasks, links] = await Promise.all([
+      db.select().from(communicationAttachments)
+        .where(inArray(communicationAttachments.communicationId, ids))
+        .orderBy(asc(communicationAttachments.uploadedAt)),
+      db.select().from(communicationTasks)
+        .where(inArray(communicationTasks.communicationId, ids))
+        .orderBy(asc(communicationTasks.createdAt)),
+      db.select().from(communicationClients)
+        .where(inArray(communicationClients.communicationId, ids)),
+    ]);
+
+    const linkedClientIds = Array.from(new Set(links.map(l => l.clientId)));
+    const clientRows = linkedClientIds.length
+      ? await db.select({ id: clients.id, clientName: clients.clientName, clientCode: clients.clientCode })
+          .from(clients).where(inArray(clients.id, linkedClientIds))
+      : [];
+    const clientById = new Map(clientRows.map(c => [c.id, c]));
+
+    const groupByComm = <T extends { communicationId: number }>(rows: T[]) => {
+      const m = new Map<number, T[]>();
+      for (const r of rows) {
+        const existing = m.get(r.communicationId);
+        if (existing) existing.push(r);
+        else m.set(r.communicationId, [r]);
+      }
+      return m;
+    };
+    const attByComm = groupByComm(attachments);
+    const taskByComm = groupByComm(tasks);
+    const linkByComm = groupByComm(links);
+
+    return comms.map(c => {
+      const myLinks = linkByComm.get(c.id) ?? [];
+      return {
+        ...c,
+        attachments: attByComm.get(c.id) ?? [],
+        tasks: taskByComm.get(c.id) ?? [],
+        clientIds: myLinks.map(l => l.clientId),
+        clientCodes: myLinks.map(l => clientById.get(l.clientId)?.clientCode ?? ""),
+        clientNames: myLinks.map(l => clientById.get(l.clientId)?.clientName ?? "Unknown"),
+      };
+    });
   }
 
   async getClientCommunications(clientId: number) {
@@ -943,7 +1019,106 @@ export class DatabaseStorage implements IStorage {
     if (!links.length) return [];
     const commIds = links.map(l => l.communicationId);
     const comms = await db.select().from(communications).where(inArray(communications.id, commIds)).orderBy(desc(communications.receivedAt));
-    return Promise.all(comms.map(c => this.enrichComm(c)));
+    return this.enrichComms(comms);
+  }
+
+  /**
+   * The dashboard triage feed: every unresolved communication, newest first.
+   *
+   * There is deliberately no date window and no limit. A message Kim has not
+   * dealt with is exactly the thing that must not scroll quietly out of view,
+   * so the only way out of this list is an explicit resolution.
+   */
+  async getCommunicationFeed() {
+    const comms = await db.select().from(communications)
+      .where(eq(communications.status, "ACTIVE"))
+      .orderBy(desc(communications.receivedAt));
+    return this.enrichComms(comms);
+  }
+
+  /**
+   * Resolves a communication and stamps who did it and when.
+   *
+   * Any of its tasks still sitting untouched (OPEN) are closed out with the
+   * same note, because leaving them behind would strand work under a message
+   * that now reads as finished. Tasks already promoted to the to-do list are
+   * left alone: Kim put them there on purpose and works them separately.
+   */
+  async resolveCommunication(id: number, opts: { resolutionType: string; note: string; user: string }) {
+    const resolvedAt = new Date();
+    return db.transaction(async tx => {
+      // Conditional on ACTIVE, so two people resolving the same message at once
+      // cannot overwrite the first person's note.
+      const [comm] = await tx.update(communications).set({
+        status: "RESOLVED",
+        resolutionType: opts.resolutionType,
+        resolutionNote: opts.note,
+        resolvedAt,
+        resolvedBy: opts.user,
+      }).where(and(
+        eq(communications.id, id),
+        eq(communications.status, "ACTIVE"),
+      )).returning();
+
+      if (!comm) return null;
+
+      await tx.update(communicationTasks).set({
+        status: "RESOLVED",
+        isCompleted: true,
+        completedAt: resolvedAt,
+        resolvedAt,
+        resolvedBy: opts.user,
+        resolutionNote: opts.note,
+      }).where(and(
+        eq(communicationTasks.communicationId, id),
+        eq(communicationTasks.status, "OPEN"),
+      ));
+
+      return resolvedAt;
+    });
+  }
+
+  /**
+   * Undo for a mis-click on "Read: no task needed".
+   *
+   * Tasks auto-closed by that same action are revived by matching the exact
+   * resolution timestamp, so an undo cannot disturb anything resolved earlier
+   * and by hand.
+   */
+  async unresolveCommunication(id: number): Promise<"ok" | "not_resolved" | "has_note" | "expired"> {
+    return db.transaction(async tx => {
+      const [comm] = await tx.select().from(communications).where(eq(communications.id, id));
+      if (!comm || comm.status !== "RESOLVED") return "not_resolved" as const;
+
+      // Undo exists for a mis-click on "Read: no task needed" and nothing else.
+      // A typed resolution note is the audit trail, so it is never erasable.
+      if (comm.resolutionType !== "READ_NO_TASK") return "has_note" as const;
+      if (!comm.resolvedAt) return "not_resolved" as const;
+      if (Date.now() - comm.resolvedAt.getTime() > UNDO_WINDOW_MS) return "expired" as const;
+
+      await tx.update(communicationTasks).set({
+        status: "OPEN",
+        isCompleted: false,
+        completedAt: null,
+        resolvedAt: null,
+        resolvedBy: null,
+        resolutionNote: null,
+      }).where(and(
+        eq(communicationTasks.communicationId, id),
+        eq(communicationTasks.status, "RESOLVED"),
+        eq(communicationTasks.resolvedAt, comm.resolvedAt),
+      ));
+
+      await tx.update(communications).set({
+        status: "ACTIVE",
+        resolutionType: null,
+        resolutionNote: null,
+        resolvedAt: null,
+        resolvedBy: null,
+      }).where(eq(communications.id, id));
+
+      return "ok" as const;
+    });
   }
 
   async getAllCommunications(filters?: { senderDomain?: string; senderName?: string; clientId?: number; unmatched?: boolean; isInternal?: boolean }) {
@@ -965,15 +1140,7 @@ export class DatabaseStorage implements IStorage {
         : await db.select().from(communications).orderBy(desc(communications.receivedAt));
     }
 
-    return Promise.all(comms.map(async c => {
-      const links = await db.select().from(communicationClients).where(eq(communicationClients.communicationId, c.id));
-      const clientNames = await Promise.all(links.map(async l => {
-        const client = await this.getClient(l.clientId);
-        return client?.clientName ?? "Unknown";
-      }));
-      const enriched = await this.enrichComm(c);
-      return { ...enriched, clientNames };
-    }));
+    return this.enrichComms(comms);
   }
 
   async assignCommunicationToClients(commId: number, assignments: { clientId: number; confidence: string }[]) {
@@ -1014,17 +1181,171 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getOpenTasks() {
-    const tasks = await db.select().from(communicationTasks).where(eq(communicationTasks.isCompleted, false)).orderBy(asc(communicationTasks.dueDate));
-    return Promise.all(tasks.map(async t => {
-      const client = t.clientId ? await this.getClient(t.clientId) : null;
-      const comm = await this.getCommunication(t.communicationId);
-      return { ...t, clientName: client?.clientName ?? null, communicationSubject: comm?.subject ?? null };
-    }));
+  /** Decorates tasks with their client and subject in two queries, not 2N. */
+  private async decorateTasks(tasks: CommunicationTask[]) {
+    if (!tasks.length) return [];
+    const clientIds = Array.from(new Set(tasks.map(t => t.clientId).filter((v): v is number => v != null)));
+    const commIds = Array.from(new Set(tasks.map(t => t.communicationId)));
+
+    const [clientRows, commRows] = await Promise.all([
+      clientIds.length
+        ? db.select({ id: clients.id, clientName: clients.clientName, clientCode: clients.clientCode })
+            .from(clients).where(inArray(clients.id, clientIds))
+        : Promise.resolve([]),
+      commIds.length
+        ? db.select({ id: communications.id, subject: communications.subject, senderEmail: communications.senderEmail, senderName: communications.senderName })
+            .from(communications).where(inArray(communications.id, commIds))
+        : Promise.resolve([]),
+    ]);
+    const clientById = new Map(clientRows.map(c => [c.id, c]));
+    const commById = new Map(commRows.map(c => [c.id, c]));
+
+    return tasks.map(t => {
+      const client = t.clientId != null ? clientById.get(t.clientId) : undefined;
+      const comm = commById.get(t.communicationId);
+      return {
+        ...t,
+        clientName: client?.clientName ?? null,
+        clientCode: client?.clientCode ?? null,
+        communicationSubject: comm?.subject ?? null,
+        communicationSender: comm?.senderName ?? comm?.senderEmail ?? null,
+      };
+    });
   }
 
-  async completeCommunicationTask(id: number) {
-    await db.update(communicationTasks).set({ isCompleted: true, completedAt: new Date() }).where(eq(communicationTasks.id, id));
+  /** Fresh suggestions awaiting triage — not yet on the to-do list, not resolved. */
+  async getOpenTasks() {
+    const tasks = await db.select().from(communicationTasks)
+      .where(eq(communicationTasks.status, "OPEN"))
+      .orderBy(asc(communicationTasks.dueDate));
+    return this.decorateTasks(tasks);
+  }
+
+  /**
+   * The to-do list. Ordering is applied by the shared comparator so the server
+   * and the browser cannot disagree about what "oldest first" means.
+   */
+  async getTodos() {
+    const tasks = await db.select().from(communicationTasks)
+      .where(eq(communicationTasks.status, "TODO"));
+    const decorated = await this.decorateTasks(tasks);
+    return decorated.sort(compareTodos);
+  }
+
+  /**
+   * Moves a task onto the to-do list under a priority.
+   *
+   * New arrivals land at the bottom of their section by taking a sortOrder one
+   * past the current maximum, so promoting something never jumps the queue
+   * ahead of items that have already been waiting.
+   */
+  async moveTaskToTodo(id: number, priority: string) {
+    return db.transaction(async tx => {
+      const [{ maxOrder } = { maxOrder: null as number | null }] = await tx
+        .select({ maxOrder: sql<number | null>`max(${communicationTasks.sortOrder})` })
+        .from(communicationTasks)
+        .where(and(eq(communicationTasks.status, "TODO"), eq(communicationTasks.priority, priority)));
+
+      // Only unfinished work can be filed. A resolved task stays resolved; it
+      // cannot be dragged back into the queue and quietly lose its note.
+      const [updated] = await tx.update(communicationTasks).set({
+        status: "TODO",
+        priority,
+        todoAddedAt: new Date(),
+        sortOrder: (maxOrder ?? 0) + 1,
+      }).where(and(
+        eq(communicationTasks.id, id),
+        inArray(communicationTasks.status, ["OPEN", "TODO"]),
+      )).returning();
+      return updated;
+    });
+  }
+
+  /**
+   * Resolves a task with a mandatory note.
+   *
+   * When this was the last piece of outstanding work on its communication, the
+   * communication itself resolves too and drops out of Kim's feed. If other
+   * work remains under that message it stays in the feed, because it has not
+   * genuinely been dealt with yet.
+   */
+  async resolveCommunicationTask(id: number, note: string, user: string) {
+    const resolvedAt = new Date();
+    return db.transaction(async tx => {
+      // Resolving something already resolved would overwrite the original note,
+      // so the update only applies to work that is genuinely still outstanding.
+      const [updated] = await tx.update(communicationTasks).set({
+        status: "RESOLVED",
+        isCompleted: true,
+        completedAt: resolvedAt,
+        resolvedAt,
+        resolvedBy: user,
+        resolutionNote: note,
+      }).where(and(
+        eq(communicationTasks.id, id),
+        inArray(communicationTasks.status, ["OPEN", "TODO"]),
+      )).returning();
+
+      if (!updated) return { task: undefined, communicationResolved: false };
+
+      // Counted inside the same transaction as the sibling updates, so a task
+      // resolved concurrently cannot make both calls think they were last.
+      const [remaining] = await tx.select({ n: count() }).from(communicationTasks)
+        .where(and(
+          eq(communicationTasks.communicationId, updated.communicationId),
+          inArray(communicationTasks.status, ["OPEN", "TODO"]),
+        ));
+
+      let communicationResolved = false;
+      if ((remaining?.n ?? 0) === 0) {
+        const [comm] = await tx.update(communications).set({
+          status: "RESOLVED",
+          resolutionType: "RESOLVED",
+          resolutionNote: note,
+          resolvedAt,
+          resolvedBy: user,
+        }).where(and(
+          eq(communications.id, updated.communicationId),
+          eq(communications.status, "ACTIVE"),
+        )).returning();
+        communicationResolved = !!comm;
+      }
+
+      return { task: updated, communicationResolved };
+    });
+  }
+
+  /**
+   * Rewrites drag ordering within one priority section.
+   *
+   * Only ids that are genuinely TODO at the given priority are touched, so a
+   * stale browser payload cannot drag a resolved item back into the list.
+   */
+  async reorderTodos(priority: string, orderedIds: number[]) {
+    if (!orderedIds.length) return 0;
+    return db.transaction(async tx => {
+      const current = await tx.select({ id: communicationTasks.id }).from(communicationTasks)
+        .where(and(
+          eq(communicationTasks.status, "TODO"),
+          eq(communicationTasks.priority, priority),
+        ));
+
+      // The payload must be exactly this section as it stands right now. A
+      // browser working from a stale list would otherwise leave the items it
+      // never sent sitting on old positions, and the section order would come
+      // out as neither drag intended.
+      const submitted = new Set(orderedIds);
+      const stale = current.length !== submitted.size
+        || current.some(t => !submitted.has(t.id));
+      if (stale) throw new StaleOrderError();
+
+      let position = 0;
+      for (const id of orderedIds) {
+        position += 1;
+        await tx.update(communicationTasks).set({ sortOrder: position }).where(eq(communicationTasks.id, id));
+      }
+      return position;
+    });
   }
 
   async getClientTasks(clientId: number): Promise<CommunicationTask[]> {

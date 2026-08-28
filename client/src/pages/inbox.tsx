@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { TaskRow } from "@/components/task-actions";
 import { formatDistanceToNow } from "date-fns";
 import {
   Mail, Paperclip, CheckSquare, ChevronDown, ChevronUp, Sparkles,
@@ -115,15 +116,6 @@ function InboxCard({ comm, showClientBadge = true }: { comm: Communication; show
   const [assigning, setAssigning] = useState(false);
   const { toast } = useToast();
 
-  const completeMutation = useMutation({
-    mutationFn: (taskId: number) => apiRequest("POST", `/api/communication-tasks/${taskId}/complete`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/communications"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/communication-tasks"] });
-      toast({ title: "Task marked complete" });
-    },
-  });
-
   const timeAgo = formatDistanceToNow(new Date(comm.receivedAt), { addSuffix: true });
   const senderLabel = comm.senderName || comm.senderEmail;
   const openTasks = comm.tasks.filter(t => !t.isCompleted).length;
@@ -202,31 +194,9 @@ function InboxCard({ comm, showClientBadge = true }: { comm: Communication; show
                 <div>
                   <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Follow-up Tasks</p>
                   <div className="space-y-1.5">
-                    {comm.tasks.map(task => {
-                      const status = taskDueStatus(task.dueDate);
-                      return (
-                        <div key={task.id} className={`flex items-start gap-2 p-2 rounded-md ${task.isCompleted ? "opacity-50" : "bg-white border"}`}>
-                          <button onClick={() => !task.isCompleted && completeMutation.mutate(task.id)}
-                            disabled={task.isCompleted || completeMutation.isPending} className="mt-0.5 flex-shrink-0">
-                            {task.isCompleted
-                              ? <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
-                              : <div className="w-4 h-4 rounded border-2 border-[#94A3B8] hover:border-[#1A5276]" />}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-xs ${task.isCompleted ? "line-through text-[#94A3B8]" : "text-[#2C3E50]"}`}>{task.description}</p>
-                            {task.dueDate && !task.isCompleted && (
-                              <span className={`text-[10px] font-medium flex items-center gap-1 mt-0.5 ${
-                                status === "overdue" ? "text-[#EF4444]" : status === "today" ? "text-[#F5A623]" : "text-[#94A3B8]"
-                              }`}>
-                                <Clock className="w-2.5 h-2.5" />
-                                {status === "overdue" ? "Overdue — " : status === "today" ? "Due today" : "Due "}
-                                {status !== "today" && new Date(task.dueDate).toLocaleDateString()}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {comm.tasks.map(task => (
+                      <TaskRow key={task.id} task={task as any} extraKeys={[["/api/communications"]]} />
+                    ))}
                   </div>
                 </div>
               )}

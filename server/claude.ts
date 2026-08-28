@@ -26,6 +26,14 @@ export interface ActionItem {
 export interface EmailProcessResult {
   summary: string;
   actionItems: ActionItem[];
+  /**
+   * True when the sender is chasing something Simple already owed them. A
+   * follow-up means we dropped something, so these rows are flagged red on the
+   * dashboard rather than being left to blend in with ordinary mail.
+   */
+  isFollowUp: boolean;
+  /** One short line naming the evidence, shown under the red row. */
+  followUpReason: string | null;
 }
 
 export async function matchEmailToClients(
@@ -95,7 +103,12 @@ export async function processEmail(
   attachmentTexts: string[]
 ): Promise<EmailProcessResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
-    return { summary: "AI processing unavailable — no API key configured.", actionItems: [] };
+    return {
+      summary: "AI processing unavailable — no API key configured.",
+      actionItems: [],
+      isFollowUp: false,
+      followUpReason: null,
+    };
   }
 
   const attachmentSection = attachmentTexts.length > 0
@@ -112,16 +125,37 @@ ${emailText.slice(0, 6000)}${attachmentSection}
 Please provide:
 1. A concise 2-4 sentence SUMMARY of this email's main topic, any requests made, and any important details for the benefits team.
 2. A list of ACTION ITEMS — any follow-up tasks, deadlines, or requests that need attention.
+3. A judgement on whether this email is a FOLLOW-UP: the sender chasing something
+   Simple Benefits already owed them and did not deliver.
+
+On the follow-up judgement, read for intent rather than matching words. It is a
+follow-up when the sender is re-asking, waiting, or nudging — for example
+"just checking in", "following up on my email below", "I didn't get this form",
+"still waiting on the renewal", "any update?", "circling back", "second request",
+a forwarded copy of their own earlier unanswered message, or a polite reminder
+that a deadline is approaching on something they already asked us for.
+
+It is NOT a follow-up when the sender is making a brand new request, replying
+helpfully to something we asked them for, sending documents we requested,
+confirming or acknowledging something, or continuing a conversation that is
+moving along normally. A reply that answers our question is not a follow-up
+even if it quotes earlier mail underneath.
+
+Be conservative. Flagging ordinary mail red trains the reader to ignore red.
+When it is genuinely ambiguous, return false.
 
 Return ONLY valid JSON in this exact format:
 {
   "summary": "...",
   "actionItems": [
     {"description": "...", "dueDate": "YYYY-MM-DD or null"}
-  ]
+  ],
+  "isFollowUp": true or false,
+  "followUpReason": "one short sentence naming the specific evidence, or null"
 }
 
 If there are no action items, return an empty array. Extract real due dates if mentioned; otherwise use null.
+Set followUpReason to null whenever isFollowUp is false.
 Return ONLY the JSON object, no other text.`;
 
   try {
@@ -133,15 +167,23 @@ Return ONLY the JSON object, no other text.`;
 
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { summary: text || "Could not parse summary.", actionItems: [] };
+    if (!jsonMatch) {
+      return { summary: text || "Could not parse summary.", actionItems: [], isFollowUp: false, followUpReason: null };
+    }
     const parsed = JSON.parse(jsonMatch[0]);
+    const isFollowUp = parsed.isFollowUp === true;
     return {
       summary: parsed.summary ?? "No summary generated.",
       actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems : [],
+      isFollowUp,
+      // A reason without a flag is noise, so it is only kept when the flag is set.
+      followUpReason: isFollowUp && typeof parsed.followUpReason === "string" && parsed.followUpReason.trim()
+        ? parsed.followUpReason.trim()
+        : null,
     };
   } catch (err: any) {
     console.error("[claude] processEmail error:", err?.message || String(err));
-    return { summary: "Error processing email with AI.", actionItems: [] };
+    return { summary: "Error processing email with AI.", actionItems: [], isFollowUp: false, followUpReason: null };
   }
 }
 
