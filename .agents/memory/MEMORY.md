@@ -13,4 +13,6 @@
 - [Plan termination date](plan-termination.md) — plans.terminationDate is separate from isArchived and from client-level status; enforced in renewals, claims import, PPR, and client detail.
 - [Communication triage](communication-triage.md) — nothing is deletable, notes are mandatory and permanent; undo only reverses an unexpired READ_NO_TASK; transitions enforced in SQL predicates.
 - [Manual to-dos and multi-client tasks](manual-todos.md) — clients live in a join table, flat client_id is a mirror; General means nothing attached; never merge duplicates carrying a human note.
+- [Theme tokens](theme-tokens.md) — a full token set meant nothing while ~971 hardcoded hex classes bypassed it; gold is a fill never text; fills need -foreground, never text-white.
+- [Back navigation](page-back-navigation.md) — in-app depth rides on history.state, not a module counter, because Back and Forward both fire popstate; rendered once in the app layout.
 - [Client termination and run-out](client-termination.md) — a termination date stops renewals only; state is derived from the date alone and PPRs/claims continue through a fixed three-month run-out.

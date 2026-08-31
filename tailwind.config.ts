@@ -81,6 +81,58 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
+        // House palette. These exist so components stop carrying raw hex
+        // values; change the value once in index.css and it lands everywhere.
+        brand: {
+          DEFAULT: "hsl(var(--brand) / <alpha-value>)",
+          foreground: "hsl(var(--brand-foreground) / <alpha-value>)",
+          dark: "hsl(var(--brand-dark) / <alpha-value>)",
+          accent: "hsl(var(--brand-accent) / <alpha-value>)",
+        },
+        gold: {
+          DEFAULT: "hsl(var(--gold) / <alpha-value>)",
+          hover: "hsl(var(--gold-hover) / <alpha-value>)",
+          foreground: "hsl(var(--gold-foreground) / <alpha-value>)",
+          on: "hsl(var(--gold-on-brand) / <alpha-value>)",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success) / <alpha-value>)",
+          strong: "hsl(var(--success-strong) / <alpha-value>)",
+          tint: "hsl(var(--success-tint) / <alpha-value>)",
+          foreground: "hsl(var(--success-foreground) / <alpha-value>)",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning) / <alpha-value>)",
+          strong: "hsl(var(--warning-strong) / <alpha-value>)",
+          tint: "hsl(var(--warning-tint) / <alpha-value>)",
+          foreground: "hsl(var(--warning-foreground) / <alpha-value>)",
+        },
+        danger: {
+          DEFAULT: "hsl(var(--danger) / <alpha-value>)",
+          strong: "hsl(var(--danger-strong) / <alpha-value>)",
+          tint: "hsl(var(--danger-tint) / <alpha-value>)",
+          foreground: "hsl(var(--danger-foreground) / <alpha-value>)",
+        },
+        info: {
+          tint: "hsl(var(--info-tint) / <alpha-value>)",
+        },
+        surface: {
+          subtle: "hsl(var(--surface-subtle) / <alpha-value>)",
+        },
+      },
+      // The whole ramp moves up roughly one step. Body copy is `text-sm` all
+      // over this app, so that is the size that had to land at 15px; `text-xs`
+      // is the dense-table size and is floored at 13px.
+      fontSize: {
+        xs: ["0.8125rem", { lineHeight: "1.125rem" }],   /* 13px */
+        sm: ["0.9375rem", { lineHeight: "1.375rem" }],   /* 15px */
+        base: ["1.0625rem", { lineHeight: "1.625rem" }], /* 17px */
+        lg: ["1.1875rem", { lineHeight: "1.75rem" }],    /* 19px */
+        xl: ["1.3125rem", { lineHeight: "1.875rem" }],   /* 21px */
+        "2xl": ["1.5625rem", { lineHeight: "2rem" }],    /* 25px */
+        "3xl": ["1.9375rem", { lineHeight: "2.375rem" }],/* 31px */
+        "4xl": ["2.3125rem", { lineHeight: "2.625rem" }],/* 37px */
+        "5xl": ["3rem", { lineHeight: "1" }],
       },
       fontFamily: {
         sans: ["var(--font-sans)"],

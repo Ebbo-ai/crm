@@ -19,26 +19,26 @@ const WARNING_GROUP_TITLES: Record<AlertGroupKey, { title: string; subtitle: str
   OVERDUE: {
     title: "Overdue",
     subtitle: "Anniversary has passed and renewal is not yet complete",
-    headerBg: "bg-red-50 border-red-200",
-    headerText: "text-red-700",
+    headerBg: "bg-danger-tint border-danger/40",
+    headerText: "text-danger-strong",
   },
   PROPOSAL_DUE: {
     title: "Proposal past due",
     subtitle: "Due date passed — proposal not yet sent",
-    headerBg: "bg-amber-50 border-amber-200",
-    headerText: "text-amber-700",
+    headerBg: "bg-warning-tint border-warning/40",
+    headerText: "text-warning-strong",
   },
   LATE_RESPONSE: {
     title: "No response in 14+ days",
     subtitle: "Proposal sent but client has not responded",
-    headerBg: "bg-orange-50 border-orange-200",
-    headerText: "text-orange-700",
+    headerBg: "bg-warning-tint border-warning/40",
+    headerText: "text-warning-strong",
   },
   INCOMPLETE_PRIOR: {
     title: "Prior year never completed",
     subtitle: "A new renewal opened while the previous plan year was still unfinished",
-    headerBg: "bg-slate-100 border-slate-200",
-    headerText: "text-slate-700",
+    headerBg: "bg-muted border-border",
+    headerText: "text-muted-foreground",
   },
 };
 
@@ -68,8 +68,8 @@ export default function RenewalAlertsPage() {
   return (
     <div data-testid="renewal-alerts-page">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]">Renewal Alerts</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">
+        <h1 className="text-2xl font-bold text-brand">Renewal Alerts</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Clients whose renewal timing is off-track — internal view only
         </p>
       </div>
@@ -81,9 +81,9 @@ export default function RenewalAlertsPage() {
       ) : totalAlerts === 0 ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-16 text-center">
-            <CheckCircle2 className="w-12 h-12 text-[#22C55E] mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-[#2C3E50]">All caught up</h3>
-            <p className="text-sm text-[#94A3B8] mt-1">
+            <CheckCircle2 className="w-12 h-12 text-success mx-auto mb-3" />
+            <h3 className="text-lg font-medium text-foreground">All caught up</h3>
+            <p className="text-sm text-muted-foreground mt-1">
               No renewal timing issues right now.
             </p>
           </CardContent>
@@ -109,33 +109,33 @@ export default function RenewalAlertsPage() {
                     return (
                       <Link key={client.id} href={`/clients/${client.id}`}>
                         <div
-                          className="flex items-center justify-between px-5 py-4 bg-white hover:bg-[#F8FAFC] transition-colors cursor-pointer group"
+                          className="flex items-center justify-between px-5 py-4 bg-card hover:bg-surface-subtle transition-colors cursor-pointer group"
                           data-testid={`alert-client-${client.id}`}
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               {client.clientCode && (
-                                <span className="text-[10px] text-[#2E86C1] font-semibold">{client.clientCode}</span>
+                                <span className="text-xs text-brand-accent font-semibold">{client.clientCode}</span>
                               )}
-                              <span className="text-sm font-semibold text-[#2C3E50]">{client.clientName}</span>
+                              <span className="text-sm font-semibold text-foreground">{client.clientName}</span>
                               {renewal?.planYear && (
-                                <span className="text-[10px] text-[#94A3B8]">PY {renewal.planYear}</span>
+                                <span className="text-xs text-muted-foreground">PY {renewal.planYear}</span>
                               )}
                               {/* Pipeline step badge */}
                               {step ? (
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
                                   {RENEWAL_PIPELINE_STEP_LABELS[step]}
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-[#94A3B8] italic">Not started</span>
+                                <span className="text-xs text-muted-foreground italic">Not started</span>
                               )}
                               {renewal?.incompletePriorFlag && (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-danger-tint text-danger-strong">
                                   ⚠ Prior year never completed
                                 </span>
                               )}
                             </div>
-                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[#94A3B8]">
+                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                               {client.anniversaryDate && (
                                 <span>Anniversary: {fmtDate(client.anniversaryDate)}</span>
                               )}
@@ -150,7 +150,7 @@ export default function RenewalAlertsPage() {
                               )}
                             </div>
                           </div>
-                          <ArrowRight className="w-4 h-4 text-[#94A3B8] flex-shrink-0 ml-3 group-hover:text-[#1A5276] transition-colors" />
+                          <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0 ml-3 group-hover:text-brand transition-colors" />
                         </div>
                       </Link>
                     );

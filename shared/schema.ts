@@ -602,6 +602,8 @@ export const renewals = pgTable("renewals", {
   acceptanceReceivedDate: timestamp("acceptance_received_date"),
   // True when a prior year's renewal was still open as this one auto-created
   incompletePriorFlag: boolean("incomplete_prior_flag").notNull().default(false),
+  // Set when the pipeline first reaches EMAILED_TO_90D.
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({

@@ -123,10 +123,10 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl" data-testid="quick-log-modal">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-[#1A5276]">
-            <Zap className="w-4 h-4 text-[#F5A623]" />
+          <DialogTitle className="flex items-center gap-2 text-brand">
+            <Zap className="w-4 h-4 text-warning-strong" />
             Quick Log Communication
-            <span className="ml-auto text-[10px] font-normal text-[#94A3B8] bg-[#F0F4F8] px-2 py-0.5 rounded font-mono">
+            <span className="ml-auto text-xs font-normal text-muted-foreground bg-surface-subtle px-2 py-0.5 rounded font-mono">
               Ctrl+Shift+E
             </span>
           </DialogTitle>
@@ -135,9 +135,9 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
         <div className="space-y-4 mt-1">
           {/* Client picker */}
           <div ref={dropdownRef} className="relative">
-            <Label className="text-xs font-semibold text-[#64748B] uppercase tracking-wide">Client</Label>
+            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Client</Label>
             <div className="relative mt-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8] pointer-events-none" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
                 ref={searchRef}
                 value={clientSearch}
@@ -161,46 +161,46 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
               {selectedClient ? (
                 <button
                   onClick={() => { setSelectedClient(null); setClientSearch(""); setShowDropdown(false); }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#EF4444]"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-danger"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               ) : (
-                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8] pointer-events-none" />
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               )}
             </div>
 
             {showDropdown && filtered.length > 0 && (
-              <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-[#E2E8F0] rounded-lg shadow-lg max-h-52 overflow-y-auto">
+              <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-card border border-border rounded-lg shadow-lg max-h-52 overflow-y-auto">
                 {filtered.map(c => (
                   <button
                     key={c.id}
                     onMouseDown={e => { e.preventDefault(); handleSelectClient(c); }}
-                    className={`w-full text-left px-3 py-2.5 hover:bg-[#F0F4F8] flex items-center justify-between transition-colors ${selectedClient?.id === c.id ? "bg-[#EBF5FB]" : ""}`}
+                    className={`w-full text-left px-3 py-2.5 hover:bg-surface-subtle flex items-center justify-between transition-colors ${selectedClient?.id === c.id ? "bg-info-tint" : ""}`}
                     data-testid={`quicklog-client-option-${c.id}`}
                   >
-                    <span className="text-sm font-medium text-[#2C3E50]">{c.clientName}</span>
-                    <span className="text-xs text-[#94A3B8] font-mono">{c.clientCode}</span>
+                    <span className="text-sm font-medium text-foreground">{c.clientName}</span>
+                    <span className="text-xs text-muted-foreground font-mono">{c.clientCode}</span>
                   </button>
                 ))}
               </div>
             )}
 
             {selectedClient && (
-              <p className="text-xs text-[#22C55E] mt-1 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] inline-block" />
+              <p className="text-xs text-success mt-1 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-success inline-block" />
                 Linked to <strong>{selectedClient.clientName}</strong>
               </p>
             )}
             {!selectedClient && clientSearch === "" && (
-              <p className="text-xs text-[#94A3B8] mt-1">Optional — leave blank for unmatched inbox</p>
+              <p className="text-xs text-muted-foreground mt-1">Optional — leave blank for unmatched inbox</p>
             )}
           </div>
 
           {/* Sender info */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold text-[#64748B] uppercase tracking-wide">Sender Email *</Label>
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sender Email *</Label>
               <Input
                 value={senderEmail}
                 onChange={e => setSenderEmail(e.target.value)}
@@ -210,7 +210,7 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold text-[#64748B] uppercase tracking-wide">Sender Name</Label>
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sender Name</Label>
               <Input
                 value={senderName}
                 onChange={e => setSenderName(e.target.value)}
@@ -224,8 +224,8 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
           {/* Content */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <Label className="text-xs font-semibold text-[#64748B] uppercase tracking-wide">Content *</Label>
-              <span className="text-[10px] text-[#94A3B8] bg-[#F0F4F8] px-2 py-0.5 rounded">
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Content *</Label>
+              <span className="text-xs text-muted-foreground bg-surface-subtle px-2 py-0.5 rounded">
                 Date auto-stamped: {todayStamp}
               </span>
             </div>
@@ -241,8 +241,8 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
 
           {/* Actions */}
           <div className="flex items-center justify-between pt-1">
-            <p className="text-xs text-[#94A3B8]">
-              <Sparkles className="w-3 h-3 inline mr-1 text-[#F5A623]" />
+            <p className="text-xs text-muted-foreground">
+              <Sparkles className="w-3 h-3 inline mr-1 text-warning-strong" />
               Claude will summarize and extract action items
             </p>
             <div className="flex gap-2">
@@ -252,7 +252,7 @@ export function QuickLogModal({ open, onClose, defaultClientId }: QuickLogModalP
               <Button
                 onClick={() => mutation.mutate()}
                 disabled={!canSubmit}
-                className="bg-[#1A5276] hover:bg-[#154360] text-white gap-2"
+                className="bg-brand hover:bg-brand-dark text-brand-foreground gap-2"
                 data-testid="button-quicklog-submit"
               >
                 {mutation.isPending

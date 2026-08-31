@@ -89,16 +89,16 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
 
   return (
     <div
-      className={`p-2.5 rounded-md border ${isResolved ? "bg-[#F8FAFC] border-gray-100" : "bg-white border-gray-200"}`}
+      className={`p-2.5 rounded-md border ${isResolved ? "bg-surface-subtle border-border" : "bg-card border-border"}`}
       data-testid={`task-item-${task.id}`}
     >
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            {isResolved && <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />}
+            {isResolved && <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0" />}
             {onList && priorityStyle && (
               <span
-                className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
                 style={{ color: priorityStyle.text, backgroundColor: priorityStyle.bg }}
                 data-testid={`badge-priority-${task.id}`}
               >
@@ -106,31 +106,31 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
               </span>
             )}
             {task.origin === "MANUAL" && (
-              <span className="text-[9px] text-[#94A3B8] uppercase tracking-wider">added by hand</span>
+              <span className="text-xs text-muted-foreground uppercase tracking-wider">added by hand</span>
             )}
             {/* Shown only when the task covers more than the record you are
                 looking at, or no client at all. Repeating the current client's
                 own name on its own record would just be noise. */}
             {task.clients && task.clients.length !== 1 && (
               task.clients.length === 0 ? (
-                <span className="text-[9px] text-[#1A5276] uppercase tracking-wider inline-flex items-center gap-0.5" data-testid={`badge-general-${task.id}`}>
+                <span className="text-xs text-brand uppercase tracking-wider inline-flex items-center gap-0.5" data-testid={`badge-general-${task.id}`}>
                   <Building2 className="w-2.5 h-2.5" /> General
                 </span>
               ) : (
-                <span className="text-[9px] text-[#94A3B8]" data-testid={`badge-task-clients-${task.id}`}>
+                <span className="text-xs text-muted-foreground" data-testid={`badge-task-clients-${task.id}`}>
                   also on {task.clients.length - 1} other client{task.clients.length > 2 ? "s" : ""}
                 </span>
               )
             )}
           </div>
 
-          <p className={`text-xs mt-0.5 ${isResolved ? "text-[#94A3B8]" : "text-[#2C3E50]"}`}>
+          <p className={`text-xs mt-0.5 ${isResolved ? "text-muted-foreground" : "text-foreground"}`}>
             {task.description}
           </p>
 
           {task.dueDate && !isResolved && (
-            <span className={`text-[10px] font-medium inline-flex items-center gap-1 mt-0.5 ${
-              status === "overdue" ? "text-[#EF4444]" : status === "today" ? "text-[#F5A623]" : "text-[#94A3B8]"
+            <span className={`text-xs font-medium inline-flex items-center gap-1 mt-0.5 ${
+              status === "overdue" ? "text-danger" : status === "today" ? "text-warning-strong" : "text-muted-foreground"
             }`}>
               <Clock className="w-2.5 h-2.5" />
               {status === "overdue" ? "Overdue — " : status === "today" ? "Due today" : "Due "}
@@ -139,9 +139,9 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
           )}
 
           {isResolved && task.resolutionNote && (
-            <div className="mt-1.5 pl-2 border-l-2 border-[#22C55E]/40" data-testid={`text-task-resolution-${task.id}`}>
-              <p className="text-xs text-[#2C3E50] leading-snug">{task.resolutionNote}</p>
-              <p className="text-[10px] text-[#94A3B8] mt-0.5 inline-flex items-center gap-1">
+            <div className="mt-1.5 pl-2 border-l-2 border-success/40" data-testid={`text-task-resolution-${task.id}`}>
+              <p className="text-xs text-foreground leading-snug">{task.resolutionNote}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 inline-flex items-center gap-1">
                 {task.resolvedAt && format(new Date(task.resolvedAt), "MMM d, yyyy")}
                 {task.resolvedBy && <><User className="w-2.5 h-2.5 ml-1" />{task.resolvedBy}</>}
               </p>
@@ -155,7 +155,7 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
               <Button
                 size="sm" variant="outline"
                 onClick={() => setPrioritising(true)}
-                className="h-6 px-2 text-[10px] gap-1 border-[#1A5276] text-[#1A5276]"
+                className="h-6 px-2 text-xs gap-1 border-brand text-brand"
                 data-testid={`button-task-todo-${task.id}`}
               >
                 <ListPlus className="w-3 h-3" /> To-do
@@ -164,7 +164,7 @@ export function TaskRow({ task, extraKeys = [] }: { task: TaskLike; extraKeys?: 
             <Button
               size="sm" variant="outline"
               onClick={() => setResolving(true)}
-              className="h-6 px-2 text-[10px] gap-1 border-[#BBF7D0] text-[#22C55E] hover:bg-[#F0FDF4]"
+              className="h-6 px-2 text-xs gap-1 border-success-tint text-success hover:bg-success-tint"
               data-testid={`button-task-resolve-${task.id}`}
             >
               <CheckCircle2 className="w-3 h-3" /> Resolved

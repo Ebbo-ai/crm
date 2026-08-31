@@ -79,14 +79,14 @@ function fmtCurrency(v: number | null | undefined) {
 }
 
 function DeltaCell({ before, after }: { before: number | null; after: number | null }) {
-  if (before == null && after == null) return <span className="text-[#94A3B8]">—</span>;
+  if (before == null && after == null) return <span className="text-muted-foreground">—</span>;
   const diff = (after ?? 0) - (before ?? 0);
-  const color = diff === 0 ? "text-[#94A3B8]" : diff > 0 ? "text-[#EF4444]" : "text-[#22C55E]";
+  const color = diff === 0 ? "text-muted-foreground" : diff > 0 ? "text-danger" : "text-success";
   return (
     <span className="space-x-1 text-xs">
-      <span className="text-[#94A3B8]">{fmtCurrency(before)}</span>
-      <span className="text-[#94A3B8]">→</span>
-      <span className="font-semibold text-[#2C3E50]">{fmtCurrency(after)}</span>
+      <span className="text-muted-foreground">{fmtCurrency(before)}</span>
+      <span className="text-muted-foreground">→</span>
+      <span className="font-semibold text-foreground">{fmtCurrency(after)}</span>
       {diff !== 0 && (
         <span className={`${color} font-semibold`}>
           ({diff > 0 ? "+" : ""}{fmtCurrency(diff)})
@@ -158,24 +158,24 @@ function AcceptHeldRowDialog({
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Accept Held Row</DialogTitle>
+          <DialogTitle className="text-brand">Accept Held Row</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="bg-[#FEF9C3] border border-[#FDE68A] rounded-lg p-3 text-sm text-[#92400E]">
+          <div className="bg-warning-tint border border-warning-tint rounded-lg p-3 text-sm text-warning-strong">
             <p className="font-medium mb-1">Hold reasons:</p>
             <ul className="space-y-0.5 list-disc list-inside">
               {row.hold_reasons.map((r, i) => <li key={i}>{r}</li>)}
             </ul>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 text-xs text-[#94A3B8] bg-[#F0F4F8] rounded p-3">
+          <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground bg-surface-subtle rounded p-3">
             <div><span className="font-medium">From file:</span> {row.client_code || "—"}</div>
             <div><span className="font-medium">Plan:</span> {row.plan_name || "—"}</div>
             <div><span className="font-medium">Month:</span> {row.report_month ? `${MONTHS[(row.report_month ?? 1) - 1]} ${row.report_year}` : "—"}</div>
           </div>
 
           <div>
-            <Label className="text-sm font-medium">Map to Client <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Map to Client <span className="text-danger">*</span></Label>
             <Select value={selectedClientId} onValueChange={(v) => { setSelectedClientId(v); setSelectedPlanId(""); }}>
               <SelectTrigger><SelectValue placeholder="Select client…" /></SelectTrigger>
               <SelectContent>
@@ -190,7 +190,7 @@ function AcceptHeldRowDialog({
 
           {selectedClientId && (
             <div>
-              <Label className="text-sm font-medium">Map to Plan <span className="text-[#EF4444]">*</span></Label>
+              <Label className="text-sm font-medium">Map to Plan <span className="text-danger">*</span></Label>
               <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
                 <SelectTrigger><SelectValue placeholder="Select plan…" /></SelectTrigger>
                 <SelectContent>
@@ -214,7 +214,7 @@ function AcceptHeldRowDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            className="bg-[#1A5276] text-white"
+            className="bg-brand text-brand-foreground"
             onClick={() => acceptMutation.mutate()}
             disabled={!selectedClientId || !selectedPlanId || acceptMutation.isPending}
           >
@@ -310,8 +310,8 @@ export default function PprImportPage() {
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-[#1A5276]">Monthly Performance Import</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">
+        <h1 className="text-2xl font-bold text-brand">Monthly Performance Import</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Upload the combined 90 Degree Benefits monthly file (one row per client · plan · month).
           The system distributes rows automatically and flags anything that needs review.
         </p>
@@ -320,13 +320,13 @@ export default function PprImportPage() {
       {/* Upload card */}
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base text-[#1A5276]">Upload File</CardTitle>
+          <CardTitle className="text-base text-brand">Upload File</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Drop zone */}
           <div
             className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors
-              ${dragOver ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]/60"}`}
+              ${dragOver ? "border-brand bg-brand/5" : "border-border hover:border-brand/60"}`}
             onClick={() => fileRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -342,10 +342,10 @@ export default function PprImportPage() {
             />
             {file ? (
               <div className="flex items-center justify-center gap-3">
-                <FileSpreadsheet className="w-8 h-8 text-green-600 flex-shrink-0" />
+                <FileSpreadsheet className="w-8 h-8 text-success-strong flex-shrink-0" />
                 <div className="text-left">
-                  <p className="font-semibold text-[#2C3E50] text-sm">{file.name}</p>
-                  <p className="text-xs text-[#94A3B8]">{(file.size / 1024).toFixed(1)} KB</p>
+                  <p className="font-semibold text-foreground text-sm">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
                 </div>
                 <Button
                   size="icon"
@@ -353,32 +353,32 @@ export default function PprImportPage() {
                   className="ml-2 w-6 h-6"
                   onClick={e => { e.stopPropagation(); setFile(null); setResult(null); }}
                 >
-                  <X className="w-3.5 h-3.5 text-[#94A3B8]" />
+                  <X className="w-3.5 h-3.5 text-muted-foreground" />
                 </Button>
               </div>
             ) : (
               <div>
-                <Upload className="w-10 h-10 text-[#94A3B8] mx-auto mb-3" />
-                <p className="text-sm font-medium text-[#2C3E50]">Drop file here or click to browse</p>
-                <p className="text-xs text-[#94A3B8] mt-1">CSV · Excel (.xlsx / .xls) · up to 100 MB</p>
+                <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm font-medium text-foreground">Drop file here or click to browse</p>
+                <p className="text-xs text-muted-foreground mt-1">CSV · Excel (.xlsx / .xls) · up to 100 MB</p>
               </div>
             )}
           </div>
 
-          <div className="bg-[#F0F4F8] rounded-lg px-4 py-3 text-xs text-[#5D6D7E] space-y-1">
-            <p className="font-semibold text-[#1A5276]">Expected columns</p>
+          <div className="bg-surface-subtle rounded-lg px-4 py-3 text-xs text-muted-foreground space-y-1">
+            <p className="font-semibold text-brand">Expected columns</p>
             <p className="font-mono">
               client_code · plan_name · report_month · report_year · ee_count · ee_spouse_count ·
               ee_child_count · family_count · submitted_charges · paid_claims · claim_count ·
-              reason_code <span className="text-[#94A3B8]">(optional)</span> · reason_note
-              <span className="text-[#94A3B8]"> (optional)</span> · release_month
-              <span className="text-[#94A3B8]"> (optional)</span> · release_year
-              <span className="text-[#94A3B8]"> (optional)</span>
+              reason_code <span className="text-muted-foreground">(optional)</span> · reason_note
+              <span className="text-muted-foreground"> (optional)</span> · release_month
+              <span className="text-muted-foreground"> (optional)</span> · release_year
+              <span className="text-muted-foreground"> (optional)</span>
             </p>
           </div>
 
           <Button
-            className="bg-[#1A5276] text-white gap-2"
+            className="bg-brand text-brand-foreground gap-2"
             onClick={() => file && importMutation.mutate(file)}
             disabled={!file || importMutation.isPending}
             data-testid="button-run-import"
@@ -399,37 +399,37 @@ export default function PprImportPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Card className="border-0 shadow-sm">
               <CardContent className="p-4 flex items-center gap-3">
-                <CheckCircle className="w-8 h-8 text-[#22C55E] flex-shrink-0" />
+                <CheckCircle className="w-8 h-8 text-success flex-shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold text-[#2C3E50]">{result.rowsAccepted}</p>
-                  <p className="text-xs text-[#94A3B8]">New months accepted</p>
+                  <p className="text-2xl font-bold text-foreground">{result.rowsAccepted}</p>
+                  <p className="text-xs text-muted-foreground">New months accepted</p>
                 </div>
               </CardContent>
             </Card>
             <Card className="border-0 shadow-sm">
               <CardContent className="p-4 flex items-center gap-3">
-                <Clock className="w-8 h-8 text-[#94A3B8] flex-shrink-0" />
+                <Clock className="w-8 h-8 text-muted-foreground flex-shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold text-[#2C3E50]">{result.rowsUnchanged}</p>
-                  <p className="text-xs text-[#94A3B8]">Unchanged (already on file)</p>
+                  <p className="text-2xl font-bold text-foreground">{result.rowsUnchanged}</p>
+                  <p className="text-xs text-muted-foreground">Unchanged (already on file)</p>
                 </div>
               </CardContent>
             </Card>
             <Card className="border-0 shadow-sm">
               <CardContent className="p-4 flex items-center gap-3">
-                <RotateCcw className="w-8 h-8 text-[#F5A623] flex-shrink-0" />
+                <RotateCcw className="w-8 h-8 text-warning-strong flex-shrink-0" />
                 <div>
-                  <p className="text-2xl font-bold text-[#2C3E50]">{result.rowsRestated}</p>
-                  <p className="text-xs text-[#94A3B8]">Months restated</p>
+                  <p className="text-2xl font-bold text-foreground">{result.rowsRestated}</p>
+                  <p className="text-xs text-muted-foreground">Months restated</p>
                 </div>
               </CardContent>
             </Card>
-            <Card className={`border-0 shadow-sm ${result.rowsHeld > 0 ? "ring-1 ring-[#EF4444]/30" : ""}`}>
+            <Card className={`border-0 shadow-sm ${result.rowsHeld > 0 ? "ring-1 ring-danger/30" : ""}`}>
               <CardContent className="p-4 flex items-center gap-3">
-                <AlertCircle className={`w-8 h-8 flex-shrink-0 ${result.rowsHeld > 0 ? "text-[#EF4444]" : "text-[#94A3B8]"}`} />
+                <AlertCircle className={`w-8 h-8 flex-shrink-0 ${result.rowsHeld > 0 ? "text-danger" : "text-muted-foreground"}`} />
                 <div>
-                  <p className="text-2xl font-bold text-[#2C3E50]">{result.rowsHeld}</p>
-                  <p className="text-xs text-[#94A3B8]">Rows held for review</p>
+                  <p className="text-2xl font-bold text-foreground">{result.rowsHeld}</p>
+                  <p className="text-xs text-muted-foreground">Rows held for review</p>
                 </div>
               </CardContent>
             </Card>
@@ -440,12 +440,12 @@ export default function PprImportPage() {
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-2">
                 <button
-                  className="flex items-center gap-2 text-sm font-semibold text-[#F5A623] w-full text-left"
+                  className="flex items-center gap-2 text-sm font-semibold text-warning-strong w-full text-left"
                   onClick={() => setShowRestated(v => !v)}
                 >
                   {showRestated ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   Restated Months ({result.restated.length})
-                  <span className="text-xs font-normal text-[#94A3B8] ml-1">
+                  <span className="text-xs font-normal text-muted-foreground ml-1">
                     — prior figures are preserved in history
                   </span>
                 </button>
@@ -455,17 +455,17 @@ export default function PprImportPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b bg-[#F0F4F8]">
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Period</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Paid Claims</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Submitted Charges</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Reason</th>
+                        <tr className="border-b bg-surface-subtle">
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Period</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Paid Claims</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Submitted Charges</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Reason</th>
                         </tr>
                       </thead>
                       <tbody>
                         {result.restated.map((r, i) => (
-                          <tr key={i} className="border-b hover:bg-[#F0F4F8]/30">
-                            <td className="px-4 py-2.5 font-semibold text-[#2C3E50]">
+                          <tr key={i} className="border-b hover:bg-surface-subtle/30">
+                            <td className="px-4 py-2.5 font-semibold text-foreground">
                               {MONTHS[(r.reportMonth ?? 1) - 1]} {r.reportYear}
                             </td>
                             <td className="px-4 py-2.5">
@@ -474,7 +474,7 @@ export default function PprImportPage() {
                             <td className="px-4 py-2.5">
                               <DeltaCell before={r.priorSubmittedCharges} after={r.newSubmittedCharges} />
                             </td>
-                            <td className="px-4 py-2.5 text-xs text-[#94A3B8]">
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground">
                               {r.reasonCode || "—"}
                             </td>
                           </tr>
@@ -492,13 +492,13 @@ export default function PprImportPage() {
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-2">
                 <button
-                  className="flex items-center gap-2 text-sm font-semibold text-[#EF4444] w-full text-left"
+                  className="flex items-center gap-2 text-sm font-semibold text-danger w-full text-left"
                   onClick={() => setShowHeld(v => !v)}
                 >
                   {showHeld ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   Held Rows ({pendingHeld.length} pending
                   {resolvedHeld.length > 0 ? `, ${resolvedHeld.length} resolved` : ""})
-                  <span className="text-xs font-normal text-[#94A3B8] ml-1">
+                  <span className="text-xs font-normal text-muted-foreground ml-1">
                     — query the administrator then accept or discard each row
                   </span>
                 </button>
@@ -508,35 +508,35 @@ export default function PprImportPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b bg-[#F0F4F8]">
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Client (from file)</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Plan</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Period</th>
-                          <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">Hold Reasons</th>
-                          <th className="px-4 py-2.5 text-right text-xs font-medium text-[#94A3B8] uppercase">Actions</th>
+                        <tr className="border-b bg-surface-subtle">
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Client (from file)</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Plan</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Period</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">Hold Reasons</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {heldRows.map((r, i) => (
                           <tr
                             key={r.id ?? i}
-                            className={`border-b hover:bg-[#F0F4F8]/30 ${
+                            className={`border-b hover:bg-surface-subtle/30 ${
                               r.status === "ACCEPTED" ? "opacity-50" :
                               r.status === "DISCARDED" ? "opacity-40 line-through" : ""
                             }`}
                             data-testid={`held-row-${r.id ?? i}`}
                           >
-                            <td className="px-4 py-2.5 font-mono text-xs font-semibold text-[#2C3E50]">
+                            <td className="px-4 py-2.5 font-mono text-xs font-semibold text-foreground">
                               {r.client_code || "—"}
                             </td>
-                            <td className="px-4 py-2.5 text-xs text-[#5D6D7E]">{r.plan_name || "—"}</td>
-                            <td className="px-4 py-2.5 text-xs text-[#5D6D7E] whitespace-nowrap">
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{r.plan_name || "—"}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                               {r.report_month ? `${MONTHS[(r.report_month ?? 1) - 1]} ${r.report_year}` : "—"}
                             </td>
                             <td className="px-4 py-2.5">
                               <ul className="space-y-0.5">
                                 {r.hold_reasons.map((reason, j) => (
-                                  <li key={j} className="text-xs text-[#EF4444] flex items-start gap-1">
+                                  <li key={j} className="text-xs text-danger flex items-start gap-1">
                                     <span className="mt-0.5 flex-shrink-0">•</span>
                                     <span>{reason}</span>
                                   </li>
@@ -549,7 +549,7 @@ export default function PprImportPage() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-xs border-[#22C55E] text-[#22C55E] hover:bg-[#22C55E]/10"
+                                    className="h-7 text-xs border-success text-success hover:bg-success/10"
                                     onClick={() => setAcceptTarget(r)}
                                     data-testid={`button-accept-held-${r.id ?? i}`}
                                   >
@@ -558,7 +558,7 @@ export default function PprImportPage() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-xs border-[#EF4444] text-[#EF4444] hover:bg-[#EF4444]/10"
+                                    className="h-7 text-xs border-danger text-danger hover:bg-danger/10"
                                     onClick={() => r.id && discardMutation.mutate(r.id)}
                                     disabled={discardMutation.isPending}
                                     data-testid={`button-discard-held-${r.id ?? i}`}
@@ -570,8 +570,8 @@ export default function PprImportPage() {
                                 <Badge
                                   variant="outline"
                                   className={r.status === "ACCEPTED"
-                                    ? "border-[#22C55E] text-[#22C55E] text-xs"
-                                    : "border-[#94A3B8] text-[#94A3B8] text-xs"}
+                                    ? "border-success text-success text-xs"
+                                    : "border-muted-foreground text-muted-foreground text-xs"}
                                 >
                                   {r.status.toLowerCase()}
                                 </Badge>
@@ -593,34 +593,34 @@ export default function PprImportPage() {
       {batches.length > 0 && (
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base text-[#1A5276]">Previous Imports</CardTitle>
+            <CardTitle className="text-base text-brand">Previous Imports</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-[#F0F4F8]">
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase">File</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Uploaded</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-[#94A3B8] uppercase">Accepted</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-[#94A3B8] uppercase">Unchanged</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-[#94A3B8] uppercase">Restated</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-[#94A3B8] uppercase">Held</th>
+                  <tr className="border-b bg-surface-subtle">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase">File</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase hidden md:table-cell">Uploaded</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase">Accepted</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase">Unchanged</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase">Restated</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground uppercase">Held</th>
                   </tr>
                 </thead>
                 <tbody>
                   {batches.map((b, i) => (
-                    <tr key={b.id} className={`border-b hover:bg-[#F0F4F8]/30 ${i % 2 === 1 ? "bg-[#F0F4F8]/10" : ""}`}>
-                      <td className="px-4 py-2.5 text-xs font-medium text-[#2C3E50] max-w-[180px] truncate" title={b.fileName}>
+                    <tr key={b.id} className={`border-b hover:bg-surface-subtle/30 ${i % 2 === 1 ? "bg-surface-subtle/10" : ""}`}>
+                      <td className="px-4 py-2.5 text-xs font-medium text-foreground max-w-[180px] truncate" title={b.fileName}>
                         {b.fileName}
                       </td>
-                      <td className="px-4 py-2.5 text-xs text-[#94A3B8] hidden md:table-cell whitespace-nowrap">
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground hidden md:table-cell whitespace-nowrap">
                         {format(new Date(b.uploadedAt), "MMM d, yyyy")} · {b.uploadedBy}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-xs text-[#22C55E] font-semibold">{b.rowsAccepted}</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-[#94A3B8]">{b.rowsUnchanged}</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-[#F5A623] font-semibold">{b.rowsRestated}</td>
-                      <td className={`px-4 py-2.5 text-right text-xs font-semibold ${b.rowsHeld > 0 ? "text-[#EF4444]" : "text-[#94A3B8]"}`}>
+                      <td className="px-4 py-2.5 text-right text-xs text-success font-semibold">{b.rowsAccepted}</td>
+                      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">{b.rowsUnchanged}</td>
+                      <td className="px-4 py-2.5 text-right text-xs text-warning-strong font-semibold">{b.rowsRestated}</td>
+                      <td className={`px-4 py-2.5 text-right text-xs font-semibold ${b.rowsHeld > 0 ? "text-danger" : "text-muted-foreground"}`}>
                         {b.rowsHeld}
                       </td>
                     </tr>

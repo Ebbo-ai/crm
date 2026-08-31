@@ -28,13 +28,13 @@ function TodoColumn({
     return (
       <div className="py-10 text-center" data-testid={`empty-general-${resolved ? "resolved" : "active"}`}>
         {resolved
-          ? <CheckCircle2 className="w-7 h-7 text-[#CBD5E1] mx-auto mb-2" />
-          : <ListTodo className="w-7 h-7 text-[#CBD5E1] mx-auto mb-2" />}
-        <p className="text-sm text-[#94A3B8]">
+          ? <CheckCircle2 className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
+          : <ListTodo className="w-7 h-7 text-muted-foreground mx-auto mb-2" />}
+        <p className="text-sm text-muted-foreground">
           {resolved ? "Nothing resolved yet." : "Nothing on the general list."}
         </p>
         {!resolved && (
-          <p className="text-xs text-[#94A3B8] mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Work that is not about one client goes here.
           </p>
         )}
@@ -76,19 +76,19 @@ export default function GeneralPage() {
     <div className="space-y-4" data-testid="page-general">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#1A5276] flex items-center justify-center flex-shrink-0">
-            <Building2 className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 rounded-lg bg-brand flex items-center justify-center flex-shrink-0">
+            <Building2 className="w-5 h-5 text-brand-foreground" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-[#1A5276]" data-testid="text-general-title">General</h1>
-            <p className="text-xs text-[#94A3B8]">
+            <h1 className="text-xl font-semibold text-brand" data-testid="text-general-title">General</h1>
+            <p className="text-xs text-muted-foreground">
               Work that belongs to the business, not to a client.
             </p>
           </div>
         </div>
         <Button
           onClick={() => setAdding(true)}
-          className="bg-[#1A5276] text-white gap-1.5"
+          className="bg-brand text-brand-foreground gap-1.5"
           data-testid="button-add-general-todo"
         >
           <Plus className="w-4 h-4" /> Add a to-do
@@ -99,11 +99,11 @@ export default function GeneralPage() {
         <CardHeader className="pb-2">
           <Tabs defaultValue="active">
             <TabsList>
-              <TabsTrigger value="active" data-testid="tab-general-active" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">
-                To do {active.length > 0 && <span className="ml-1.5 text-[10px]">{active.length}</span>}
+              <TabsTrigger value="active" data-testid="tab-general-active" className="data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
+                To do {active.length > 0 && <span className="ml-1.5 text-xs">{active.length}</span>}
               </TabsTrigger>
-              <TabsTrigger value="resolved" data-testid="tab-general-resolved" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">
-                Resolved {resolved.length > 0 && <span className="ml-1.5 text-[10px]">{resolved.length}</span>}
+              <TabsTrigger value="resolved" data-testid="tab-general-resolved" className="data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
+                Resolved {resolved.length > 0 && <span className="ml-1.5 text-xs">{resolved.length}</span>}
               </TabsTrigger>
             </TabsList>
 

@@ -1,0 +1,90 @@
+SimpleSpot — three changes. Read before you write: tell me which files you inspected
+and what the current implementation looks like before modifying anything. Do the work
+in parallel waves (theme, dashboard, navigation), then report back.
+
+===========================================================
+1. CONTRAST AND TYPE SIZE
+===========================================================
+Backgrounds are too close in value to the content sitting on them. Cards, table rows,
+panels and page background all read as the same gray. Text is also too small for
+sustained use.
+
+Fix this at the theme/token level only — CSS variables or the Tailwind theme config.
+Do not hand-patch individual components with one-off color or size classes.
+
+- Increase separation between surface layers: page background, card/panel surface,
+  table header, hovered/striped row, and input fields should each be visibly distinct.
+- All body text must clear WCAG AA (4.5:1) against the surface it sits on. Muted or
+  secondary text is the worst offender — check it specifically.
+- Borders on cards, tables and inputs need enough contrast to actually read as edges.
+- Raise base font size one step (target ~15-16px body) and scale the type ramp with it.
+  Dense data tables can stay one step smaller than body, but not smaller than 13px.
+- Keep the existing palette family. This is a contrast and legibility fix, not a
+  redesign.
+
+After the change, list the before/after values for the surface tokens and the computed
+contrast ratio for body text and muted text on each surface.
+
+===========================================================
+2. DASHBOARD RENEWALS — SPLIT INTO THREE BOXES
+===========================================================
+Replace the single Renewals section with three separate boxes. Definitions below are
+exact — implement them as written, in one shared query/selector so the three boxes can
+never disagree.
+
+Anchor date for all three: the client's renewal anniversary date for the current cycle.
+Let days_out = anniversary - today (positive = anniversary is in the future).
+Pipeline is the existing seven steps: Requested, Processed, Sent, Revised, Accepted,
+Signed Form Attached, Emailed to 90 Degree. "Complete" = Emailed to 90 Degree.
+
+BOX 1 — UPCOMING RENEWALS
+  Not complete, no pipeline work started yet, and 0 <= days_out <= 30.
+  This is the heads-up queue. Sort ascending by anniversary date.
+
+BOX 2 — CURRENT RENEWALS
+  Everything actively in play. A renewal belongs here if either:
+    a) any pipeline step has been set and it is not yet complete (at any days_out), or
+    b) days_out < 0 and it is not complete (anniversary has passed, still open).
+  Sort ascending by anniversary date so the oldest/most overdue sits at top.
+
+  LATE MARKING (this box only):
+  A renewal must reach the "Sent" step at least 14 days before the anniversary.
+  Mark it LATE when the pipeline has not yet reached Sent and days_out < 14.
+  Put the threshold in a single named constant —
+  RENEWAL_SEND_DEADLINE_DAYS_BEFORE_ANNIVERSARY = 14 — do not scatter the number.
+  The late marker must be legible without relying on color alone: a badge with text,
+  not just red type. Show the count of late items in the box header.
+
+BOX 3 — COMPLETE RENEWALS
+  Pipeline complete AND today <= anniversary + 45 days.
+  Once past anniversary + 45 days, the renewal drops off the dashboard entirely.
+  Sort descending by completion date.
+
+The three boxes must be mutually exclusive — no client appears in two boxes. Clients
+whose anniversary is more than 30 days out with no pipeline work started appear in
+none of them; that is intended, they are not yet actionable.
+
+Each row shows at minimum: client code, client name, anniversary date, current pipeline
+step, and days out (or days overdue). Each box shows its count in the header and
+handles the empty state without collapsing the layout.
+
+===========================================================
+3. BACK NAVIGATION ON EVERY PAGE
+===========================================================
+Every page except the dashboard gets a back control in a consistent position at the top
+of the page. Use the router's history to go to the previous page. If there is no
+in-app history (deep link, refresh, new tab), fall back to the logical parent route —
+e.g. a client detail page falls back to the client list, not to a dead end or an
+external referrer. Never let it navigate the user out of the app.
+
+Implement once as a shared component and use it everywhere; do not copy the markup
+into each page.
+
+===========================================================
+VERIFY
+===========================================================
+- Confirm the three renewal buckets against live data and give me the counts in each,
+  plus which clients are being marked LATE and why.
+- Confirm no client lands in two buckets.
+- Confirm the back control renders on every route except the dashboard, including on
+  a hard refresh of a deep-linked page.

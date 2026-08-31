@@ -49,7 +49,7 @@ function ProspectPipeline({ clientId }: { clientId: number }) {
     return (
       <div className="space-y-3">
         {[0, 1, 2].map(i => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     );
@@ -58,7 +58,7 @@ function ProspectPipeline({ clientId }: { clientId: number }) {
   return (
     <div>
       {isComplete && (
-        <div className="mb-4 px-4 py-3 bg-[#22C55E]/10 rounded-lg text-sm text-[#22C55E] font-semibold flex items-center gap-2">
+        <div className="mb-4 px-4 py-3 bg-success/10 rounded-lg text-sm text-success font-semibold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4" /> Pipeline complete — proposal delivered.
         </div>
       )}
@@ -73,37 +73,37 @@ function ProspectPipeline({ clientId }: { clientId: number }) {
           return (
             <div
               key={step.key}
-              className={`flex items-start gap-3 py-3 ${idx < PROSPECT_STEPS.length - 1 ? "border-b border-dashed border-[#E2E8F0]" : ""} ${isFuture ? "opacity-40" : ""}`}
+              className={`flex items-start gap-3 py-3 ${idx < PROSPECT_STEPS.length - 1 ? "border-b border-dashed border-border" : ""} ${isFuture ? "opacity-40" : ""}`}
             >
               <div className="flex-shrink-0 mt-0.5">
                 {isDone ? (
-                  <CheckCircle2 className="w-5 h-5 text-[#22C55E]" />
+                  <CheckCircle2 className="w-5 h-5 text-success" />
                 ) : isActive ? (
-                  <div className="w-5 h-5 rounded-full border-2 border-[#2E86C1] bg-white flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-[#2E86C1]" />
+                  <div className="w-5 h-5 rounded-full border-2 border-brand-accent bg-card flex items-center justify-center">
+                    <div className="w-2 h-2 rounded-full bg-brand-accent" />
                   </div>
                 ) : (
-                  <div className="w-5 h-5 rounded-full border-2 border-[#CBD5E1] bg-white" />
+                  <div className="w-5 h-5 rounded-full border-2 border-border bg-card" />
                 )}
               </div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <p className={`text-sm font-medium ${isDone ? "text-[#22C55E]" : isActive ? "text-[#1A5276]" : "text-[#94A3B8]"}`}>
+                    <p className={`text-sm font-medium ${isDone ? "text-success" : isActive ? "text-brand" : "text-muted-foreground"}`}>
                       {step.label}
                     </p>
-                    {!isDone && <p className="text-[11px] text-[#94A3B8] mt-0.5">{step.desc}</p>}
+                    {!isDone && <p className="text-xs text-muted-foreground mt-0.5">{step.desc}</p>}
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {isDone && (
                       <>
-                        <span className="text-xs text-[#94A3B8]">{format(stepDate!, "MMM d, yyyy")}</span>
+                        <span className="text-xs text-muted-foreground">{format(stepDate!, "MMM d, yyyy")}</span>
                         {!isComplete && (
                           <Button
                             size="sm" variant="ghost"
-                            className="h-6 px-2 text-[10px] text-[#94A3B8] hover:text-[#EF4444]"
+                            className="h-6 px-2 text-xs text-muted-foreground hover:text-danger"
                             onClick={() => updateMutation.mutate({ [step.key]: null })}
                           >
                             Undo
@@ -114,7 +114,7 @@ function ProspectPipeline({ clientId }: { clientId: number }) {
                     {isActive && !isComplete && (
                       <Button
                         size="sm"
-                        className="h-7 px-3 text-xs bg-[#2E86C1] text-white hover:bg-[#1A5276]"
+                        className="h-7 px-3 text-xs bg-brand-accent text-brand-foreground hover:bg-brand"
                         onClick={() => { setMarkingKey(step.key); setMarkDate(today); }}
                       >
                         Mark Done
@@ -146,7 +146,7 @@ function ProspectPipeline({ clientId }: { clientId: number }) {
             <DialogFooter>
               <Button variant="outline" onClick={() => setMarkingKey(null)}>Cancel</Button>
               <Button
-                className="bg-[#2E86C1] text-white"
+                className="bg-brand-accent text-brand-foreground"
                 onClick={() => updateMutation.mutate({ [markingStep.key]: markDate || today })}
                 disabled={updateMutation.isPending}
               >
@@ -165,13 +165,13 @@ export default function PipelineTab({ clientId, clientStatus }: { clientId: numb
     return (
       <div>
         <div className="mb-5">
-          <h2 className="text-lg font-semibold text-[#1A5276]">New Business Pipeline</h2>
-          <p className="text-sm text-[#94A3B8] mt-1">
+          <h2 className="text-lg font-semibold text-brand">New Business Pipeline</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Track the proposal process through three stages. The clock starts when a step is marked; a step stalled
             for more than 14 days appears on the dashboard reminders.
           </p>
         </div>
-        <div className="bg-white rounded-lg shadow-sm p-5 max-w-xl">
+        <div className="bg-card rounded-lg shadow-sm p-5 max-w-xl">
           <ProspectPipeline clientId={clientId} />
         </div>
       </div>
@@ -181,9 +181,9 @@ export default function PipelineTab({ clientId, clientStatus }: { clientId: numb
   if (clientStatus === "ACTIVE") {
     return (
       <div className="text-center py-16">
-        <Clock className="w-10 h-10 text-[#94A3B8] mx-auto mb-3" />
-        <p className="text-[#2C3E50] font-medium">Renewal tracking is per-plan</p>
-        <p className="text-sm text-[#94A3B8] mt-1">
+        <Clock className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+        <p className="text-foreground font-medium">Renewal tracking is per-plan</p>
+        <p className="text-sm text-muted-foreground mt-1">
           Open the <strong>Plans &amp; Rates</strong> tab to track renewal steps for each plan.
         </p>
       </div>
@@ -192,7 +192,7 @@ export default function PipelineTab({ clientId, clientStatus }: { clientId: numb
 
   return (
     <div className="text-center py-16">
-      <p className="text-[#94A3B8]">Pipeline tracking is not available for terminated clients.</p>
+      <p className="text-muted-foreground">Pipeline tracking is not available for terminated clients.</p>
     </div>
   );
 }

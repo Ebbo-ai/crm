@@ -159,8 +159,8 @@ export default function DataResetPage() {
   return (
     <div data-testid="data-reset-page" className="max-w-4xl">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]">Client Data Reset</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">
+        <h1 className="text-2xl font-bold text-brand">Client Data Reset</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Clears the client book so the corrected workbook can be imported into an empty database. Run the three steps
           in order. Emails, attachments and tasks are never deleted, but their links to clients are, which is what
           step one preserves.
@@ -171,35 +171,35 @@ export default function DataResetPage() {
       <Card className="mb-6">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Badge className="bg-[#1A5276]">Step 1</Badge>
-            <h2 className="font-semibold text-[#1A5276]">Export the communication links</h2>
+            <Badge className="bg-brand">Step 1</Badge>
+            <h2 className="font-semibold text-brand">Export the communication links</h2>
           </div>
-          <p className="text-xs text-[#94A3B8] mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Records which emails and tasks belong to which client, by client code rather than by database id, because
             the ids change when the book is re-imported.
           </p>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between border border-[#E2E8F0] rounded-lg px-4 py-3 mb-4">
+          <div className="flex items-center justify-between border border-border rounded-lg px-4 py-3 mb-4">
             <div className="flex items-center gap-3">
-              <Link2 className="w-5 h-5 text-[#1A5276]" />
+              <Link2 className="w-5 h-5 text-brand" />
               <div>
-                <p className="text-sm font-medium text-[#1A5276]" data-testid="text-link-counts">
+                <p className="text-sm font-medium text-brand" data-testid="text-link-counts">
                   {linkCounts.data
                     ? `${linkCounts.data.communicationLinks} email links, ${linkCounts.data.taskLinks} task links`
                     : "Counting…"}
                 </p>
-                <p className="text-xs text-[#94A3B8]">
+                <p className="text-xs text-muted-foreground">
                   {linkCounts.data ? `across ${linkCounts.data.distinctClients} clients` : ""}
                 </p>
               </div>
             </div>
-            <Button onClick={downloadExport} className="bg-[#1A5276] hover:bg-[#154360]" data-testid="button-export-links">
+            <Button onClick={downloadExport} className="bg-brand hover:bg-brand-dark" data-testid="button-export-links">
               <Download className="w-4 h-4 mr-2" />
               Download export
             </Button>
           </div>
-          <div className="flex gap-2 text-xs text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-md px-3 py-2">
+          <div className="flex gap-2 text-xs text-warning-strong bg-warning-tint border border-warning-tint rounded-md px-3 py-2">
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
             <span>
               The mailbox is still receiving. Take this export immediately before the reset — one taken yesterday will
@@ -210,50 +210,50 @@ export default function DataResetPage() {
       </Card>
 
       {/* ── Step 2 ─────────────────────────────────────────────────────────── */}
-      <Card className="mb-6 border-[#EF4444]">
+      <Card className="mb-6 border-danger">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Badge className="bg-[#EF4444]">Step 2</Badge>
-            <h2 className="font-semibold text-[#EF4444]">Reset the client data</h2>
+            <Badge className="bg-danger">Step 2</Badge>
+            <h2 className="font-semibold text-danger">Reset the client data</h2>
           </div>
-          <p className="text-xs text-[#94A3B8] mt-1">Irreversible. There is no undo inside the application.</p>
+          <p className="text-xs text-muted-foreground mt-1">Irreversible. There is no undo inside the application.</p>
         </CardHeader>
         <CardContent>
           <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <div className="border border-[#FECACA] bg-[#FEF2F2] rounded-lg p-4">
+            <div className="border border-danger-tint bg-danger-tint rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Trash2 className="w-4 h-4 text-[#EF4444]" />
-                <h3 className="text-sm font-semibold text-[#B91C1C]">
+                <Trash2 className="w-4 h-4 text-danger" />
+                <h3 className="text-sm font-semibold text-danger-strong">
                   Will be deleted ({totalToDelete.toLocaleString()} rows)
                 </h3>
               </div>
               <ul className="space-y-1" data-testid="list-will-delete">
                 {preview.data?.willDelete.map((t) => (
                   <li key={t.table} className="flex justify-between text-xs">
-                    <span className="text-[#7F1D1D]">{tableLabel(t.table)}</span>
-                    <span className="tabular-nums font-medium text-[#B91C1C]">{t.rows.toLocaleString()}</span>
+                    <span className="text-danger-strong">{tableLabel(t.table)}</span>
+                    <span className="tabular-nums font-medium text-danger-strong">{t.rows.toLocaleString()}</span>
                   </li>
                 ))}
               </ul>
             </div>
 
-            <div className="border border-[#BBF7D0] bg-[#F0FDF4] rounded-lg p-4">
+            <div className="border border-success-tint bg-success-tint rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
-                <ShieldCheck className="w-4 h-4 text-[#059669]" />
-                <h3 className="text-sm font-semibold text-[#047857]">Will be kept</h3>
+                <ShieldCheck className="w-4 h-4 text-success-strong" />
+                <h3 className="text-sm font-semibold text-success-strong">Will be kept</h3>
               </div>
               <ul className="space-y-1" data-testid="list-will-preserve">
                 {preview.data?.willPreserve.map((t) => (
                   <li key={t.table} className="flex justify-between text-xs">
-                    <span className="text-[#065F46]">{tableLabel(t.table)}</span>
-                    <span className="tabular-nums font-medium text-[#047857]">{t.rows.toLocaleString()}</span>
+                    <span className="text-success-strong">{tableLabel(t.table)}</span>
+                    <span className="tabular-nums font-medium text-success-strong">{t.rows.toLocaleString()}</span>
                   </li>
                 ))}
               </ul>
             </div>
           </div>
 
-          <div className="flex gap-2 text-xs text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-md px-3 py-2 mb-4">
+          <div className="flex gap-2 text-xs text-warning-strong bg-warning-tint border border-warning-tint rounded-md px-3 py-2 mb-4">
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
             <span>
               {preview.data?.linksAtRisk.communicationLinks ?? 0} email links and{" "}
@@ -264,13 +264,13 @@ export default function DataResetPage() {
           </div>
 
           {!exported && (
-            <p className="text-xs text-[#B91C1C] mb-3" data-testid="text-export-first">
+            <p className="text-xs text-danger-strong mb-3" data-testid="text-export-first">
               Download the export in step 1 first.
             </p>
           )}
 
-          <label className="block text-sm font-medium text-[#1A5276] mb-1.5">
-            Type <span className="font-mono bg-[#F1F5F9] px-1.5 py-0.5 rounded">{preview.data?.confirmationPhrase}</span>{" "}
+          <label className="block text-sm font-medium text-brand mb-1.5">
+            Type <span className="font-mono bg-surface-subtle px-1.5 py-0.5 rounded">{preview.data?.confirmationPhrase}</span>{" "}
             to enable the reset
           </label>
           <div className="flex items-center gap-3">
@@ -298,24 +298,24 @@ export default function DataResetPage() {
         <Card className="mb-6">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
-              <CheckCircle className="w-5 h-5 text-[#059669]" />
-              <h2 className="font-semibold text-[#1A5276]">Reset complete</h2>
+              <CheckCircle className="w-5 h-5 text-success-strong" />
+              <h2 className="font-semibold text-brand">Reset complete</h2>
             </div>
-            <p className="text-xs text-[#94A3B8]">
+            <p className="text-xs text-muted-foreground">
               {new Date(resetReport.ranAt).toLocaleString()} — {resetReport.communicationLinksLost} email links and{" "}
               {resetReport.taskLinksCleared} task links were cleared, as expected.
             </p>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between border border-[#BFDBFE] bg-[#EFF6FF] rounded-lg px-4 py-3 mb-6">
+            <div className="flex items-center justify-between border border-info-tint bg-info-tint rounded-lg px-4 py-3 mb-6">
               <div className="flex items-start gap-3">
-                <FileJson className="w-5 h-5 text-[#1D4ED8] flex-shrink-0 mt-0.5" />
+                <FileJson className="w-5 h-5 text-brand-dark flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-[#1E3A8A]">
+                  <p className="text-sm font-medium text-brand-dark">
                     Snapshot taken at the moment of deletion — {resetReport.snapshot.counts.communicationLinks} email
                     links, {resetReport.snapshot.counts.taskLinks} task links
                   </p>
-                  <p className="text-xs text-[#3B82F6] mt-0.5">
+                  <p className="text-xs text-brand-accent mt-0.5">
                     Downloaded automatically. Use this file in step 3 — it includes anything that arrived after the
                     step 1 export.
                   </p>
@@ -333,32 +333,32 @@ export default function DataResetPage() {
             </div>
             <div className="grid md:grid-cols-2 gap-6">
               <div>
-                <h3 className="text-sm font-semibold text-[#1A5276] mb-2">Deleted</h3>
+                <h3 className="text-sm font-semibold text-brand mb-2">Deleted</h3>
                 <ul className="space-y-1" data-testid="list-deleted">
                   {resetReport.emptied.map((t) => (
                     <li key={t.table} className="flex justify-between text-xs">
-                      <span className="text-[#334155]">{tableLabel(t.table)}</span>
-                      <span className="tabular-nums text-[#64748B]">
-                        {t.before.toLocaleString()} → <span className="font-medium text-[#1A5276]">{t.after}</span>
+                      <span className="text-foreground">{tableLabel(t.table)}</span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {t.before.toLocaleString()} → <span className="font-medium text-brand">{t.after}</span>
                       </span>
                     </li>
                   ))}
                 </ul>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-[#1A5276] mb-2">Kept</h3>
+                <h3 className="text-sm font-semibold text-brand mb-2">Kept</h3>
                 <ul className="space-y-1" data-testid="list-preserved">
                   {resetReport.preserved.map((t) => (
                     <li key={t.table} className="flex justify-between text-xs">
-                      <span className="text-[#334155]">{tableLabel(t.table)}</span>
+                      <span className="text-foreground">{tableLabel(t.table)}</span>
                       <span className="tabular-nums flex items-center gap-1.5">
-                        <span className="text-[#64748B]">
+                        <span className="text-muted-foreground">
                           {t.before.toLocaleString()} → {t.after.toLocaleString()}
                         </span>
                         {t.unchanged ? (
-                          <CheckCircle className="w-3.5 h-3.5 text-[#059669]" />
+                          <CheckCircle className="w-3.5 h-3.5 text-success-strong" />
                         ) : (
-                          <AlertTriangle className="w-3.5 h-3.5 text-[#EF4444]" />
+                          <AlertTriangle className="w-3.5 h-3.5 text-danger" />
                         )}
                       </span>
                     </li>
@@ -374,10 +374,10 @@ export default function DataResetPage() {
       <Card className="mb-6">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Badge className="bg-[#1A5276]">Step 3</Badge>
-            <h2 className="font-semibold text-[#1A5276]">Re-attach the links</h2>
+            <Badge className="bg-brand">Step 3</Badge>
+            <h2 className="font-semibold text-brand">Re-attach the links</h2>
           </div>
-          <p className="text-xs text-[#94A3B8] mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Run this after the workbook import, using the snapshot the reset produced in step 2 — it is the more
             complete of the two files. The step 1 export works too. Matches on client code. Running it twice is safe:
             links already in place are counted, not duplicated.
@@ -398,22 +398,22 @@ export default function DataResetPage() {
           {!file ? (
             <div
               onClick={() => inputRef.current?.click()}
-              className="border-2 border-dashed border-[#CBD5E1] rounded-lg p-8 text-center cursor-pointer hover:border-[#1A5276] transition-colors"
+              className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-brand transition-colors"
               data-testid="dropzone-reattach-file"
             >
-              <FileJson className="w-8 h-8 mx-auto text-[#94A3B8] mb-2" />
-              <p className="text-sm font-medium text-[#1A5276]">Choose the snapshot from step 2</p>
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <FileJson className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm font-medium text-brand">Choose the snapshot from step 2</p>
+              <p className="text-xs text-muted-foreground mt-1">
                 The communication-links JSON file. Either the one saved during the reset or the step 1 export.
               </p>
             </div>
           ) : (
-            <div className="flex items-center justify-between border border-[#E2E8F0] rounded-lg px-4 py-3">
+            <div className="flex items-center justify-between border border-border rounded-lg px-4 py-3">
               <div className="flex items-center gap-3 min-w-0">
-                <FileJson className="w-5 h-5 text-[#1A5276] flex-shrink-0" />
+                <FileJson className="w-5 h-5 text-brand flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-[#1A5276] truncate">{file.name}</p>
-                  <p className="text-xs text-[#94A3B8]">{(file.size / 1024).toFixed(0)} KB</p>
+                  <p className="text-sm font-medium text-brand truncate">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} KB</p>
                 </div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setFile(null)} data-testid="button-clear-reattach-file">
@@ -422,7 +422,7 @@ export default function DataResetPage() {
             </div>
           )}
           <Button
-            className="mt-4 bg-[#1A5276] hover:bg-[#154360]"
+            className="mt-4 bg-brand hover:bg-brand-dark"
             disabled={!file || runReattach.isPending}
             onClick={() => runReattach.mutate()}
             data-testid="button-run-reattach"
@@ -438,38 +438,38 @@ export default function DataResetPage() {
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               {reattachReport.unmatched.length === 0 && reattachReport.ambiguous.length === 0 ? (
-                <CheckCircle className="w-5 h-5 text-[#059669]" />
+                <CheckCircle className="w-5 h-5 text-success-strong" />
               ) : (
-                <AlertTriangle className="w-5 h-5 text-[#F59E0B]" />
+                <AlertTriangle className="w-5 h-5 text-warning" />
               )}
-              <h2 className="font-semibold text-[#1A5276]">Re-attach result</h2>
+              <h2 className="font-semibold text-brand">Re-attach result</h2>
             </div>
             {reattachReport.exportedAt && (
-              <p className="text-xs text-[#94A3B8]">
+              <p className="text-xs text-muted-foreground">
                 From an export taken {new Date(reattachReport.exportedAt).toLocaleString()}
               </p>
             )}
           </CardHeader>
           <CardContent>
             <div className="grid sm:grid-cols-2 gap-4 mb-5">
-              <div className="border border-[#E2E8F0] rounded-lg p-3">
-                <p className="text-xs font-semibold text-[#1A5276] mb-1.5">Email links</p>
-                <p className="text-2xl font-bold text-[#059669] tabular-nums" data-testid="text-links-restored">
+              <div className="border border-border rounded-lg p-3">
+                <p className="text-xs font-semibold text-brand mb-1.5">Email links</p>
+                <p className="text-2xl font-bold text-success-strong tabular-nums" data-testid="text-links-restored">
                   {reattachReport.links.restored}
                 </p>
-                <p className="text-xs text-[#94A3B8] mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   of {reattachReport.links.inFile} in file
                   {reattachReport.links.alreadyPresent > 0 && `, ${reattachReport.links.alreadyPresent} already there`}
                   {reattachReport.links.skippedMissingCommunication > 0 &&
                     `, ${reattachReport.links.skippedMissingCommunication} email no longer exists`}
                 </p>
               </div>
-              <div className="border border-[#E2E8F0] rounded-lg p-3">
-                <p className="text-xs font-semibold text-[#1A5276] mb-1.5">Task links</p>
-                <p className="text-2xl font-bold text-[#059669] tabular-nums" data-testid="text-tasks-restored">
+              <div className="border border-border rounded-lg p-3">
+                <p className="text-xs font-semibold text-brand mb-1.5">Task links</p>
+                <p className="text-2xl font-bold text-success-strong tabular-nums" data-testid="text-tasks-restored">
                   {reattachReport.tasks.restored}
                 </p>
-                <p className="text-xs text-[#94A3B8] mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   of {reattachReport.tasks.inFile} in file
                   {reattachReport.tasks.alreadyAssigned > 0 &&
                     `, ${reattachReport.tasks.alreadyAssigned} already assigned`}
@@ -481,20 +481,20 @@ export default function DataResetPage() {
 
             {reattachReport.matchedOnPadding.length > 0 && (
               <div className="mb-5">
-                <h3 className="text-sm font-semibold text-[#1A5276] mb-1">
+                <h3 className="text-sm font-semibold text-brand mb-1">
                   Matched on a differently padded code ({reattachReport.matchedOnPadding.length})
                 </h3>
-                <p className="text-xs text-[#94A3B8] mb-2">
+                <p className="text-xs text-muted-foreground mb-2">
                   Expected for clients the re-import re-spelled. The stored code was not changed.
                 </p>
                 <ul className="space-y-1" data-testid="list-padding-matches">
                   {reattachReport.matchedOnPadding.map((m) => (
                     <li key={m.fileCode} className="text-xs flex gap-3">
-                      <span className="font-mono text-[#64748B] w-40 flex-shrink-0">
-                        {m.fileCode} → <span className="text-[#1A5276] font-medium">{m.storedCode}</span>
+                      <span className="font-mono text-muted-foreground w-40 flex-shrink-0">
+                        {m.fileCode} → <span className="text-brand font-medium">{m.storedCode}</span>
                       </span>
-                      <span className="text-[#334155] flex-1 truncate">{m.clientName}</span>
-                      <span className="text-[#94A3B8] tabular-nums flex-shrink-0">
+                      <span className="text-foreground flex-1 truncate">{m.clientName}</span>
+                      <span className="text-muted-foreground tabular-nums flex-shrink-0">
                         {m.links} link{m.links === 1 ? "" : "s"}
                         {m.tasks > 0 && `, ${m.tasks} task${m.tasks === 1 ? "" : "s"}`}
                       </span>
@@ -505,19 +505,19 @@ export default function DataResetPage() {
             )}
 
             {reattachReport.ambiguous.length > 0 && (
-              <div className="mb-5 border border-[#EF4444] rounded-lg p-3">
-                <h3 className="text-sm font-semibold text-[#B91C1C] mb-1">
+              <div className="mb-5 border border-danger rounded-lg p-3">
+                <h3 className="text-sm font-semibold text-danger-strong mb-1">
                   Ambiguous — left unlinked ({reattachReport.ambiguous.length})
                 </h3>
-                <p className="text-xs text-[#94A3B8] mb-2">
+                <p className="text-xs text-muted-foreground mb-2">
                   These codes match more than one client, so nothing was attached rather than guessing.
                 </p>
                 <ul className="space-y-1" data-testid="list-ambiguous">
                   {reattachReport.ambiguous.map((a) => (
                     <li key={a.clientCode} className="text-xs flex gap-3">
-                      <span className="font-mono text-[#B91C1C] w-24 flex-shrink-0">{a.clientCode}</span>
-                      <span className="text-[#334155] flex-1">matches {a.candidates.join(", ")}</span>
-                      <span className="text-[#94A3B8] tabular-nums">
+                      <span className="font-mono text-danger-strong w-24 flex-shrink-0">{a.clientCode}</span>
+                      <span className="text-foreground flex-1">matches {a.candidates.join(", ")}</span>
+                      <span className="text-muted-foreground tabular-nums">
                         {a.links} link{a.links === 1 ? "" : "s"}
                         {a.tasks > 0 && `, ${a.tasks} task${a.tasks === 1 ? "" : "s"}`}
                       </span>
@@ -528,23 +528,23 @@ export default function DataResetPage() {
             )}
 
             <div>
-              <h3 className="text-sm font-semibold text-[#1A5276] mb-1">
+              <h3 className="text-sm font-semibold text-brand mb-1">
                 No longer matches a client ({reattachReport.unmatched.length})
               </h3>
               {reattachReport.unmatched.length === 0 ? (
-                <p className="text-xs text-[#059669]">Every code in the file found its client.</p>
+                <p className="text-xs text-success-strong">Every code in the file found its client.</p>
               ) : (
                 <>
-                  <p className="text-xs text-[#94A3B8] mb-2">
+                  <p className="text-xs text-muted-foreground mb-2">
                     Their emails and tasks still exist but are no longer tied to a client. Expected for records the
                     re-import intentionally dropped, such as seed data.
                   </p>
                   <ul className="space-y-1" data-testid="list-unmatched">
                     {reattachReport.unmatched.map((u) => (
                       <li key={u.clientCode} className="text-xs flex gap-3">
-                        <span className="font-mono text-[#B45309] w-24 flex-shrink-0">{u.clientCode}</span>
-                        <span className="text-[#334155] flex-1 truncate">{u.clientName}</span>
-                        <span className="text-[#94A3B8] tabular-nums flex-shrink-0">
+                        <span className="font-mono text-warning-strong w-24 flex-shrink-0">{u.clientCode}</span>
+                        <span className="text-foreground flex-1 truncate">{u.clientName}</span>
+                        <span className="text-muted-foreground tabular-nums flex-shrink-0">
                           {u.links} link{u.links === 1 ? "" : "s"}
                           {u.tasks > 0 && `, ${u.tasks} task${u.tasks === 1 ? "" : "s"}`}
                         </span>

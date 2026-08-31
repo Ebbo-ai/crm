@@ -32,6 +32,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 
@@ -171,12 +172,6 @@ function getUpcomingAnniversary(anniversaryDate: Date, today: Date): Date {
  * never produce OVERDUE. A renewal for plan year 2025 left unfinished into 2026
  * is overdue against its own 2025 anniversary.
  */
-function getAnniversaryForPlanYear(anniversaryDate: Date, planYear: number): Date {
-  const d = new Date(anniversaryDate);
-  d.setFullYear(planYear);
-  return d;
-}
-
 /* ── Renewal report ──────────────────────────────────────────────────────────
  * The document sent to 90 Degree Benefits once a client accepts their renewal.
  * It tells them exactly what to change in their claims system for the new year.
@@ -1043,6 +1038,10 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const body = { ...req.body };
+      const [existingRenewal] = await db.select().from(renewals)
+        .where(eq(renewals.id, id))
+        .limit(1);
+      if (!existingRenewal) return res.status(404).json({ message: "Renewal not found" });
 
       const patch: any = { updatedAt: new Date() };
       if ("pipelineStep" in body) {
@@ -1051,6 +1050,9 @@ export async function registerRoutes(
           return res.status(400).json({ message: `Unknown pipeline step "${step}"` });
         }
         patch.pipelineStep = step;
+        patch.completedAt = step === FINAL_STEP
+          ? existingRenewal.completedAt ?? new Date()
+          : null;
       }
       if ("proposalVersion" in body) patch.proposalVersion = body.proposalVersion || null;
       if ("incompletePriorFlag" in body) patch.incompletePriorFlag = !!body.incompletePriorFlag;
@@ -2260,6 +2262,36 @@ export async function registerRoutes(
     try {
       const renewals = await storage.getDashboardRenewals();
       res.json(renewals);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/dashboard/renewal-buckets", requireAuth, async (_req, res) => {
+    try {
+      const today = new Date();
+      const allClients = await storage.getClients();
+      const eligibleClients = allClients.filter(client =>
+        client.anniversaryDate
+        && !suppressesRenewals(deriveClientState(client, today)));
+
+      // Trigger the same cycle-opening behavior used by renewal alerts before
+      // reading the records that the shared selector will classify.
+      for (const client of eligibleClients) {
+        await ensureOpenRenewal(client, today);
+      }
+
+      const renewalRows = await db.select().from(renewals).orderBy(desc(renewals.planYear));
+      const latestByClient = new Map<number, typeof renewalRows[number]>();
+      for (const renewal of renewalRows) {
+        if (!latestByClient.has(renewal.clientId)) latestByClient.set(renewal.clientId, renewal);
+      }
+
+      const sources = eligibleClients.flatMap(client => {
+        const renewal = latestByClient.get(client.id);
+        return renewal ? [{ client, renewal }] : [];
+      });
+      res.json(computeRenewalBuckets(sources, today));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

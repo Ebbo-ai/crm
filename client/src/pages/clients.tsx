@@ -43,11 +43,11 @@ export default function ClientsPage() {
     <div data-testid="clients-page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-[#1A5276]" data-testid="text-page-title">Clients</h1>
-          <p className="text-sm text-[#94A3B8] mt-1">Manage your client accounts</p>
+          <h1 className="text-2xl font-bold text-brand" data-testid="text-page-title">Clients</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage your client accounts</p>
         </div>
         <Link href="/clients/new">
-          <Button className="bg-[#1A5276] text-white gap-2" data-testid="button-add-client">
+          <Button className="bg-brand text-brand-foreground gap-2" data-testid="button-add-client">
             <Plus className="w-4 h-4" /> Add New Client
           </Button>
         </Link>
@@ -55,7 +55,7 @@ export default function ClientsPage() {
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             type="search"
             placeholder="Search clients by name..."
@@ -65,15 +65,15 @@ export default function ClientsPage() {
             data-testid="input-search"
           />
         </div>
-        <div className="flex gap-1 bg-white rounded-md p-1 border">
+        <div className="flex gap-1 bg-card rounded-md p-1 border">
           {filters.map((f) => (
             <button
               key={f.value}
               onClick={() => setStatusFilter(f.value)}
               className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
                 statusFilter === f.value
-                  ? "bg-[#1A5276] text-white"
-                  : "text-[#94A3B8] hover:text-[#2C3E50]"
+                  ? "bg-brand text-brand-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
               data-testid={`filter-${f.value}`}
             >
@@ -92,9 +92,9 @@ export default function ClientsPage() {
       ) : !clients?.length ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-16 text-center">
-            <Users className="w-12 h-12 text-[#94A3B8] mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-[#2C3E50]">No clients found</h3>
-            <p className="text-sm text-[#94A3B8] mt-1">
+            <Users className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-lg font-medium text-foreground">No clients found</h3>
+            <p className="text-sm text-muted-foreground mt-1">
               {search ? "Try adjusting your search" : "Add your first client to get started"}
             </p>
           </CardContent>
@@ -110,36 +110,36 @@ export default function ClientsPage() {
                       {client.activeIssueCount > 0 && (
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <div className="pulse-dot" />
-                          <span className="text-xs font-bold text-[#EF4444]">{client.activeIssueCount}</span>
+                          <span className="text-xs font-bold text-danger">{client.activeIssueCount}</span>
                         </div>
                       )}
-                      <h3 className="font-semibold text-[#2C3E50] truncate" data-testid={`text-client-name-${client.id}`}>
-                        {client.clientCode && <span className="text-[#2E86C1] mr-1.5">{client.clientCode}</span>}
+                      <h3 className="font-semibold text-foreground truncate" data-testid={`text-client-name-${client.id}`}>
+                        {client.clientCode && <span className="text-brand-accent mr-1.5">{client.clientCode}</span>}
                         {client.clientName}
                       </h3>
                     </div>
                     <ClientStateBadge
                       client={client}
-                      className="text-[10px] px-2 py-1"
+                      className="text-xs px-2 py-1"
                       testId={`badge-status-${client.id}`}
                     />
                   </div>
 
                   <div className="space-y-2 text-sm">
-                    <div className="flex items-center gap-2 text-[#94A3B8]">
+                    <div className="flex items-center gap-2 text-muted-foreground">
                       <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
                       <span className="truncate">{client.city}, {client.state}</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[#94A3B8]">
+                    <div className="flex items-center gap-2 text-muted-foreground">
                       <Building2 className="w-3.5 h-3.5 flex-shrink-0" />
                       <span className="truncate">{client.industryType}</span>
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-gray-100 mt-2">
-                      <span className="text-xs font-medium text-[#2E86C1]">
+                    <div className="flex items-center justify-between pt-2 border-t border-border mt-2">
+                      <span className="text-xs font-medium text-brand-accent">
                         {PLAN_TYPE_LABELS[client.planType] || client.planType}
                       </span>
                       {client.numberOfEmployees != null && (
-                        <span className="text-xs text-[#94A3B8]">
+                        <span className="text-xs text-muted-foreground">
                           {client.numberOfEmployees} employees
                         </span>
                       )}
@@ -154,12 +154,12 @@ export default function ClientsPage() {
                       return (
                         <div className="mt-1 flex items-center gap-1 flex-wrap">
                           {step && (
-                            <span className={`text-[11px] px-2 py-0.5 rounded font-semibold ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded font-semibold ${RENEWAL_PIPELINE_STEP_COLORS[step]}`}>
                               {RENEWAL_PIPELINE_STEP_LABELS[step]}
                             </span>
                           )}
                           {warning && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${RENEWAL_TIMING_WARNING_COLORS[warning]}`}>
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${RENEWAL_TIMING_WARNING_COLORS[warning]}`}>
                               ⚠ {RENEWAL_TIMING_WARNING_LABELS[warning]}
                             </span>
                           )}
@@ -169,11 +169,11 @@ export default function ClientsPage() {
                     {(() => {
                       const comp = getClientCompleteness(client);
                       if (comp.isComplete) return null;
-                      const color = comp.pct >= 75 ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : comp.pct >= 40 ? "bg-orange-50 text-orange-700 border-orange-200"
-                        : "bg-red-50 text-red-700 border-red-200";
+                      const color = comp.pct >= 75 ? "bg-warning-tint text-warning-strong border-warning/40"
+                        : comp.pct >= 40 ? "bg-warning-tint text-warning-strong border-warning/40"
+                        : "bg-danger-tint text-danger-strong border-danger/40";
                       return (
-                        <div className={`mt-2 text-[11px] px-2 py-1 rounded border ${color} flex items-center gap-1`}>
+                        <div className={`mt-2 text-xs px-2 py-1 rounded border ${color} flex items-center gap-1`}>
                           <span className="font-semibold">{comp.pct}% complete</span>
                           <span className="opacity-70">— {comp.missing.length} field{comp.missing.length !== 1 ? "s" : ""} missing</span>
                         </div>

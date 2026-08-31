@@ -88,7 +88,7 @@ function AssignDialog({ commId, onClose }: { commId: number; onClose: () => void
           <DialogTitle>Assign to Client</DialogTitle>
         </DialogHeader>
         <div className="relative mt-2">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search client name or code..." className="pl-8" data-testid="input-assign-search" />
         </div>
@@ -96,15 +96,15 @@ function AssignDialog({ commId, onClose }: { commId: number; onClose: () => void
           {filtered.slice(0, 20).map((c: any) => (
             <button key={c.id} onClick={() => assign.mutate(c.id)}
               disabled={assign.isPending}
-              className="w-full text-left px-3 py-2 rounded-md hover:bg-[#F0F4F8] flex items-center justify-between"
+              className="w-full text-left px-3 py-2 rounded-md hover:bg-surface-subtle flex items-center justify-between"
               data-testid={`assign-client-${c.id}`}>
               <div>
-                <p className="text-sm font-medium text-[#2C3E50]">{c.clientName}</p>
-                <p className="text-xs text-[#94A3B8]">{c.clientCode}</p>
+                <p className="text-sm font-medium text-foreground">{c.clientName}</p>
+                <p className="text-xs text-muted-foreground">{c.clientCode}</p>
               </div>
             </button>
           ))}
-          {filtered.length === 0 && <p className="text-sm text-[#94A3B8] text-center py-4">No clients found</p>}
+          {filtered.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No clients found</p>}
         </div>
       </DialogContent>
     </Dialog>
@@ -122,77 +122,77 @@ function InboxCard({ comm, showClientBadge = true }: { comm: Communication; show
 
   return (
     <>
-      <Card className="border border-gray-100 shadow-none" data-testid={`inbox-card-${comm.id}`}>
+      <Card className="border border-border shadow-none" data-testid={`inbox-card-${comm.id}`}>
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0 flex-1">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold ${comm.isInternal ? "bg-[#1A5276]" : "bg-[#2E86C1]"}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-brand-foreground text-xs font-bold ${comm.isInternal ? "bg-brand" : "bg-brand-accent"}`}>
                 {senderLabel.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-[#2C3E50]">{senderLabel}</span>
+                  <span className="text-sm font-semibold text-foreground">{senderLabel}</span>
                   {comm.senderDomain && (
-                    <span className="text-[10px] text-[#94A3B8]">@{comm.senderDomain}</span>
+                    <span className="text-xs text-muted-foreground">@{comm.senderDomain}</span>
                   )}
-                  {comm.isInternal && <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-[#1A5276] text-[#1A5276]">Internal</Badge>}
-                  {comm.isUnmatched && <Badge className="text-[10px] h-4 px-1.5 bg-[#F5A623] text-white border-0">Unmatched</Badge>}
+                  {comm.isInternal && <Badge variant="outline" className="text-xs h-4 px-1.5 border-brand text-brand">Internal</Badge>}
+                  {comm.isUnmatched && <Badge className="text-xs h-4 px-1.5 bg-gold text-gold-foreground border-0">Unmatched</Badge>}
                 </div>
-                <p className="text-sm text-[#2C3E50] font-medium mt-0.5">{comm.subject || "(no subject)"}</p>
+                <p className="text-sm text-foreground font-medium mt-0.5">{comm.subject || "(no subject)"}</p>
                 <div className="flex items-center gap-3 mt-1 flex-wrap">
-                  <span className="text-xs text-[#94A3B8]">{timeAgo}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo}</span>
                   {showClientBadge && comm.clientNames.length > 0 && comm.clientNames.map((name, i) => (
-                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#2E86C1]/10 text-[#2E86C1] font-medium">{name}</span>
+                    <span key={i} className="text-xs px-1.5 py-0.5 rounded-full bg-brand-accent/10 text-brand-accent font-medium">{name}</span>
                   ))}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               {comm.attachments.length > 0 && (
-                <span className="flex items-center gap-1 text-xs text-[#94A3B8]">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Paperclip className="w-3 h-3" />{comm.attachments.length}
                 </span>
               )}
               {openTasks > 0 && (
-                <span className="flex items-center gap-1 text-xs text-[#F5A623] font-medium">
+                <span className="flex items-center gap-1 text-xs text-warning-strong font-medium">
                   <CheckSquare className="w-3 h-3" />{openTasks}
                 </span>
               )}
               {comm.isUnmatched && (
                 <Button variant="outline" size="sm" onClick={() => setAssigning(true)}
-                  className="h-7 px-2 text-xs gap-1 border-[#F5A623] text-[#F5A623] hover:bg-[#F5A623]/10"
+                  className="h-7 px-2 text-xs gap-1 border-warning-strong text-warning-strong hover:bg-gold/10"
                   data-testid={`button-assign-${comm.id}`}>
                   <UserPlus className="w-3 h-3" /> Assign
                 </Button>
               )}
-              <button onClick={() => setExpanded(v => !v)} className="text-[#94A3B8] hover:text-[#1A5276] p-1" data-testid={`button-expand-inbox-${comm.id}`}>
+              <button onClick={() => setExpanded(v => !v)} className="text-muted-foreground hover:text-brand p-1" data-testid={`button-expand-inbox-${comm.id}`}>
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
           {comm.claudeSummary && (
-            <div className="mt-3 p-3 bg-[#F0F4F8] rounded-lg">
+            <div className="mt-3 p-3 bg-surface-subtle rounded-lg">
               <div className="flex items-center gap-1.5 mb-1">
-                <Sparkles className="w-3 h-3 text-[#F5A623]" />
-                <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wide">AI Summary</span>
+                <Sparkles className="w-3 h-3 text-warning-strong" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">AI Summary</span>
               </div>
-              <p className="text-sm text-[#2C3E50] leading-relaxed">{comm.claudeSummary}</p>
+              <p className="text-sm text-foreground leading-relaxed">{comm.claudeSummary}</p>
             </div>
           )}
 
           {expanded && (
             <div className="mt-3 space-y-3">
               {comm.bodyText && (
-                <div className="border rounded-lg p-3 bg-white">
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Full Email</p>
-                  <pre className="text-xs text-[#2C3E50] whitespace-pre-wrap font-sans leading-relaxed max-h-64 overflow-y-auto">{comm.bodyText}</pre>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Full Email</p>
+                  <pre className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed max-h-64 overflow-y-auto">{comm.bodyText}</pre>
                 </div>
               )}
 
               {comm.tasks.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Follow-up Tasks</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Follow-up Tasks</p>
                   <div className="space-y-1.5">
                     {comm.tasks.map(task => (
                       <TaskRow key={task.id} task={task as any} extraKeys={[["/api/communications"]]} />
@@ -203,11 +203,11 @@ function InboxCard({ comm, showClientBadge = true }: { comm: Communication; show
 
               {comm.attachments.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Attachments</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Attachments</p>
                   <div className="flex flex-wrap gap-2">
                     {comm.attachments.map(att => (
                       <a key={att.id} href={`/api/communication-attachments/${att.id}/download`}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-xs text-[#2E86C1] hover:bg-[#F0F4F8]">
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-xs text-brand-accent hover:bg-surface-subtle">
                         <Download className="w-3 h-3" />{att.filename}
                       </a>
                     ))}
@@ -280,17 +280,17 @@ export default function InboxPage() {
   return (
     <div data-testid="inbox-page">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]" data-testid="text-inbox-title">Communications Inbox</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">All forwarded emails and communications across clients</p>
+        <h1 className="text-2xl font-bold text-brand" data-testid="text-inbox-title">Communications Inbox</h1>
+        <p className="text-sm text-muted-foreground mt-1">All forwarded emails and communications across clients</p>
       </div>
 
       {/* AI Ask bar */}
       <Card className="border-0 shadow-sm mb-5">
         <CardContent className="p-4">
           <div className="flex items-center gap-2 mb-3">
-            <Sparkles className="w-4 h-4 text-[#F5A623]" />
-            <span className="text-sm font-semibold text-[#1A5276]">Ask AI about all communications</span>
-            <span className="text-xs text-[#94A3B8]">(searches across all clients)</span>
+            <Sparkles className="w-4 h-4 text-warning-strong" />
+            <span className="text-sm font-semibold text-brand">Ask AI about all communications</span>
+            <span className="text-xs text-muted-foreground">(searches across all clients)</span>
           </div>
           <div className="flex gap-2">
             <Input value={askQuestion} onChange={e => setAskQuestion(e.target.value)}
@@ -298,15 +298,15 @@ export default function InboxPage() {
               placeholder='e.g. "Show me all content from Totem Solutions" or "All discussions with Annette Griffin about Thomas County"'
               className="flex-1 text-sm" data-testid="input-inbox-ask" />
             <Button onClick={handleAsk} disabled={!askQuestion.trim() || askLoading}
-              className="bg-[#F5A623] hover:bg-[#e6971f] text-white gap-2 flex-shrink-0" data-testid="button-inbox-ask">
+              className="bg-gold hover:bg-gold-hover text-gold-foreground gap-2 flex-shrink-0" data-testid="button-inbox-ask">
               {askLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               Ask
             </Button>
           </div>
           {aiAnswer && (
-            <div className="mt-3 p-3 bg-[#F0F4F8] rounded-lg border border-[#2E86C1]/20 relative">
-              <button onClick={() => setAiAnswer(null)} className="absolute top-2 right-2 text-[#94A3B8] hover:text-[#2C3E50]"><X className="w-3.5 h-3.5" /></button>
-              <p className="text-sm text-[#2C3E50] leading-relaxed whitespace-pre-wrap pr-6" data-testid="text-inbox-ai-answer">{aiAnswer}</p>
+            <div className="mt-3 p-3 bg-surface-subtle rounded-lg border border-brand-accent/20 relative">
+              <button onClick={() => setAiAnswer(null)} className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap pr-6" data-testid="text-inbox-ai-answer">{aiAnswer}</p>
             </div>
           )}
         </CardContent>
@@ -328,12 +328,12 @@ export default function InboxPage() {
               </SelectContent>
             </Select>
             <div className="relative flex-1 min-w-48">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94A3B8]" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input value={filterName} onChange={e => setFilterName(e.target.value)}
                 placeholder="Filter by sender name..." className="h-8 text-xs pl-8" data-testid="input-filter-name" />
             </div>
             {(filterDomain !== "all" || filterName) && (
-              <Button variant="ghost" size="sm" className="h-8 text-xs gap-1 text-[#94A3B8]"
+              <Button variant="ghost" size="sm" className="h-8 text-xs gap-1 text-muted-foreground"
                 onClick={() => { setFilterDomain("all"); setFilterName(""); }}>
                 <X className="w-3 h-3" /> Clear
               </Button>
@@ -343,13 +343,13 @@ export default function InboxPage() {
       </Card>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-white border mb-4 h-auto">
-          <TabsTrigger value="all" className="data-[state=active]:bg-[#1A5276] data-[state=active]:text-white" data-testid="tab-all-comms">
+        <TabsList className="bg-card border mb-4 h-auto">
+          <TabsTrigger value="all" className="data-[state=active]:bg-brand data-[state=active]:text-brand-foreground" data-testid="tab-all-comms">
             All {comms.filter(c => !c.isUnmatched).length > 0 && `(${comms.filter(c => !c.isUnmatched).length})`}
           </TabsTrigger>
-          <TabsTrigger value="unmatched" className="data-[state=active]:bg-[#F5A623] data-[state=active]:text-white" data-testid="tab-unmatched">
+          <TabsTrigger value="unmatched" className="data-[state=active]:bg-gold data-[state=active]:text-gold-foreground" data-testid="tab-unmatched">
             Unmatched {(unreadData?.count ?? 0) > 0 && (
-              <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#EF4444] text-white">{unreadData?.count}</span>
+              <span className="ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full bg-danger text-danger-foreground">{unreadData?.count}</span>
             )}
           </TabsTrigger>
         </TabsList>
@@ -358,11 +358,11 @@ export default function InboxPage() {
           {isLoading ? (
             <div className="space-y-3">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28" />)}</div>
           ) : comms.length === 0 ? (
-            <Card className="border-dashed border-2 border-[#E2E8F0]">
+            <Card className="border-dashed border-2 border-border">
               <CardContent className="py-16 text-center">
-                <Mail className="w-12 h-12 text-[#94A3B8] mx-auto mb-3" />
-                <p className="text-sm font-medium text-[#94A3B8]">No communications yet</p>
-                <p className="text-xs text-[#94A3B8] mt-1 max-w-xs mx-auto">
+                <Mail className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm font-medium text-muted-foreground">No communications yet</p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
                   Set up Mailgun inbound routing to your app's webhook URL, or add communications manually from a client record.
                 </p>
               </CardContent>
@@ -378,11 +378,11 @@ export default function InboxPage() {
           {isLoading ? (
             <div className="space-y-3">{[...Array(2)].map((_, i) => <Skeleton key={i} className="h-28" />)}</div>
           ) : unmatched.length === 0 ? (
-            <Card className="border-dashed border-2 border-[#E2E8F0]">
+            <Card className="border-dashed border-2 border-border">
               <CardContent className="py-12 text-center">
-                <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-3" />
-                <p className="text-sm font-medium text-[#94A3B8]">No unmatched emails</p>
-                <p className="text-xs text-[#94A3B8] mt-1">All incoming emails have been matched to clients</p>
+                <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-3" />
+                <p className="text-sm font-medium text-muted-foreground">No unmatched emails</p>
+                <p className="text-xs text-muted-foreground mt-1">All incoming emails have been matched to clients</p>
               </CardContent>
             </Card>
           ) : (

@@ -63,13 +63,13 @@ function SortableTodoRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-start gap-2 p-2.5 bg-white border border-gray-100 rounded-lg"
+      className="flex items-start gap-2 p-2.5 bg-card border border-border rounded-lg"
       data-testid={`todo-row-${todo.id}`}
     >
       <button
         {...attributes}
         {...listeners}
-        className="mt-0.5 text-[#CBD5E1] hover:text-[#94A3B8] cursor-grab active:cursor-grabbing flex-shrink-0"
+        className="mt-0.5 text-muted-foreground hover:text-muted-foreground cursor-grab active:cursor-grabbing flex-shrink-0"
         aria-label="Reorder"
         data-testid={`button-drag-${todo.id}`}
       >
@@ -78,14 +78,14 @@ function SortableTodoRow({
 
       <div className="flex-1 min-w-0">
         <button onClick={onOpen} className="w-full text-left" data-testid={`button-open-todo-${todo.id}`}>
-          <p className="text-sm text-[#2C3E50] leading-snug">{todo.description}</p>
+          <p className="text-sm text-foreground leading-snug">{todo.description}</p>
         </button>
 
         {/* Each client is its own link: a to-do covering two accounts has two
             places to go, and picking one for her would be a guess. */}
-        <p className="text-[11px] text-[#94A3B8] mt-0.5 truncate">
+        <p className="text-xs text-muted-foreground mt-0.5 truncate">
           {todo.clients.length === 0 ? (
-            <span className="inline-flex items-center gap-1 text-[#1A5276]" data-testid={`text-todo-general-${todo.id}`}>
+            <span className="inline-flex items-center gap-1 text-brand" data-testid={`text-todo-general-${todo.id}`}>
               <Building2 className="w-2.5 h-2.5" /> General
             </span>
           ) : (
@@ -94,7 +94,7 @@ function SortableTodoRow({
                 {i > 0 && <span className="mx-1">·</span>}
                 <button
                   onClick={() => onOpenClient(c.id)}
-                  className="hover:text-[#1A5276] hover:underline"
+                  className="hover:text-brand hover:underline"
                   data-testid={`button-todo-client-${todo.id}-${c.id}`}
                 >
                   {c.clientName}
@@ -106,17 +106,17 @@ function SortableTodoRow({
           {todo.communicationSubject}
         </p>
 
-        <p className="text-[10px] text-[#94A3B8] mt-0.5 inline-flex items-center gap-1">
+        <p className="text-xs text-muted-foreground mt-0.5 inline-flex items-center gap-1">
           <Clock className="w-2.5 h-2.5" />
           waiting {formatDistanceToNow(new Date(waitingSince))}
-          {todo.origin === "MANUAL" && <span className="ml-1.5 text-[#1A5276]">· added by hand</span>}
+          {todo.origin === "MANUAL" && <span className="ml-1.5 text-brand">· added by hand</span>}
         </p>
       </div>
 
       <div className="flex items-center gap-1 flex-shrink-0">
         <Button
           size="sm" variant="ghost" onClick={onOpen}
-          className="h-7 w-7 p-0 text-[#94A3B8] hover:text-[#1A5276]"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-brand"
           title="Go to client"
           data-testid={`button-todo-goto-${todo.id}`}
         >
@@ -124,7 +124,7 @@ function SortableTodoRow({
         </Button>
         <Button
           size="sm" variant="ghost" onClick={onResolve}
-          className="h-7 w-7 p-0 text-[#22C55E] hover:bg-[#F0FDF4]"
+          className="h-7 w-7 p-0 text-success hover:bg-success-tint"
           title="Resolve"
           data-testid={`button-todo-resolve-${todo.id}`}
         >
@@ -186,12 +186,12 @@ function PrioritySection({
     <div data-testid={`todo-section-${priority.toLowerCase()}`}>
       <div className="flex items-center gap-2 mb-1.5">
         <span
-          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+          className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded"
           style={{ color: style.text, backgroundColor: style.bg }}
         >
           {PRIORITY_LABEL[priority]}
         </span>
-        <span className="text-[10px] text-[#94A3B8]">{todos.length}</span>
+        <span className="text-xs text-muted-foreground">{todos.length}</span>
       </div>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -275,15 +275,15 @@ export default function TodoList() {
     <Card className="border-0 shadow-sm" data-testid="card-todo-list">
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <ListTodo className="w-4 h-4 text-[#1A5276]" />
-          <h3 className="text-sm font-semibold text-[#1A5276]">To-do list</h3>
-          <span className="text-xs text-[#94A3B8]" data-testid="text-todo-count">
+          <ListTodo className="w-4 h-4 text-brand" />
+          <h3 className="text-sm font-semibold text-brand">To-do list</h3>
+          <span className="text-xs text-muted-foreground" data-testid="text-todo-count">
             {isLoading ? "" : todos.length}
           </span>
           <Button
             size="sm" variant="ghost"
             onClick={() => setAdding(true)}
-            className="ml-auto h-7 px-2 text-[11px] gap-1 text-[#1A5276] hover:bg-[#F0F4F8]"
+            className="ml-auto h-7 px-2 text-xs gap-1 text-brand hover:bg-surface-subtle"
             data-testid="button-add-todo"
           >
             <Plus className="w-3.5 h-3.5" /> Add new
@@ -295,9 +295,9 @@ export default function TodoList() {
           <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
         ) : todos.length === 0 ? (
           <div className="py-8 text-center">
-            <ListTodo className="w-7 h-7 text-[#CBD5E1] mx-auto mb-2" />
-            <p className="text-sm text-[#94A3B8]">Nothing on the list.</p>
-            <p className="text-xs text-[#94A3B8] mt-1">
+            <ListTodo className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">Nothing on the list.</p>
+            <p className="text-xs text-muted-foreground mt-1">
               Tasks land here from a communication, or use Add new for a phone call.
             </p>
           </div>

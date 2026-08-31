@@ -22,18 +22,18 @@ const ISSUE_TYPES = [
 ];
 
 const ISSUE_TYPE_COLORS: Record<string, string> = {
-  FUNDING:     "bg-blue-100 text-blue-700",
+  FUNDING:     "bg-info-tint text-brand-accent",
   CLAIMS:      "bg-purple-100 text-purple-700",
-  CALL_CENTER: "bg-amber-100 text-amber-700",
+  CALL_CENTER: "bg-warning-tint text-warning-strong",
   REPORTING:   "bg-teal-100 text-teal-700",
-  OTHER:       "bg-gray-100 text-gray-600",
+  OTHER:       "bg-muted text-muted-foreground",
 };
 
 function IssueTypeBadge({ type }: { type: string | null }) {
   if (!type) return null;
   const label = ISSUE_TYPES.find(t => t.value === type)?.label ?? type;
-  const color = ISSUE_TYPE_COLORS[type] ?? "bg-gray-100 text-gray-600";
-  return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${color}`}>{label}</span>;
+  const color = ISSUE_TYPE_COLORS[type] ?? "bg-muted text-muted-foreground";
+  return <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${color}`}>{label}</span>;
 }
 
 export default function IssuesTab({ clientId }: { clientId: number }) {
@@ -54,13 +54,13 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
   return (
     <div data-testid="issues-tab">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-[#1A5276]">
+        <h2 className="text-lg font-semibold text-brand">
           Issues
           {activeIssues.length > 0 && (
-            <span className="ml-2 text-sm font-bold text-white bg-[#EF4444] rounded-full px-2 py-0.5">{activeIssues.length}</span>
+            <span className="ml-2 text-sm font-bold text-danger-foreground bg-danger rounded-full px-2 py-0.5">{activeIssues.length}</span>
           )}
         </h2>
-        <Button onClick={() => setShowCreate(true)} className="bg-[#EF4444] text-white gap-2" data-testid="button-report-issue">
+        <Button onClick={() => setShowCreate(true)} className="bg-danger text-danger-foreground gap-2" data-testid="button-report-issue">
           <Plus className="w-4 h-4" /> Report Issue
         </Button>
       </div>
@@ -68,21 +68,21 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
       {activeIssues.length === 0 && !isLoading ? (
         <Card className="border-0 shadow-sm mb-6">
           <CardContent className="py-12 text-center">
-            <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
-            <p className="text-sm text-[#94A3B8]">No issues reported -- looking good!</p>
+            <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No issues reported -- looking good!</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3 mb-6">
           {activeIssues.map((issue: any) => (
-            <Card key={issue.id} className="border-0 shadow-sm border-l-4 border-l-[#EF4444]" data-testid={`issue-card-${issue.id}`}>
+            <Card key={issue.id} className="border-0 shadow-sm border-l-4 border-l-danger" data-testid={`issue-card-${issue.id}`}>
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
                   <div className="pulse-dot mt-1.5 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
+                        <h3 className="text-sm font-semibold text-foreground cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
                           {issue.title}
                         </h3>
                         <button onClick={() => setEditTypeId(issue.id)} className="flex-shrink-0" data-testid={`button-edit-type-${issue.id}`}>
@@ -90,22 +90,22 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
                         </button>
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
-                        <Button size="sm" variant="ghost" onClick={() => setEditTypeId(issue.id)} className="text-[#94A3B8] text-xs h-7 px-2" data-testid={`button-edit-type-btn-${issue.id}`}>
+                        <Button size="sm" variant="ghost" onClick={() => setEditTypeId(issue.id)} className="text-muted-foreground text-xs h-7 px-2" data-testid={`button-edit-type-btn-${issue.id}`}>
                           Edit Type
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => setResolveId(issue.id)} className="text-[#22C55E] border-[#22C55E]" data-testid={`button-resolve-${issue.id}`}>
+                        <Button size="sm" variant="outline" onClick={() => setResolveId(issue.id)} className="text-success border-success" data-testid={`button-resolve-${issue.id}`}>
                           Resolve
                         </Button>
                       </div>
                     </div>
-                    <p className="text-xs text-[#94A3B8] mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Created by {issue.createdBy} on {format(new Date(issue.createdAt), "MMM d, yyyy")}
                     </p>
                     {expandedIssue === issue.id && (
-                      <p className="text-sm text-[#2C3E50] mt-3 whitespace-pre-wrap bg-[#F0F4F8] p-3 rounded-md">{issue.description}</p>
+                      <p className="text-sm text-foreground mt-3 whitespace-pre-wrap bg-surface-subtle p-3 rounded-md">{issue.description}</p>
                     )}
                     {expandedIssue !== issue.id && (
-                      <p className="text-sm text-[#94A3B8] mt-1 truncate">{issue.description}</p>
+                      <p className="text-sm text-muted-foreground mt-1 truncate">{issue.description}</p>
                     )}
                   </div>
                 </div>
@@ -118,7 +118,7 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
       {resolvedIssues.length > 0 && (
         <Collapsible open={showResolved} onOpenChange={setShowResolved}>
           <CollapsibleTrigger asChild>
-            <button className="flex items-center gap-2 text-sm font-medium text-[#94A3B8] mb-3 hover:text-[#2C3E50] transition-colors" data-testid="button-toggle-resolved">
+            <button className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-3 hover:text-foreground transition-colors" data-testid="button-toggle-resolved">
               {showResolved ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               Resolved Issues ({resolvedIssues.length})
             </button>
@@ -126,27 +126,27 @@ export default function IssuesTab({ clientId }: { clientId: number }) {
           <CollapsibleContent>
             <div className="space-y-3">
               {resolvedIssues.map((issue: any) => (
-                <Card key={issue.id} className="border-0 shadow-sm border-l-4 border-l-[#22C55E]" data-testid={`resolved-issue-${issue.id}`}>
+                <Card key={issue.id} className="border-0 shadow-sm border-l-4 border-l-success" data-testid={`resolved-issue-${issue.id}`}>
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-[#22C55E] mt-0.5 flex-shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-success mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-semibold text-[#2C3E50] cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
+                          <h3 className="text-sm font-semibold text-foreground cursor-pointer truncate" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
                             {issue.title}
                           </h3>
                           <IssueTypeBadge type={issue.issueType} />
                         </div>
-                        <p className="text-xs text-[#94A3B8] mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                           Created {format(new Date(issue.createdAt), "MMM d, yyyy")} | Resolved {issue.resolvedAt ? format(new Date(issue.resolvedAt), "MMM d, yyyy") : ""}
                         </p>
                         {expandedIssue === issue.id && (
                           <div className="mt-3 space-y-2">
-                            <p className="text-sm text-[#2C3E50] whitespace-pre-wrap bg-[#F0F4F8] p-3 rounded-md">{issue.description}</p>
+                            <p className="text-sm text-foreground whitespace-pre-wrap bg-surface-subtle p-3 rounded-md">{issue.description}</p>
                             {issue.resolutionNotes && (
-                              <div className="bg-green-50 p-3 rounded-md">
-                                <p className="text-xs font-semibold text-green-700 mb-1">Resolution Notes</p>
-                                <p className="text-sm text-green-800">{issue.resolutionNotes}</p>
+                              <div className="bg-success-tint p-3 rounded-md">
+                                <p className="text-xs font-semibold text-success-strong mb-1">Resolution Notes</p>
+                                <p className="text-sm text-success-strong">{issue.resolutionNotes}</p>
                               </div>
                             )}
                           </div>
@@ -198,7 +198,7 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Report Issue</DialogTitle>
+          <DialogTitle className="text-brand">Report Issue</DialogTitle>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); if (title && description) mutation.mutate(); }} className="space-y-4">
           <div>
@@ -215,15 +215,15 @@ function CreateIssueDialog({ open, onClose, clientId }: { open: boolean; onClose
             </Select>
           </div>
           <div>
-            <Label className="text-sm font-medium">Issue Title <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Issue Title <span className="text-danger">*</span></Label>
             <Input value={title} onChange={e => setTitle(e.target.value)} data-testid="input-issue-title" />
           </div>
           <div>
-            <Label className="text-sm font-medium">Description <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Description <span className="text-danger">*</span></Label>
             <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={5} data-testid="input-issue-description" />
           </div>
           <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={mutation.isPending || !title || !description} className="bg-[#EF4444] text-white" data-testid="button-submit-issue">
+            <Button type="submit" disabled={mutation.isPending || !title || !description} className="bg-danger text-danger-foreground" data-testid="button-submit-issue">
               {mutation.isPending ? "Creating..." : "Report Issue"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -262,7 +262,7 @@ function EditIssueTypeDialog({ open, onClose, issueId, clientId, currentType }: 
     <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setIssueType(""); } }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Edit Issue Type</DialogTitle>
+          <DialogTitle className="text-brand">Edit Issue Type</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <div>
@@ -279,7 +279,7 @@ function EditIssueTypeDialog({ open, onClose, issueId, clientId, currentType }: 
             </Select>
           </div>
           <div className="flex gap-2 pt-1">
-            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-issue-type">
+            <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-brand text-brand-foreground" data-testid="button-save-issue-type">
               {mutation.isPending ? "Saving..." : "Save"}
             </Button>
             <Button variant="outline" onClick={() => { onClose(); setIssueType(""); }}>Cancel</Button>
@@ -316,7 +316,7 @@ function ResolveIssueDialog({ open, onClose, issueId, clientId }: { open: boolea
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Resolve Issue</DialogTitle>
+          <DialogTitle className="text-brand">Resolve Issue</DialogTitle>
         </DialogHeader>
         <form onSubmit={e => { e.preventDefault(); mutation.mutate(); }} className="space-y-4">
           <div>
@@ -324,7 +324,7 @@ function ResolveIssueDialog({ open, onClose, issueId, clientId }: { open: boolea
             <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} placeholder="Optional but encouraged..." data-testid="input-resolution-notes" />
           </div>
           <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={mutation.isPending} className="bg-[#22C55E] text-white" data-testid="button-confirm-resolve">
+            <Button type="submit" disabled={mutation.isPending} className="bg-success text-success-foreground" data-testid="button-confirm-resolve">
               {mutation.isPending ? "Resolving..." : "Confirm Resolve"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

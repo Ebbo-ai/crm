@@ -54,7 +54,7 @@ export const RENEWAL_PIPELINE_STEP_COLORS: Record<RenewalPipelineStep, string> =
   REVISED:              "bg-purple-50 text-purple-700",
   ACCEPTED:             "bg-green-50 text-green-700",
   SIGNED_FORM_ATTACHED: "bg-teal-50 text-teal-700",
-  EMAILED_TO_90D:       "bg-[#1A5276]/10 text-[#1A5276]",
+  EMAILED_TO_90D:       "bg-brand/10 text-brand",
 };
 
 /** Returns the next step, or null if already at the final step. */

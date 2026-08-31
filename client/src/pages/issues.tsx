@@ -46,9 +46,9 @@ function FollowUpBadge({ followUpAt }: { followUpAt: string | null }) {
     status === "today"   ? "Follow-up due today" :
     `Follow-up in ${formatDistanceToNow(new Date(followUpAt!))}`;
   const cls =
-    status === "overdue" ? "bg-red-100 text-red-700 border-red-200" :
-    status === "today"   ? "bg-amber-100 text-amber-700 border-amber-200" :
-    "bg-blue-50 text-blue-700 border-blue-200";
+    status === "overdue" ? "bg-danger-tint text-danger-strong border-danger/40" :
+    status === "today"   ? "bg-warning-tint text-warning-strong border-warning/40" :
+    "bg-info-tint text-brand-accent border-brand-accent/40";
   return (
     <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>
       <CalendarClock className="w-3 h-3" />
@@ -143,28 +143,28 @@ export default function IssuesPage() {
   return (
     <div data-testid="issues-page">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]" data-testid="text-page-title">Issues</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">Track and resolve active issues across all clients</p>
+        <h1 className="text-2xl font-bold text-brand" data-testid="text-page-title">Issues</h1>
+        <p className="text-sm text-muted-foreground mt-1">Track and resolve active issues across all clients</p>
       </div>
 
       {alertCount > 0 && (
-        <div className="mb-5 p-4 rounded-lg border border-red-200 bg-red-50 flex items-start gap-3" data-testid="followup-alert-banner">
-          <Bell className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="mb-5 p-4 rounded-lg border border-danger/40 bg-danger-tint flex items-start gap-3" data-testid="followup-alert-banner">
+          <Bell className="w-5 h-5 text-danger-strong flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-red-700">
+            <p className="text-sm font-semibold text-danger-strong">
               {alertCount} follow-up{alertCount !== 1 ? "s" : ""} require attention
             </p>
             <div className="mt-1 space-y-0.5">
               {overdueFollowUps.map(i => (
-                <p key={i.id} className="text-xs text-red-600">
+                <p key={i.id} className="text-xs text-danger-strong">
                   <span className="font-medium">{i.clientName}</span> — {i.title}
-                  {" "}<span className="text-red-400">(overdue by {formatDistanceToNow(new Date(i.followUpAt!))})</span>
+                  {" "}<span className="text-danger-strong">(overdue by {formatDistanceToNow(new Date(i.followUpAt!))})</span>
                 </p>
               ))}
               {todayFollowUps.map(i => (
-                <p key={i.id} className="text-xs text-amber-700">
+                <p key={i.id} className="text-xs text-warning-strong">
                   <span className="font-medium">{i.clientName}</span> — {i.title}
-                  {" "}<span className="text-amber-500">(due today)</span>
+                  {" "}<span className="text-warning-strong">(due today)</span>
                 </p>
               ))}
             </div>
@@ -175,7 +175,7 @@ export default function IssuesPage() {
       <Card className="border-0 shadow-sm mb-6">
         <CardHeader className="pb-3 pt-5 px-5">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Active Issues</h2>
+            <h2 className="text-lg font-semibold text-brand">Active Issues</h2>
             {activeIssues && (
               <Badge variant="secondary" className="text-xs">{activeIssues.length} open</Badge>
             )}
@@ -186,8 +186,8 @@ export default function IssuesPage() {
             <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>
           ) : !activeIssues?.length ? (
             <div className="text-center py-10">
-              <CheckCircle2 className="w-10 h-10 text-[#22C55E] mx-auto mb-2" />
-              <p className="text-sm text-[#94A3B8]">No active issues — all clear!</p>
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No active issues — all clear!</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -207,7 +207,7 @@ export default function IssuesPage() {
 
       <div>
         <button
-          className="flex items-center gap-2 text-sm font-medium text-[#94A3B8] hover:text-[#2C3E50] transition-colors mb-3"
+          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors mb-3"
           onClick={() => setShowResolved(v => !v)}
           data-testid="button-toggle-resolved"
         >
@@ -221,7 +221,7 @@ export default function IssuesPage() {
               {resolvedLoading ? (
                 <div className="space-y-3">{[1,2].map(i => <Skeleton key={i} className="h-16" />)}</div>
               ) : !resolvedIssues?.length ? (
-                <p className="text-sm text-[#94A3B8] text-center py-6">No resolved issues yet</p>
+                <p className="text-sm text-muted-foreground text-center py-6">No resolved issues yet</p>
               ) : (
                 <div className="space-y-3">
                   {resolvedIssues.map(issue => (
@@ -241,9 +241,9 @@ export default function IssuesPage() {
           </DialogHeader>
           {resolveIssue && (
             <div className="space-y-4">
-              <div className="p-3 rounded-md bg-[#F0F4F8]">
-                <p className="text-sm font-medium text-[#2C3E50]">{resolveIssue.title}</p>
-                <p className="text-xs text-[#94A3B8] mt-1">{resolveIssue.clientName}</p>
+              <div className="p-3 rounded-md bg-surface-subtle">
+                <p className="text-sm font-medium text-foreground">{resolveIssue.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">{resolveIssue.clientName}</p>
               </div>
               <div>
                 <Label htmlFor="resolution-notes" className="text-sm font-medium">Resolution Notes</Label>
@@ -261,7 +261,7 @@ export default function IssuesPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setResolveIssue(null)} data-testid="button-cancel-resolve">Cancel</Button>
             <Button
-              className="bg-[#22C55E] hover:bg-[#16A34A] text-white"
+              className="bg-success hover:bg-success text-success-foreground"
               onClick={() => resolveIssue && resolveMutation.mutate({ id: resolveIssue.id, resolutionNotes })}
               disabled={resolveMutation.isPending}
               data-testid="button-confirm-resolve"
@@ -279,11 +279,11 @@ export default function IssuesPage() {
           </DialogHeader>
           {followUpIssue && (
             <div className="space-y-4">
-              <div className="p-3 rounded-md bg-[#F0F4F8]">
-                <p className="text-sm font-medium text-[#2C3E50]">{followUpIssue.title}</p>
-                <p className="text-xs text-[#94A3B8] mt-1">{followUpIssue.clientName}</p>
+              <div className="p-3 rounded-md bg-surface-subtle">
+                <p className="text-sm font-medium text-foreground">{followUpIssue.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">{followUpIssue.clientName}</p>
                 {followUpIssue.followUpAt && (
-                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-warning-strong mt-1 flex items-center gap-1">
                     <CalendarClock className="w-3 h-3" />
                     Current: {format(new Date(followUpIssue.followUpAt), "MMM d, yyyy h:mm a")}
                   </p>
@@ -304,9 +304,9 @@ export default function IssuesPage() {
                   </SelectContent>
                 </Select>
                 {selectedFollowUp && (
-                  <p className="text-xs text-[#94A3B8] mt-1.5">
+                  <p className="text-xs text-muted-foreground mt-1.5">
                     Follow-up will be set for:{" "}
-                    <span className="font-medium text-[#2C3E50]">
+                    <span className="font-medium text-foreground">
                       {format(addHours(FOLLOW_UP_OPTIONS.find(o => o.value === selectedFollowUp)!.hours), "MMM d, yyyy h:mm a")}
                     </span>
                   </p>
@@ -317,7 +317,7 @@ export default function IssuesPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setFollowUpIssue(null)} data-testid="button-cancel-followup">Cancel</Button>
             <Button
-              className="bg-[#1A5276] hover:bg-[#154360] text-white"
+              className="bg-brand hover:bg-brand-dark text-brand-foreground"
               onClick={handleSetFollowUp}
               disabled={!selectedFollowUp || followUpMutation.isPending}
               data-testid="button-confirm-followup"
@@ -345,27 +345,27 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
   return (
     <div
       className={`rounded-lg border p-4 transition-colors ${
-        isOverdue ? "border-red-200 bg-red-50/50" :
-        isToday_  ? "border-amber-200 bg-amber-50/30" :
-        "border-gray-200 bg-white"
+        isOverdue ? "border-danger/40 bg-danger-tint/50" :
+        isToday_  ? "border-warning/40 bg-warning-tint/30" :
+        "border-border bg-card"
       }`}
       data-testid={`issue-card-${issue.id}`}
     >
       <div className="flex items-start gap-3">
-        <AlertCircle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isOverdue ? "text-red-500" : "text-[#EF4444]"}`} />
+        <AlertCircle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isOverdue ? "text-danger-strong" : "text-danger"}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 flex-wrap">
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-[#2C3E50] leading-tight">{issue.title}</p>
+              <p className="text-sm font-semibold text-foreground leading-tight">{issue.title}</p>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <Link href={`/clients/${issue.clientId}`}>
-                  <span className="text-xs text-[#2E86C1] hover:underline font-medium flex items-center gap-0.5">
+                  <span className="text-xs text-brand-accent hover:underline font-medium flex items-center gap-0.5">
                     {issue.clientCode} — {issue.clientName}
                     <ExternalLink className="w-2.5 h-2.5" />
                   </span>
                 </Link>
-                <span className="text-xs text-[#94A3B8]">·</span>
-                <span className="text-xs text-[#94A3B8] flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">·</span>
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Clock className="w-3 h-3" />
                   {formatDistanceToNow(new Date(issue.createdAt), { addSuffix: true })}
                 </span>
@@ -379,9 +379,9 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
           </div>
 
           {expanded && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
-              <p className="text-sm text-[#4A5568] whitespace-pre-wrap">{issue.description}</p>
-              <p className="text-xs text-[#94A3B8] mt-1">Reported by {issue.createdBy}</p>
+            <div className="mt-2 pt-2 border-t border-border">
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{issue.description}</p>
+              <p className="text-xs text-muted-foreground mt-1">Reported by {issue.createdBy}</p>
             </div>
           )}
 
@@ -397,7 +397,7 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
             </Button>
             <Button
               size="sm"
-              className="h-7 text-xs bg-[#22C55E] hover:bg-[#16A34A] text-white border-0"
+              className="h-7 text-xs bg-success hover:bg-success text-success-foreground border-0"
               onClick={onResolve}
               data-testid={`button-resolve-issue-${issue.id}`}
             >
@@ -407,7 +407,7 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
             <Button
               size="sm"
               variant="outline"
-              className={`h-7 text-xs ${issue.followUpAt ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "text-[#2E86C1] border-[#2E86C1]/30 hover:bg-blue-50"}`}
+              className={`h-7 text-xs ${issue.followUpAt ? "border-warning/40 text-warning-strong hover:bg-warning-tint" : "text-brand-accent border-brand-accent/30 hover:bg-info-tint"}`}
               onClick={onSetFollowUp}
               data-testid={`button-followup-issue-${issue.id}`}
             >
@@ -418,7 +418,7 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs text-[#94A3B8] hover:text-[#EF4444]"
+                className="h-7 text-xs text-muted-foreground hover:text-danger"
                 onClick={onClearFollowUp}
                 data-testid={`button-clear-followup-${issue.id}`}
               >
@@ -434,28 +434,28 @@ function IssueCard({ issue, onResolve, onSetFollowUp, onClearFollowUp }: {
 
 function ResolvedCard({ issue }: { issue: Issue }) {
   return (
-    <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-4" data-testid={`resolved-card-${issue.id}`}>
+    <div className="rounded-lg border border-border bg-surface-subtle/50 p-4" data-testid={`resolved-card-${issue.id}`}>
       <div className="flex items-start gap-3">
-        <CheckCircle2 className="w-4 h-4 mt-0.5 text-[#22C55E] flex-shrink-0" />
+        <CheckCircle2 className="w-4 h-4 mt-0.5 text-success flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-[#64748B]">{issue.title}</p>
+          <p className="text-sm font-medium text-muted-foreground">{issue.title}</p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <Link href={`/clients/${issue.clientId}`}>
-              <span className="text-xs text-[#94A3B8] hover:text-[#2E86C1]">
+              <span className="text-xs text-muted-foreground hover:text-brand-accent">
                 {issue.clientCode} — {issue.clientName}
               </span>
             </Link>
             {issue.resolvedAt && (
               <>
-                <span className="text-xs text-[#94A3B8]">·</span>
-                <span className="text-xs text-[#94A3B8]">
+                <span className="text-xs text-muted-foreground">·</span>
+                <span className="text-xs text-muted-foreground">
                   Resolved {format(new Date(issue.resolvedAt), "MMM d, yyyy")}
                 </span>
               </>
             )}
           </div>
           {issue.resolutionNotes && (
-            <p className="text-xs text-[#64748B] mt-1.5 italic">"{issue.resolutionNotes}"</p>
+            <p className="text-xs text-muted-foreground mt-1.5 italic">"{issue.resolutionNotes}"</p>
           )}
         </div>
       </div>

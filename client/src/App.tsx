@@ -27,10 +27,10 @@ function ProtectedRoute({ component: Component, adminOnly }: { component: React.
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F0F4F8]">
+      <div className="min-h-screen flex items-center justify-center bg-surface-subtle">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-[#1A5276] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-[#94A3B8]">Loading...</p>
+          <div className="w-8 h-8 border-2 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
@@ -73,7 +73,7 @@ function Router() {
       <Route path="/settings/users">{() => <ProtectedRoute component={SettingsUsersPage} adminOnly />}</Route>
       <Route path="/settings/crm-import">{() => <ProtectedRoute component={CrmImportPage} adminOnly />}</Route>
       <Route path="/settings/data-reset">{() => <ProtectedRoute component={DataResetPage} adminOnly />}</Route>
-      <Route component={NotFound} />
+      <Route>{() => <ProtectedRoute component={NotFound} />}</Route>
     </Switch>
   );
 }

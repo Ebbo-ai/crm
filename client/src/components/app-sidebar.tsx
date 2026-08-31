@@ -77,20 +77,20 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
 
   return (
     <aside
-      className={`fixed left-0 top-0 h-full bg-[#1A5276] text-white z-40 transition-all duration-300 flex flex-col ${
+      className={`fixed left-0 top-0 h-full bg-brand text-brand-foreground z-40 transition-all duration-300 flex flex-col ${
         collapsed ? "w-0 -translate-x-full lg:w-16 lg:translate-x-0" : "w-64"
       }`}
       data-testid="sidebar"
     >
       <div className={`p-4 border-b border-white/10 ${collapsed ? "hidden lg:flex lg:flex-col lg:items-center lg:py-4" : ""}`}>
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
-            <Shield className="w-5 h-5 text-[#F5A623]" />
+          <div className="w-9 h-9 rounded-lg bg-card/10 flex items-center justify-center flex-shrink-0">
+            <Shield className="w-5 h-5 text-gold-on" />
           </div>
           {!collapsed && (
             <div className="min-w-0">
               <h1 className="font-bold text-sm leading-tight truncate">Simple Benefits</h1>
-              <p className="text-[10px] text-[#F5A623] leading-tight">Client Management System</p>
+              <p className="text-xs text-gold-on leading-tight">Client Management System</p>
             </div>
           )}
         </div>
@@ -109,22 +109,22 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
                 setShowSearch(true);
               }}
               onFocus={() => setShowSearch(true)}
-              className="h-8 pl-8 bg-white/10 border-white/10 text-white placeholder:text-white/40 text-xs focus:bg-white/15"
+              className="h-8 pl-8 bg-card/10 border-white/10 text-white placeholder:text-white/40 text-xs focus:bg-card/15"
               data-testid="input-global-search"
             />
             {showSearch && searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-md shadow-lg z-50 max-h-64 overflow-auto" data-testid="search-results-dropdown">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card rounded-md shadow-lg z-50 max-h-64 overflow-auto" data-testid="search-results-dropdown">
                 {searchResults.map((client: any) => (
                   <Link
                     key={client.id}
                     href={`/clients/${client.id}`}
                     onClick={() => { setShowSearch(false); setSearchQuery(""); }}
                   >
-                    <div className="px-3 py-2 hover:bg-[#F0F4F8] cursor-pointer border-b border-gray-100 last:border-0" data-testid={`search-result-${client.id}`}>
-                      <div className="text-sm font-medium text-[#2C3E50]">{client.clientName}</div>
+                    <div className="px-3 py-2 hover:bg-surface-subtle cursor-pointer border-b border-border last:border-0" data-testid={`search-result-${client.id}`}>
+                      <div className="text-sm font-medium text-foreground">{client.clientName}</div>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs text-[#94A3B8]">{client.city}, {client.state}</span>
-                        <ClientStateBadge client={client} className="text-[10px] px-1.5 py-0.5" />
+                        <span className="text-xs text-muted-foreground">{client.city}, {client.state}</span>
+                        <ClientStateBadge client={client} className="text-xs px-1.5 py-0.5" />
                       </div>
                     </div>
                   </Link>
@@ -132,7 +132,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               </div>
             )}
             {showSearch && searchQuery.length >= 2 && searchResults.length === 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-md shadow-lg z-50 p-3 text-center text-sm text-[#94A3B8]">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card rounded-md shadow-lg z-50 p-3 text-center text-sm text-muted-foreground">
                 No clients found
               </div>
             )}
@@ -157,8 +157,8 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
             <div
               className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                 isActive(item.path)
-                  ? "bg-white/15 text-white"
-                  : "text-white/70 hover:bg-white/10 hover:text-white"
+                  ? "bg-card/15 text-white"
+                  : "text-white/70 hover:bg-card/10 hover:text-white"
               } ${collapsed ? "justify-center" : ""}`}
               data-testid={`nav-${item.title.toLowerCase()}`}
             >
@@ -167,16 +167,16 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
                 <span className="flex-1">{item.title}</span>
               )}
               {!collapsed && item.badge !== null && (
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none ${
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none ${
                   item.badgeAlert
-                    ? "bg-[#EF4444] text-white animate-pulse"
-                    : "bg-white/20 text-white"
+                    ? "bg-danger text-danger-foreground animate-pulse"
+                    : "bg-card/20 text-brand-foreground"
                 }`}>
                   {item.badge}
                 </span>
               )}
               {collapsed && item.badge !== null && (
-                <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${item.badgeAlert ? "bg-[#EF4444]" : "bg-white/60"}`} />
+                <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${item.badgeAlert ? "bg-danger" : "bg-card/60"}`} />
               )}
             </div>
           </Link>
@@ -189,8 +189,8 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               <div
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   isActive("/settings/users")
-                    ? "bg-white/15 text-white"
-                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                    ? "bg-card/15 text-white"
+                    : "text-white/70 hover:bg-card/10 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid="nav-settings"
               >
@@ -202,8 +202,8 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               <div
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   isActive("/settings/crm-import")
-                    ? "bg-white/15 text-white"
-                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                    ? "bg-card/15 text-white"
+                    : "text-white/70 hover:bg-card/10 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid="nav-crm-import"
               >
@@ -215,8 +215,8 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               <div
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   isActive("/settings/data-reset")
-                    ? "bg-white/15 text-white"
-                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                    ? "bg-card/15 text-white"
+                    : "text-white/70 hover:bg-card/10 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid="nav-data-reset"
               >
@@ -231,18 +231,18 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
       <div className={`p-3 border-t border-white/10 ${collapsed ? "hidden lg:block" : ""}`}>
         {!collapsed && (
           <div className="flex items-center gap-2 px-2 mb-2">
-            <div className="w-7 h-7 rounded-full bg-[#F5A623] flex items-center justify-center text-xs font-bold text-[#1A5276] flex-shrink-0">
+            <div className="w-7 h-7 rounded-full bg-gold flex items-center justify-center text-xs font-bold text-brand flex-shrink-0">
               {user?.fullName?.charAt(0) || "U"}
             </div>
             <div className="min-w-0">
               <p className="text-xs font-medium truncate">{user?.fullName}</p>
-              <p className="text-[10px] text-white/50 truncate">{user?.email}</p>
+              <p className="text-xs text-white/50 truncate">{user?.email}</p>
             </div>
           </div>
         )}
         <button
           onClick={logout}
-          className={`flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-white/70 hover:bg-white/10 hover:text-white transition-colors ${
+          className={`flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-white/70 hover:bg-card/10 hover:text-white transition-colors ${
             collapsed ? "justify-center" : ""
           }`}
           data-testid="button-logout"

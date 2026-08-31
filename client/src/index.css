@@ -9,35 +9,74 @@
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 210 6% 98%;
-  --foreground: 210 6% 12%;
-  --border: 210 6% 90%;
-  --card: 210 6% 96%;
-  --card-foreground: 210 6% 12%;
-  --card-border: 210 6% 92%;
-  --sidebar: 210 6% 94%;
-  --sidebar-foreground: 210 6% 12%;
-  --sidebar-border: 210 6% 88%;
-  --sidebar-primary: 210 85% 42%;
-  --sidebar-primary-foreground: 210 85% 98%;
-  --sidebar-accent: 210 8% 86%;
-  --sidebar-accent-foreground: 210 8% 12%;
-  --sidebar-ring: 210 85% 42%;
-  --popover: 210 6% 92%;
-  --popover-foreground: 210 6% 12%;
-  --popover-border: 210 6% 86%;
-  --primary: 210 85% 42%;
-  --primary-foreground: 210 85% 98%;
-  --secondary: 210 8% 84%;
-  --secondary-foreground: 210 8% 12%;
-  --muted: 210 8% 88%;
-  --muted-foreground: 210 8% 32%;
-  --accent: 210 10% 90%;
-  --accent-foreground: 210 10% 12%;
-  --destructive: 0 72% 38%;
-  --destructive-foreground: 0 72% 98%;
-  --input: 210 12% 75%;
-  --ring: 210 85% 42%;
+  /* Surface ladder. Each rung is a visibly different value so a card reads as
+     a card and a table header reads as a header, rather than everything
+     dissolving into the same grey. Page is the darkest, the card sits on top
+     of it in white, and header / hover / input each take their own step.
+     Every value here is chosen so body and muted text clear WCAG AA (4.5:1)
+     on top of it. Do not lighten a surface without re-checking the text. */
+  --background: 210 24% 91%;      /* page              #E3E8EE */
+  --foreground: 210 30% 12%;      /* body text         #151F28  16.7:1 on card */
+  --border: 210 20% 74%;          /* card/table edges  #AFBDCA */
+  --card: 0 0% 100%;              /* panel surface     #FFFFFF */
+  --card-foreground: 210 30% 12%;
+  --card-border: 210 20% 74%;
+  --sidebar: 210 26% 88%;
+  --sidebar-foreground: 210 30% 12%;
+  --sidebar-border: 210 20% 74%;
+  --sidebar-primary: 206 64% 28%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 210 30% 82%;
+  --sidebar-accent-foreground: 210 30% 12%;
+  --sidebar-ring: 206 64% 28%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 210 30% 12%;
+  --popover-border: 210 20% 74%;
+  --primary: 206 64% 28%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 22% 89%;
+  --secondary-foreground: 210 30% 12%;
+  --muted: 210 26% 87%;           /* table header      #D5DEE6 */
+  --muted-foreground: 210 20% 34%; /* secondary text   #455768  7.5:1 on card */
+  --accent: 210 34% 93%;          /* hovered/striped row #E7EDF3 */
+  --accent-foreground: 210 30% 12%;
+  --destructive: 0 66% 40%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 210 22% 62%;           /* input edge        #899EB3  2.8:1 on card */
+  --ring: 206 64% 28%;
+
+  /* House palette, promoted out of the 971 hardcoded hex values that used to
+     be scattered through the components. Text-bearing colours are darkened to
+     clear 4.5:1 on every surface above; --gold is a fill and icon colour only,
+     it can never carry body text. */
+  --brand: 206 64% 28%;           /* #1A4D75 */
+  --brand-foreground: 0 0% 100%;
+  --brand-dark: 206 64% 20%;      /* #123754 */
+  --brand-accent: 204 68% 33%;    /* #1B608D */
+  --gold: 38 92% 50%;             /* #F59F0A - fills and icons, never text */
+  --gold-hover: 38 92% 44%;
+  /* Text that sits ON a coloured fill. Gold is bright enough that it needs
+     dark text in both themes; the rest are white here and dark in .dark,
+     where the fills themselves invert to light. */
+  --gold-foreground: 210 30% 12%;
+  /* Gold as TEXT is only ever legal on a brand fill, and even there it has to
+     be lifted this far to clear 4.5:1 against the lighter end of the
+     brand -> brand-accent gradient. On any light surface use --warning. */
+  --gold-on-brand: 38 92% 74%;
+  --success-foreground: 0 0% 100%;
+  --warning-foreground: 0 0% 100%;
+  --danger-foreground: 0 0% 100%;
+  --warning: 30 95% 28%;          /* #8B4704 - the text-safe amber */
+  --warning-strong: 28 95% 22%;
+  --warning-tint: 40 90% 94%;
+  --success: 145 82% 23%;         /* #0B6B33 */
+  --success-strong: 150 85% 18%;
+  --success-tint: 145 55% 94%;
+  --danger: 0 66% 40%;            /* #A92323 */
+  --danger-strong: 0 72% 30%;
+  --danger-tint: 0 70% 96%;
+  --info-tint: 206 70% 95%;
+  --surface-subtle: 210 34% 96%;  /* the pale panel fill */
   --chart-1: 210 85% 42%;
   --chart-2: 195 75% 38%;
   --chart-3: 165 65% 35%;
@@ -93,35 +132,62 @@
   --opaque-button-border-intensity: 9;
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
-  --background: 210 5% 8%;
-  --foreground: 210 5% 96%;
-  --border: 210 5% 18%;
-  --card: 210 5% 10%;
-  --card-foreground: 210 5% 96%;
-  --card-border: 210 5% 14%;
-  --sidebar: 210 5% 12%;
-  --sidebar-foreground: 210 5% 96%;
-  --sidebar-border: 210 5% 16%;
-  --sidebar-primary: 210 85% 45%;
-  --sidebar-primary-foreground: 210 85% 98%;
-  --sidebar-accent: 210 8% 16%;
-  --sidebar-accent-foreground: 210 8% 96%;
-  --sidebar-ring: 210 85% 45%;
-  --popover: 210 5% 14%;
-  --popover-foreground: 210 5% 96%;
-  --popover-border: 210 5% 18%;
-  --primary: 210 85% 32%;
-  --primary-foreground: 210 85% 98%;
-  --secondary: 210 8% 18%;
-  --secondary-foreground: 210 8% 96%;
-  --muted: 210 8% 16%;
-  --muted-foreground: 210 8% 72%;
-  --accent: 210 10% 14%;
-  --accent-foreground: 210 10% 96%;
-  --destructive: 0 72% 28%;
-  --destructive-foreground: 0 72% 98%;
-  --input: 210 12% 30%;
-  --ring: 210 85% 45%;
+  --background: 210 24% 9%;
+  --foreground: 210 20% 96%;
+  --border: 210 16% 32%;
+  --card: 210 22% 14%;
+  --card-foreground: 210 20% 96%;
+  --card-border: 210 16% 32%;
+  --sidebar: 210 22% 12%;
+  --sidebar-foreground: 210 20% 96%;
+  --sidebar-border: 210 16% 30%;
+  --sidebar-primary: 206 70% 62%;
+  --sidebar-primary-foreground: 210 30% 10%;
+  --sidebar-accent: 210 20% 22%;
+  --sidebar-accent-foreground: 210 20% 96%;
+  --sidebar-ring: 206 70% 62%;
+  --popover: 210 22% 16%;
+  --popover-foreground: 210 20% 96%;
+  --popover-border: 210 16% 32%;
+  --primary: 206 70% 62%;
+  --primary-foreground: 210 30% 10%;
+  --secondary: 210 18% 22%;
+  --secondary-foreground: 210 20% 96%;
+  --muted: 210 20% 20%;
+  --muted-foreground: 210 18% 76%;
+  --accent: 210 22% 19%;
+  --accent-foreground: 210 20% 96%;
+  --destructive: 0 75% 66%;
+  --destructive-foreground: 210 30% 10%;
+  --input: 210 16% 42%;
+  --ring: 206 70% 62%;
+
+  /* Dark counterparts. The text-bearing colours invert: on a dark surface the
+     legible version of each is the light one, not the darkened one. */
+  --brand: 206 70% 66%;
+  --brand-foreground: 210 30% 10%;
+  --brand-dark: 206 70% 78%;
+  --brand-accent: 204 72% 64%;
+  --gold: 38 92% 58%;
+  --gold-hover: 38 92% 64%;
+  --gold-foreground: 210 30% 10%;
+  /* Inverted here: in dark mode the brand fill is a LIGHT blue, so gold text
+     on it has to be a deep amber rather than a bright one. */
+  --gold-on-brand: 38 90% 15%;
+  --success-foreground: 210 30% 10%;
+  --warning-foreground: 210 30% 10%;
+  --danger-foreground: 210 30% 10%;
+  --warning: 38 92% 68%;
+  --warning-strong: 38 92% 78%;
+  --warning-tint: 38 45% 17%;
+  --success: 145 55% 62%;
+  --success-strong: 145 60% 72%;
+  --success-tint: 145 40% 15%;
+  --danger: 0 78% 74%;
+  --danger-strong: 0 80% 82%;
+  --danger-tint: 0 45% 17%;
+  --info-tint: 206 45% 19%;
+  --surface-subtle: 210 20% 17%;
   --chart-1: 210 85% 65%;
   --chart-2: 195 75% 62%;
   --chart-3: 165 65% 58%;

@@ -16,9 +16,9 @@ import { getPprSlots, type PprSlot } from "@/lib/renewal";
 import { format } from "date-fns";
 
 function LossRatioBadge({ value }: { value: string | null }) {
-  if (value == null) return <span className="text-[#94A3B8]">—</span>;
+  if (value == null) return <span className="text-muted-foreground">—</span>;
   const pct = parseFloat(value);
-  const color = pct >= 100 ? "text-[#EF4444]" : pct >= 85 ? "text-[#F5A623]" : "text-[#22C55E]";
+  const color = pct >= 100 ? "text-danger" : pct >= 85 ? "text-warning-strong" : "text-success";
   const Icon = pct >= 100 ? TrendingUp : pct >= 85 ? Minus : TrendingDown;
   return (
     <span className={`inline-flex items-center gap-1 font-semibold ${color}`}>
@@ -29,9 +29,9 @@ function LossRatioBadge({ value }: { value: string | null }) {
 }
 
 function PlanPositionBadge({ value }: { value: string | null }) {
-  if (value == null) return <span className="text-[#94A3B8]">—</span>;
+  if (value == null) return <span className="text-muted-foreground">—</span>;
   const amt = parseFloat(value);
-  const color = amt >= 0 ? "text-[#22C55E]" : "text-[#EF4444]";
+  const color = amt >= 0 ? "text-success" : "text-danger";
   const sign = amt >= 0 ? "+" : "";
   return (
     <span className={`font-semibold ${color}`}>
@@ -136,8 +136,8 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
       {/* ── Performance Report section ───────────────────────────────────────── */}
       <div className="mb-6 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold text-[#1A5276]">Performance Report</h2>
-          <p className="text-xs text-[#94A3B8] mt-0.5">Generated from stored monthly facts — what prints matches what is displayed</p>
+          <h2 className="text-lg font-semibold text-brand">Performance Report</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Generated from stored monthly facts — what prints matches what is displayed</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {availableYears.length > 1 && (
@@ -154,7 +154,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
           )}
           <Button
             size="sm"
-            className="bg-[#1A5276] text-white gap-1.5 h-8 text-xs"
+            className="bg-brand text-brand-foreground gap-1.5 h-8 text-xs"
             onClick={() => setShowReport(true)}
             data-testid="button-view-ppr-report"
           >
@@ -169,10 +169,10 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
         <Dialog open onOpenChange={setShowReport}>
           <DialogContent className="max-w-6xl w-[96vw] h-[92vh] flex flex-col p-0 gap-0" data-testid="ppr-report-dialog">
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b bg-[#F0F4F8] rounded-t-lg flex-shrink-0">
+            <div className="flex items-center justify-between px-5 py-3 border-b bg-surface-subtle rounded-t-lg flex-shrink-0">
               <div className="flex items-center gap-2 min-w-0">
-                <BarChart2 className="w-4 h-4 text-[#1A5276] flex-shrink-0" />
-                <span className="text-sm font-semibold text-[#1A5276]">
+                <BarChart2 className="w-4 h-4 text-brand flex-shrink-0" />
+                <span className="text-sm font-semibold text-brand">
                   Performance Report{selectedYear ? ` — Plan Year ${selectedYear}` : ""}
                 </span>
               </div>
@@ -181,7 +181,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                   href={pdfUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-[#2E86C1] hover:underline"
+                  className="inline-flex items-center gap-1.5 text-xs text-brand-accent hover:underline"
                   data-testid="button-download-ppr-pdf"
                 >
                   <Download className="w-3.5 h-3.5" /> Download PDF
@@ -206,7 +206,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                   className="w-7 h-7"
                   data-testid="button-close-ppr-report"
                 >
-                  <X className="w-4 h-4 text-[#94A3B8]" />
+                  <X className="w-4 h-4 text-muted-foreground" />
                 </Button>
               </div>
             </div>
@@ -226,30 +226,30 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
       {/* Key Metrics Panel */}
       {latest && (
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-[#1A5276] mb-3 uppercase tracking-wide">
+          <h3 className="text-sm font-semibold text-brand mb-3 uppercase tracking-wide">
             Latest Performance — {MONTHS[(latest.reportMonth ?? 1) - 1]} {latest.reportYear}
-            {latest.planName && <span className="ml-2 font-normal text-[#94A3B8] normal-case tracking-normal">({latest.planName})</span>}
+            {latest.planName && <span className="ml-2 font-normal text-muted-foreground normal-case tracking-normal">({latest.planName})</span>}
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card className="border-0 shadow-sm" data-testid="metric-monthly-lr">
               <CardContent className="p-4">
-                <p className="text-xs text-[#94A3B8] font-medium mb-1">Monthly Loss Ratio</p>
+                <p className="text-xs text-muted-foreground font-medium mb-1">Monthly Loss Ratio</p>
                 <div className="text-xl"><LossRatioBadge value={latest.monthlyLossRatio} /></div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">Current month vs. budget</p>
+                <p className="text-xs text-muted-foreground mt-1">Current month vs. budget</p>
               </CardContent>
             </Card>
             <Card className="border-0 shadow-sm" data-testid="metric-ytd-lr">
               <CardContent className="p-4">
-                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Loss Ratio</p>
+                <p className="text-xs text-muted-foreground font-medium mb-1">YTD Loss Ratio</p>
                 <div className="text-xl"><LossRatioBadge value={latest.ytdLossRatio} /></div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">Plan-year average</p>
+                <p className="text-xs text-muted-foreground mt-1">Plan-year average</p>
               </CardContent>
             </Card>
             <Card className="border-0 shadow-sm" data-testid="metric-surplus">
               <CardContent className="p-4">
-                <p className="text-xs text-[#94A3B8] font-medium mb-1">YTD Plan Position</p>
+                <p className="text-xs text-muted-foreground font-medium mb-1">YTD Plan Position</p>
                 <div className="text-xl"><PlanPositionBadge value={latest.ytdSurplusDeficit} /></div>
-                <p className="text-[10px] text-[#94A3B8] mt-1">As billed, cumulative</p>
+                <p className="text-xs text-muted-foreground mt-1">As billed, cumulative</p>
               </CardContent>
             </Card>
           </div>
@@ -259,11 +259,11 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
       {/* History Table */}
       {metrics.length > 1 && (
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-[#1A5276] mb-3">Monthly History</h3>
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <h3 className="text-sm font-semibold text-brand mb-3">Monthly History</h3>
+          <div className="bg-card rounded-lg shadow-sm overflow-hidden">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-[#1A5276] text-white">
+                <tr className="bg-brand text-brand-foreground">
                   <th className="px-4 py-2.5 text-left text-xs font-medium">Period</th>
                   <th className="px-4 py-2.5 text-left text-xs font-medium hidden sm:table-cell">Plan</th>
                   <th className="px-4 py-2.5 text-right text-xs font-medium">Monthly LR</th>
@@ -273,11 +273,11 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
               </thead>
               <tbody>
                 {metrics.map((m: any, i: number) => (
-                  <tr key={m.id} className={`border-b ${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]/40"}`} data-testid={`ppr-metric-row-${m.id}`}>
-                    <td className="px-4 py-2.5 font-medium text-[#2C3E50] text-sm">
+                  <tr key={m.id} className={`border-b ${i % 2 === 0 ? "bg-card" : "bg-surface-subtle/40"}`} data-testid={`ppr-metric-row-${m.id}`}>
+                    <td className="px-4 py-2.5 font-medium text-foreground text-sm">
                       {MONTHS[(m.reportMonth ?? 1) - 1]} {m.reportYear}
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-[#94A3B8] hidden sm:table-cell">{m.planName ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground hidden sm:table-cell">{m.planName ?? "—"}</td>
                     <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.monthlyLossRatio} /></td>
                     <td className="px-4 py-2.5 text-right"><LossRatioBadge value={m.ytdLossRatio} /></td>
                     <td className="px-4 py-2.5 text-right"><PlanPositionBadge value={m.ytdSurplusDeficit} /></td>
@@ -291,8 +291,8 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
 
       {/* PPR File History */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-[#1A5276]">Performance Reports (PPR)</h2>
-        <Button onClick={() => setShowUpload(true)} className="bg-[#1A5276] text-white gap-2" data-testid="button-upload-ppr">
+        <h2 className="text-lg font-semibold text-brand">Performance Reports (PPR)</h2>
+        <Button onClick={() => setShowUpload(true)} className="bg-brand text-brand-foreground gap-2" data-testid="button-upload-ppr">
           <Upload className="w-4 h-4" /> Upload PPR
         </Button>
       </div>
@@ -300,27 +300,27 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
       {!groups.length && !isLoading ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-12 text-center">
-            <FileText className="w-10 h-10 text-[#94A3B8] mx-auto mb-2" />
-            <p className="text-sm text-[#94A3B8]">No performance reports uploaded yet</p>
-            <p className="text-xs text-[#94A3B8] mt-1">Use "Upload PPR" above or the PPR Batch Upload page to add reports</p>
+            <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No performance reports uploaded yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Use "Upload PPR" above or the PPR Batch Upload page to add reports</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div className="bg-card rounded-lg shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-[#F0F4F8]">
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Period</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">PDF</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Excel</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden lg:table-cell">Notes</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Last Updated</th>
+              <tr className="border-b bg-surface-subtle">
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Period</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">PDF</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Excel</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase hidden lg:table-cell">Notes</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase hidden md:table-cell">Last Updated</th>
               </tr>
             </thead>
             <tbody>
               {groups.map((g, i) => (
-                <tr key={`${g.reportYear}-${g.reportMonth}`} className={`border-b hover:bg-[#F0F4F8]/30 transition-colors ${i % 2 === 1 ? "bg-[#F0F4F8]/20" : ""}`} data-testid={`ppr-row-${g.reportYear}-${g.reportMonth}`}>
-                  <td className="px-4 py-3 font-semibold text-[#2C3E50] whitespace-nowrap">
+                <tr key={`${g.reportYear}-${g.reportMonth}`} className={`border-b hover:bg-surface-subtle/30 transition-colors ${i % 2 === 1 ? "bg-surface-subtle/20" : ""}`} data-testid={`ppr-row-${g.reportYear}-${g.reportMonth}`}>
+                  <td className="px-4 py-3 font-semibold text-foreground whitespace-nowrap">
                     {MONTHS[g.reportMonth - 1]} {g.reportYear}
                   </td>
                   <td className="px-4 py-3">
@@ -346,10 +346,10 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                     />
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
-                    <p className="text-xs text-[#94A3B8] max-w-[180px] truncate" title={g.notes ?? ""}>{g.notes || "—"}</p>
+                    <p className="text-xs text-muted-foreground max-w-[180px] truncate" title={g.notes ?? ""}>{g.notes || "—"}</p>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <p className="text-xs text-[#94A3B8]">{format(new Date(g.uploadedAt), "MMM d, yyyy")}</p>
+                    <p className="text-xs text-muted-foreground">{format(new Date(g.uploadedAt), "MMM d, yyyy")}</p>
                   </td>
                 </tr>
               ))}
@@ -365,8 +365,8 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
         return (
           <div className="mt-8">
             <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-base font-semibold text-[#1A5276]">Renewal Underwriting</h2>
-              <span className="text-xs text-[#94A3B8]">— the 4 plan years underwriters need at renewal</span>
+              <h2 className="text-base font-semibold text-brand">Renewal Underwriting</h2>
+              <span className="text-xs text-muted-foreground">— the 4 plan years underwriters need at renewal</span>
             </div>
             <div className="border rounded-lg overflow-hidden">
               {slots.map((slot) => {
@@ -376,13 +376,13 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                 return (
                   <div
                     key={`${slot.reportMonth}-${slot.reportYear}`}
-                    className="flex items-center justify-between px-4 py-3 border-b last:border-0 bg-white hover:bg-[#F8FAFC] transition-colors"
+                    className="flex items-center justify-between px-4 py-3 border-b last:border-0 bg-card hover:bg-surface-subtle transition-colors"
                     data-testid={`ppr-slot-${slot.reportYear}-${slot.reportMonth}`}
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-[#2C3E50]">{slot.label}</p>
+                      <p className="text-sm font-medium text-foreground">{slot.label}</p>
                       {match && (
-                        <p className="text-xs text-[#94A3B8] mt-0.5">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           Uploaded {format(new Date(match.uploadedAt), "MMM d, yyyy")}
                         </p>
                       )}
@@ -395,7 +395,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                               href={`/api/ppr/${match.pdf.id}/download`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+                              className="inline-flex items-center gap-1 text-xs text-danger-strong hover:underline"
                               data-testid={`slot-download-pdf-${slot.reportYear}-${slot.reportMonth}`}
                             >
                               <FileText className="w-3.5 h-3.5" /> PDF
@@ -406,7 +406,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                               href={`/api/ppr/${match.excel.id}/download`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-green-700 hover:underline"
+                              className="inline-flex items-center gap-1 text-xs text-success-strong hover:underline"
                               data-testid={`slot-download-excel-${slot.reportYear}-${slot.reportMonth}`}
                             >
                               <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
@@ -437,7 +437,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
                         </>
                       ) : (
                         <>
-                          <span className="text-xs text-[#94A3B8] flex items-center gap-1 mr-2">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1 mr-2">
                             <ArchiveX className="w-3.5 h-3.5" /> No file
                           </span>
                           <Button
@@ -492,7 +492,7 @@ export default function PprTab({ clientId, client }: { clientId: number; client?
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-              className="bg-[#EF4444] text-white"
+              className="bg-danger text-danger-foreground"
               data-testid="button-confirm-delete-ppr"
             >
               Delete
@@ -516,11 +516,11 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
   if (!record) {
     return (
       <div className="flex items-center gap-1">
-        <span className="text-[#94A3B8] text-xs">—</span>
+        <span className="text-muted-foreground text-xs">—</span>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button size="icon" variant="ghost" className="w-6 h-6 opacity-40 hover:opacity-100" onClick={onReplace} data-testid={`button-upload-${fileType.toLowerCase()}-${reportYear}-${reportMonth}`}>
-              <Upload className="w-3 h-3 text-[#1A5276]" />
+              <Upload className="w-3 h-3 text-brand" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Upload {fileType}</TooltipContent>
@@ -535,7 +535,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
         href={`/api/ppr/${record.id}/download`}
         target="_blank"
         rel="noreferrer"
-        className={`inline-flex items-center gap-1 text-xs hover:underline max-w-[140px] truncate ${fileType === "PDF" ? "text-red-600" : "text-green-700"}`}
+        className={`inline-flex items-center gap-1 text-xs hover:underline max-w-[140px] truncate ${fileType === "PDF" ? "text-danger-strong" : "text-success-strong"}`}
         title={record.fileName}
         data-testid={`link-download-${fileType.toLowerCase()}-${record.id}`}
       >
@@ -546,7 +546,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
         <Tooltip>
           <TooltipTrigger asChild>
             <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => onView(record.id, record.fileName)} data-testid={`button-view-${fileType.toLowerCase()}-${record.id}`}>
-              <Eye className="w-3 h-3 text-[#1A5276]" />
+              <Eye className="w-3 h-3 text-brand" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>View</TooltipContent>
@@ -555,7 +555,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
           <TooltipTrigger asChild>
             <a href={`/api/ppr/${record.id}/download`} target="_blank" rel="noreferrer">
               <Button size="icon" variant="ghost" className="w-6 h-6" data-testid={`button-download-${fileType.toLowerCase()}-${record.id}`}>
-                <Download className="w-3 h-3 text-[#2E86C1]" />
+                <Download className="w-3 h-3 text-brand-accent" />
               </Button>
             </a>
           </TooltipTrigger>
@@ -564,7 +564,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
         <Tooltip>
           <TooltipTrigger asChild>
             <Button size="icon" variant="ghost" className="w-6 h-6" onClick={onReplace} data-testid={`button-replace-${fileType.toLowerCase()}-${record.id}`}>
-              <RefreshCw className="w-3 h-3 text-[#F5A623]" />
+              <RefreshCw className="w-3 h-3 text-warning-strong" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Replace {fileType}</TooltipContent>
@@ -572,7 +572,7 @@ function FileCell({ record, fileType, reportMonth, reportYear, onDelete, onRepla
         <Tooltip>
           <TooltipTrigger asChild>
             <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => onDelete(record.id)} data-testid={`button-delete-${fileType.toLowerCase()}-${record.id}`}>
-              <Trash2 className="w-3 h-3 text-[#EF4444]" />
+              <Trash2 className="w-3 h-3 text-danger" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Delete</TooltipContent>
@@ -603,25 +603,25 @@ export function PprViewerPanel({ id, fileName, fileType, onClose }: {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-6xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0" data-testid="ppr-viewer-panel">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b bg-[#F0F4F8] rounded-t-lg flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-surface-subtle rounded-t-lg flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             {fileType === "PDF"
-              ? <FileText className="w-4 h-4 text-red-500 flex-shrink-0" />
-              : <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />}
-            <span className="text-sm font-semibold text-[#1A5276] truncate">{fileName}</span>
+              ? <FileText className="w-4 h-4 text-danger-strong flex-shrink-0" />
+              : <FileSpreadsheet className="w-4 h-4 text-success-strong flex-shrink-0" />}
+            <span className="text-sm font-semibold text-brand truncate">{fileName}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <a
               href={`/api/ppr/${id}/download`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-[#2E86C1] hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs text-brand-accent hover:underline"
               data-testid="button-viewer-download"
             >
               <Download className="w-3.5 h-3.5" /> Download
             </a>
             <Button size="icon" variant="ghost" onClick={onClose} className="w-7 h-7" data-testid="button-viewer-close">
-              <X className="w-4 h-4 text-[#94A3B8]" />
+              <X className="w-4 h-4 text-muted-foreground" />
             </Button>
           </div>
         </div>
@@ -639,15 +639,15 @@ export function PprViewerPanel({ id, fileName, fileType, onClose }: {
             <div className="flex flex-col h-full">
               {/* Sheet tabs */}
               {sheetData && sheetData.sheets.length > 1 && (
-                <div className="flex gap-0 border-b bg-white flex-shrink-0 overflow-x-auto">
+                <div className="flex gap-0 border-b bg-card flex-shrink-0 overflow-x-auto">
                   {sheetData.sheets.map((sheet, i) => (
                     <button
                       key={i}
                       onClick={() => setActiveSheet(i)}
                       className={`px-4 py-2 text-xs font-medium whitespace-nowrap border-r transition-colors ${
                         activeSheet === i
-                          ? "bg-[#1A5276] text-white"
-                          : "text-[#94A3B8] hover:bg-[#F0F4F8]"
+                          ? "bg-brand text-brand-foreground"
+                          : "text-muted-foreground hover:bg-surface-subtle"
                       }`}
                       data-testid={`sheet-tab-${i}`}
                     >
@@ -658,15 +658,15 @@ export function PprViewerPanel({ id, fileName, fileType, onClose }: {
               )}
 
               {/* Table content */}
-              <div className="flex-1 overflow-auto bg-white" data-testid="ppr-excel-viewer">
+              <div className="flex-1 overflow-auto bg-card" data-testid="ppr-excel-viewer">
                 {sheetLoading && (
-                  <div className="flex items-center justify-center h-full gap-2 text-[#94A3B8]">
+                  <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span className="text-sm">Loading spreadsheet…</span>
                   </div>
                 )}
                 {sheetError && (
-                  <div className="flex items-center justify-center h-full text-[#EF4444] text-sm">
+                  <div className="flex items-center justify-center h-full text-danger text-sm">
                     Failed to load spreadsheet data
                   </div>
                 )}
@@ -674,16 +674,16 @@ export function PprViewerPanel({ id, fileName, fileType, onClose }: {
                   <table className="text-xs border-collapse min-w-full">
                     <tbody>
                       {sheetData.sheets[activeSheet].rows.map((row, rowIdx) => (
-                        <tr key={rowIdx} className={rowIdx === 0 ? "bg-[#1A5276] text-white sticky top-0" : rowIdx % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]/40"}>
+                        <tr key={rowIdx} className={rowIdx === 0 ? "bg-brand text-brand-foreground sticky top-0" : rowIdx % 2 === 0 ? "bg-card" : "bg-surface-subtle/40"}>
                           {/* Row number gutter */}
-                          <td className={`px-2 py-1 text-center select-none w-8 border-r ${rowIdx === 0 ? "text-white/60 border-white/20" : "text-[#94A3B8] border-gray-200"}`}>
+                          <td className={`px-2 py-1 text-center select-none w-8 border-r ${rowIdx === 0 ? "text-white/60 border-white/20" : "text-muted-foreground border-border"}`}>
                             {rowIdx + 1}
                           </td>
                           {(row as (string | number | null)[]).map((cell, colIdx) => (
                             <td
                               key={colIdx}
                               className={`px-3 py-1.5 border-b border-r whitespace-nowrap max-w-[200px] truncate ${
-                                rowIdx === 0 ? "font-semibold border-white/20" : "text-[#2C3E50] border-gray-100"
+                                rowIdx === 0 ? "font-semibold border-white/20" : "text-foreground border-border"
                               }`}
                               title={String(cell ?? "")}
                             >
@@ -696,7 +696,7 @@ export function PprViewerPanel({ id, fileName, fileType, onClose }: {
                   </table>
                 )}
                 {sheetData && sheetData.sheets[activeSheet]?.rows.length === 0 && (
-                  <div className="flex items-center justify-center h-32 text-[#94A3B8] text-sm">
+                  <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
                     This sheet is empty
                   </div>
                 )}
@@ -753,12 +753,12 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Upload PPR</DialogTitle>
+          <DialogTitle className="text-brand">Upload PPR</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-sm font-medium">Report Month <span className="text-[#EF4444]">*</span></Label>
+              <Label className="text-sm font-medium">Report Month <span className="text-danger">*</span></Label>
               <Select value={form.reportMonth} onValueChange={v => setForm(f => ({ ...f, reportMonth: v }))}>
                 <SelectTrigger data-testid="select-ppr-month"><SelectValue placeholder="Select month" /></SelectTrigger>
                 <SelectContent>
@@ -767,7 +767,7 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
               </Select>
             </div>
             <div>
-              <Label className="text-sm font-medium">Report Year <span className="text-[#EF4444]">*</span></Label>
+              <Label className="text-sm font-medium">Report Year <span className="text-danger">*</span></Label>
               <Select value={form.reportYear} onValueChange={v => setForm(f => ({ ...f, reportYear: v }))}>
                 <SelectTrigger data-testid="select-ppr-year"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -782,10 +782,10 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
-                <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
+                <FileText className="w-3.5 h-3.5 text-danger-strong" /> PDF
               </Label>
               <div
-                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverPdf ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverPdf ? "border-brand bg-brand/5" : "border-border hover:border-brand"}`}
                 onClick={() => pdfRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragOverPdf(true); }}
                 onDragLeave={() => setDragOverPdf(false)}
@@ -795,13 +795,13 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
                 <input ref={pdfRef} type="file" className="hidden" accept=".pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} />
                 {pdfFile ? (
                   <div>
-                    <FileText className="w-6 h-6 text-red-500 mx-auto mb-1" />
-                    <p className="text-xs font-medium text-[#2C3E50] truncate">{pdfFile.name}</p>
+                    <FileText className="w-6 h-6 text-danger-strong mx-auto mb-1" />
+                    <p className="text-xs font-medium text-foreground truncate">{pdfFile.name}</p>
                   </div>
                 ) : (
                   <div>
-                    <Upload className="w-6 h-6 text-[#94A3B8] mx-auto mb-1" />
-                    <p className="text-xs text-[#94A3B8]">Drop PDF here</p>
+                    <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
+                    <p className="text-xs text-muted-foreground">Drop PDF here</p>
                   </div>
                 )}
               </div>
@@ -809,10 +809,10 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
 
             <div>
               <Label className="text-sm font-medium mb-1 block flex items-center gap-1">
-                <FileSpreadsheet className="w-3.5 h-3.5 text-green-600" /> Excel
+                <FileSpreadsheet className="w-3.5 h-3.5 text-success-strong" /> Excel
               </Label>
               <div
-                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverExcel ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${dragOverExcel ? "border-brand bg-brand/5" : "border-border hover:border-brand"}`}
                 onClick={() => excelRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragOverExcel(true); }}
                 onDragLeave={() => setDragOverExcel(false)}
@@ -822,13 +822,13 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
                 <input ref={excelRef} type="file" className="hidden" accept=".xlsx,.xls" onChange={e => setExcelFile(e.target.files?.[0] || null)} />
                 {excelFile ? (
                   <div>
-                    <FileSpreadsheet className="w-6 h-6 text-green-600 mx-auto mb-1" />
-                    <p className="text-xs font-medium text-[#2C3E50] truncate">{excelFile.name}</p>
+                    <FileSpreadsheet className="w-6 h-6 text-success-strong mx-auto mb-1" />
+                    <p className="text-xs font-medium text-foreground truncate">{excelFile.name}</p>
                   </div>
                 ) : (
                   <div>
-                    <Upload className="w-6 h-6 text-[#94A3B8] mx-auto mb-1" />
-                    <p className="text-xs text-[#94A3B8]">Drop Excel here</p>
+                    <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
+                    <p className="text-xs text-muted-foreground">Drop Excel here</p>
                   </div>
                 )}
               </div>
@@ -840,7 +840,7 @@ function PprUploadDialog({ open, onClose, clientId }: { open: boolean; onClose: 
             <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes..." data-testid="input-ppr-notes" />
           </div>
           <div className="flex gap-2 pt-1">
-            <Button onClick={() => mutation.mutate()} disabled={!canSubmit} className="bg-[#1A5276] text-white" data-testid="button-upload-ppr-submit">
+            <Button onClick={() => mutation.mutate()} disabled={!canSubmit} className="bg-brand text-brand-foreground" data-testid="button-upload-ppr-submit">
               {mutation.isPending ? "Uploading…" : "Upload PPR"}
             </Button>
             <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -892,11 +892,11 @@ function PprReplaceDialog({ open, onClose, clientId, reportMonth, reportYear, fi
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Replace {fileType} — {MONTHS_SHORT[reportMonth - 1]} {reportYear}</DialogTitle>
+          <DialogTitle className="text-brand">Replace {fileType} — {MONTHS_SHORT[reportMonth - 1]} {reportYear}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${dragOver ? "border-[#1A5276] bg-[#1A5276]/5" : "border-gray-300 hover:border-[#1A5276]"}`}
+            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${dragOver ? "border-brand bg-brand/5" : "border-border hover:border-brand"}`}
             onClick={() => fileRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -906,18 +906,18 @@ function PprReplaceDialog({ open, onClose, clientId, reportMonth, reportYear, fi
             <input ref={fileRef} type="file" className="hidden" accept={accept} onChange={e => setFile(e.target.files?.[0] || null)} />
             {file ? (
               <div>
-                <Icon className={`w-8 h-8 mx-auto mb-2 ${fileType === "PDF" ? "text-red-500" : "text-green-600"}`} />
-                <p className="text-sm font-medium text-[#2C3E50]">{file.name}</p>
+                <Icon className={`w-8 h-8 mx-auto mb-2 ${fileType === "PDF" ? "text-danger-strong" : "text-success-strong"}`} />
+                <p className="text-sm font-medium text-foreground">{file.name}</p>
               </div>
             ) : (
               <div>
-                <Upload className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
-                <p className="text-sm text-[#94A3B8]">Drop new {fileType} here or click to browse</p>
+                <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">Drop new {fileType} here or click to browse</p>
               </div>
             )}
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => mutation.mutate()} disabled={!file || mutation.isPending} className="bg-[#F5A623] text-white" data-testid="button-replace-submit">
+            <Button onClick={() => mutation.mutate()} disabled={!file || mutation.isPending} className="bg-gold text-gold-foreground" data-testid="button-replace-submit">
               {mutation.isPending ? "Replacing…" : `Replace ${fileType}`}
             </Button>
             <Button variant="outline" onClick={onClose}>Cancel</Button>

@@ -340,16 +340,16 @@ function buildBrokerReportHtml(firm: string, clients: any[]): string {
 
 function StatBox({ label, value, accent }: { label: string; value: React.ReactNode; accent?: string }) {
   return (
-    <div className="flex flex-col gap-1 p-4 border border-gray-100 rounded-lg bg-white">
-      <span className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest">{label}</span>
-      <span className={`text-lg font-extrabold ${accent ?? "text-[#1A5276]"}`}>{value}</span>
+    <div className="flex flex-col gap-1 p-4 border border-border rounded-lg bg-card">
+      <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">{label}</span>
+      <span className={`text-lg font-extrabold ${accent ?? "text-brand"}`}>{value}</span>
     </div>
   );
 }
 
-function SectionHeader({ children, color = "bg-[#1A5276]" }: { children: React.ReactNode; color?: string }) {
+function SectionHeader({ children, color = "bg-brand" }: { children: React.ReactNode; color?: string }) {
   return (
-    <div className={`${color} text-white px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-t-md`}>
+    <div className={`${color} text-brand-foreground px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-t-md`}>
       {children}
     </div>
   );
@@ -363,80 +363,80 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   return (
-    <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
-      <div className="bg-gradient-to-r from-[#1A5276] to-[#2E86C1] px-7 py-6">
+    <div className="bg-card rounded-xl shadow-md overflow-hidden border border-border">
+      <div className="bg-gradient-to-r from-brand to-brand-accent px-7 py-6">
         <div className="flex justify-between items-start">
           <div>
-            <p className="text-[#F5A623] text-[9px] font-bold uppercase tracking-[3px] mb-1">Simple Benefits TPA</p>
-            <h2 className="text-white text-xl font-extrabold tracking-tight">CLIENT SUMMARY REPORT</h2>
+            <p className="text-gold-on text-xs font-bold uppercase tracking-[3px] mb-1">Simple Benefits TPA</p>
+            <h2 className="text-brand-foreground text-xl font-extrabold tracking-tight">CLIENT SUMMARY REPORT</h2>
           </div>
           <div className="text-right">
-            <p className="text-white/60 text-[10px]">Generated {today}</p>
-            <p className="text-white text-sm font-bold mt-1">{client.clientCode}</p>
+            <p className="text-white/60 text-xs">Generated {today}</p>
+            <p className="text-brand-foreground text-sm font-bold mt-1">{client.clientCode}</p>
           </div>
         </div>
       </div>
-      <div className="bg-[#F5A623] px-7 py-3 flex justify-between items-center">
-        <span className="text-[#1A5276] text-lg font-extrabold">{client.clientName}</span>
+      <div className="bg-gold px-7 py-3 flex justify-between items-center">
+        <span className="text-brand text-lg font-extrabold">{client.clientName}</span>
         <span
-          className="text-[10px] font-bold px-3 py-1 rounded-full text-white"
+          className="text-xs font-bold px-3 py-1 rounded-full text-white"
           style={{ background: CLIENT_STATE_HEX[deriveClientState(client)].solid }}
         >
           {clientStateLabel(deriveClientState(client)).toUpperCase()}
         </span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-gray-100">
-        <div className="p-4 border-r border-gray-100">
-          <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Address</p>
-          <p className="text-xs text-[#2C3E50] leading-relaxed">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-border">
+        <div className="p-4 border-r border-border">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Address</p>
+          <p className="text-xs text-foreground leading-relaxed">
             {client.streetAddress}{client.suiteUnit ? `, ${client.suiteUnit}` : ""}<br />
             {client.city}, {client.state} {client.zipCode}
           </p>
         </div>
-        <div className="p-4 border-r border-gray-100 text-center">
-          <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Employees</p>
-          <p className="text-2xl font-extrabold text-[#1A5276]">{(client.numberOfEmployees ?? 0).toLocaleString()}</p>
+        <div className="p-4 border-r border-border text-center">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Employees</p>
+          <p className="text-2xl font-extrabold text-brand">{(client.numberOfEmployees ?? 0).toLocaleString()}</p>
         </div>
-        <div className="p-4 border-r border-gray-100 text-center">
-          <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Plan Type</p>
-          <p className="text-sm font-semibold text-[#2C3E50]">{PLAN_TYPE_LABELS[client.planType] ?? client.planType}</p>
+        <div className="p-4 border-r border-border text-center">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Plan Type</p>
+          <p className="text-sm font-semibold text-foreground">{PLAN_TYPE_LABELS[client.planType] ?? client.planType}</p>
         </div>
         <div className="p-4 text-center">
-          <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Anniversary</p>
-          <p className="text-sm font-semibold text-[#2C3E50]">{anniversary}</p>
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Anniversary</p>
+          <p className="text-sm font-semibold text-foreground">{anniversary}</p>
         </div>
       </div>
 
       <div className="p-5 space-y-5">
         <div>
           <SectionHeader>Contacts</SectionHeader>
-          <div className="grid grid-cols-2 border border-gray-100 border-t-0 rounded-b-md overflow-hidden">
-            <div className="p-4 border-r border-gray-100">
-              <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">Decision Maker</p>
-              <p className="text-sm font-semibold text-[#2C3E50]">{client.decisionMakerName}</p>
-              <p className="text-xs text-[#94A3B8]">{client.decisionMakerTitle}</p>
-              <p className="text-xs text-[#2E86C1] mt-1">{client.decisionMakerPhone}</p>
-              <p className="text-xs text-[#2E86C1]">{client.decisionMakerEmail}</p>
+          <div className="grid grid-cols-2 border border-border border-t-0 rounded-b-md overflow-hidden">
+            <div className="p-4 border-r border-border">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Decision Maker</p>
+              <p className="text-sm font-semibold text-foreground">{client.decisionMakerName}</p>
+              <p className="text-xs text-muted-foreground">{client.decisionMakerTitle}</p>
+              <p className="text-xs text-brand-accent mt-1">{client.decisionMakerPhone}</p>
+              <p className="text-xs text-brand-accent">{client.decisionMakerEmail}</p>
             </div>
             <div className="p-4">
-              <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">Admin Contact</p>
-              <p className="text-sm font-semibold text-[#2C3E50]">{client.adminContactName}</p>
-              <p className="text-xs text-[#94A3B8]">{client.adminContactTitle}</p>
-              <p className="text-xs text-[#2E86C1] mt-1">{client.adminContactPhone}</p>
-              <p className="text-xs text-[#2E86C1]">{client.adminContactEmail}</p>
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Admin Contact</p>
+              <p className="text-sm font-semibold text-foreground">{client.adminContactName}</p>
+              <p className="text-xs text-muted-foreground">{client.adminContactTitle}</p>
+              <p className="text-xs text-brand-accent mt-1">{client.adminContactPhone}</p>
+              <p className="text-xs text-brand-accent">{client.adminContactEmail}</p>
             </div>
           </div>
         </div>
 
         {client.hasBroker && (
           <div>
-            <SectionHeader color="bg-[#2E86C1]">Broker</SectionHeader>
-            <div className="border border-gray-100 border-t-0 rounded-b-md p-4 flex flex-wrap gap-8">
-              <div><p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Firm</p><p className="text-sm font-semibold text-[#2C3E50]">{client.brokerFirmName}</p></div>
-              <div><p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Contact</p><p className="text-sm text-[#2C3E50]">{client.brokerContactName || "—"}</p></div>
-              <div><p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Phone</p><p className="text-sm text-[#2E86C1]">{client.brokerPhone || "—"}</p></div>
-              <div><p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-1">Email</p><p className="text-sm text-[#2E86C1]">{client.brokerEmail || "—"}</p></div>
+            <SectionHeader color="bg-brand-accent">Broker</SectionHeader>
+            <div className="border border-border border-t-0 rounded-b-md p-4 flex flex-wrap gap-8">
+              <div><p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Firm</p><p className="text-sm font-semibold text-foreground">{client.brokerFirmName}</p></div>
+              <div><p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Contact</p><p className="text-sm text-foreground">{client.brokerContactName || "—"}</p></div>
+              <div><p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Phone</p><p className="text-sm text-brand-accent">{client.brokerPhone || "—"}</p></div>
+              <div><p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Email</p><p className="text-sm text-brand-accent">{client.brokerEmail || "—"}</p></div>
             </div>
           </div>
         )}
@@ -444,60 +444,60 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
         {activePlans.length > 0 && (
           <div>
             <SectionHeader>Plans &amp; Rates</SectionHeader>
-            <div className="border border-gray-100 border-t-0 rounded-b-md overflow-hidden divide-y divide-gray-50">
+            <div className="border border-border border-t-0 rounded-b-md overflow-hidden divide-y divide-gray-50">
               {activePlans.map((plan: any) => (
                 <div key={plan.id} className="p-4">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-[#1A5276]">{plan.planName}</span>
-                      <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">Year {plan.planYear}</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${plan.assignmentOfBenefits !== false ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                      <span className="text-sm font-bold text-brand">{plan.planName}</span>
+                      <span className="text-xs bg-info-tint text-brand-accent px-2 py-0.5 rounded-full font-medium">Year {plan.planYear}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${plan.assignmentOfBenefits !== false ? "bg-success-tint text-success-strong" : "bg-muted text-muted-foreground"}`}>
                         {plan.assignmentOfBenefits !== false ? "✓ AOB" : "✗ No AOB"}
                       </span>
                     </div>
-                    <div className="text-[10px] text-[#94A3B8]">
+                    <div className="text-xs text-muted-foreground">
                       Effective: {fmtDate(plan.effectiveDate, { month: "long", day: "numeric", year: "numeric" })}
                       &nbsp;·&nbsp; {PLAN_BASIS_LABELS[plan.planBasis] ?? plan.planBasis}
                     </div>
                   </div>
                   {plan.planNotes && (
-                    <div className="mb-3 p-2 bg-amber-50 border border-amber-100 rounded text-xs text-[#2C3E50] whitespace-pre-wrap">{plan.planNotes}</div>
+                    <div className="mb-3 p-2 bg-warning-tint border border-warning/40 rounded text-xs text-foreground whitespace-pre-wrap">{plan.planNotes}</div>
                   )}
                   {(plan.rateCards ?? []).length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="bg-[#F0F4F8]">
-                            <th className="text-left px-3 py-2 font-semibold text-[#64748B]">Tier</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Base Admin</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">COBRA</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Simple Fee</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Network</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Broker Fee</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Total Admin</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Exp. Claims</th>
-                            <th className="text-right px-3 py-2 font-semibold text-[#64748B]">Monthly Premium</th>
+                          <tr className="bg-surface-subtle">
+                            <th className="text-left px-3 py-2 font-semibold text-muted-foreground">Tier</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Base Admin</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">COBRA</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Simple Fee</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Network</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Broker Fee</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Total Admin</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Exp. Claims</th>
+                            <th className="text-right px-3 py-2 font-semibold text-muted-foreground">Monthly Premium</th>
                           </tr>
                         </thead>
                         <tbody>
                           {[...(plan.rateCards ?? [])].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((r: any) => (
-                            <tr key={r.id} className="border-t border-gray-50">
-                              <td className="px-3 py-2 font-semibold text-[#2C3E50]">{r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? ""}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.baseAdminFee)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.cobraFee ?? 0)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.simpleFee)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.networkFee ?? 0)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.brokerFee ?? 0)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-[#1A5276]">{formatCurrency(r.totalAdminFee)}</td>
-                              <td className="px-3 py-2 text-right text-[#2C3E50]">{formatCurrency(r.expectedClaims)}</td>
-                              <td className="px-3 py-2 text-right font-bold text-[#1A5276]">{formatCurrency(r.monthlyPremium)}</td>
+                            <tr key={r.id} className="border-t border-border">
+                              <td className="px-3 py-2 font-semibold text-foreground">{r.tierLabel ?? TIER_LABELS[r.tier] ?? r.tier ?? ""}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.baseAdminFee)}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.cobraFee ?? 0)}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.simpleFee)}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.networkFee ?? 0)}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.brokerFee ?? 0)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-brand">{formatCurrency(r.totalAdminFee)}</td>
+                              <td className="px-3 py-2 text-right text-foreground">{formatCurrency(r.expectedClaims)}</td>
+                              <td className="px-3 py-2 text-right font-bold text-brand">{formatCurrency(r.monthlyPremium)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   ) : (
-                    <p className="text-xs text-[#94A3B8]">No rate cards configured.</p>
+                    <p className="text-xs text-muted-foreground">No rate cards configured.</p>
                   )}
                 </div>
               ))}
@@ -508,24 +508,24 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
         {metric && (
           <div>
             <SectionHeader>Financial Summary — {MONTH_NAMES[(metric.reportMonth ?? 1) - 1]} {metric.reportYear}</SectionHeader>
-            <div className="grid grid-cols-3 border border-gray-100 border-t-0 rounded-b-md overflow-hidden">
-              <div className="p-4 border-r border-gray-100">
-                <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">Plan</p>
-                <p className="text-sm font-semibold text-[#2C3E50]">{metric.planName || "—"}</p>
+            <div className="grid grid-cols-3 border border-border border-t-0 rounded-b-md overflow-hidden">
+              <div className="p-4 border-r border-border">
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Plan</p>
+                <p className="text-sm font-semibold text-foreground">{metric.planName || "—"}</p>
               </div>
-              <div className="p-4 border-r border-gray-100">
-                <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">YTD Loss Ratio</p>
-                <p className={`text-2xl font-extrabold ${parseFloat(metric.ytdLossRatio) > 100 ? "text-[#EF4444]" : "text-[#22C55E]"}`}>
+              <div className="p-4 border-r border-border">
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">YTD Loss Ratio</p>
+                <p className={`text-2xl font-extrabold ${parseFloat(metric.ytdLossRatio) > 100 ? "text-danger" : "text-success"}`}>
                   {fmtLossRatio(metric.ytdLossRatio)}
                 </p>
                 {metric.monthlyLossRatio && (
-                  <p className="text-[10px] text-[#94A3B8] mt-1">Monthly: {fmtLossRatio(metric.monthlyLossRatio)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Monthly: {fmtLossRatio(metric.monthlyLossRatio)}</p>
                 )}
               </div>
               <div className="p-4">
-                <p className="text-[9px] font-bold text-[#94A3B8] uppercase tracking-widest mb-2">YTD Plan Position (as billed)</p>
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">YTD Plan Position (as billed)</p>
                 {surplusDeficit && (
-                  <p className={`text-2xl font-extrabold ${surplusDeficit.positive ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
+                  <p className={`text-2xl font-extrabold ${surplusDeficit.positive ? "text-success" : "text-danger"}`}>
                     {surplusDeficit.text}
                   </p>
                 )}
@@ -542,34 +542,34 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const totalEmployees = clients.reduce((s: number, c: any) => s + (c.numberOfEmployees ?? 0), 0);
   return (
-    <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
-      <div className="bg-gradient-to-r from-[#1A5276] to-[#2E86C1] px-7 py-6">
+    <div className="bg-card rounded-xl shadow-md overflow-hidden border border-border">
+      <div className="bg-gradient-to-r from-brand to-brand-accent px-7 py-6">
         <div className="flex justify-between items-start">
           <div>
-            <p className="text-[#F5A623] text-[9px] font-bold uppercase tracking-[3px] mb-1">Simple Benefits TPA</p>
-            <h2 className="text-white text-xl font-extrabold tracking-tight">BROKER REPORT</h2>
+            <p className="text-gold-on text-xs font-bold uppercase tracking-[3px] mb-1">Simple Benefits TPA</p>
+            <h2 className="text-brand-foreground text-xl font-extrabold tracking-tight">BROKER REPORT</h2>
           </div>
           <div className="text-right">
-            <p className="text-white/60 text-[10px]">Generated {today}</p>
-            <p className="text-white text-xs mt-1">{clients.length} Client{clients.length !== 1 ? "s" : ""} · {totalEmployees.toLocaleString()} Total Employees</p>
+            <p className="text-white/60 text-xs">Generated {today}</p>
+            <p className="text-brand-foreground text-xs mt-1">{clients.length} Client{clients.length !== 1 ? "s" : ""} · {totalEmployees.toLocaleString()} Total Employees</p>
           </div>
         </div>
       </div>
-      <div className="bg-[#F5A623] px-7 py-3">
-        <p className="text-[#1A5276] text-lg font-extrabold">{firm}</p>
-        <p className="text-[#1A5276]/60 text-[10px] mt-0.5">Broker Firm</p>
+      <div className="bg-gold px-7 py-3">
+        <p className="text-brand text-lg font-extrabold">{firm}</p>
+        <p className="text-brand/60 text-xs mt-0.5">Broker Firm</p>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-[#F8FAFC] border-b-2 border-gray-100">
-              <th className="text-left px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Client</th>
-              <th className="text-left px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Plan Type</th>
-              <th className="text-left px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Plan(s)</th>
-              <th className="text-center px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Anniversary</th>
-              <th className="text-center px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Employees</th>
-              <th className="text-center px-4 py-3 text-[9px] font-bold text-[#64748B] uppercase tracking-widest">Status</th>
+            <tr className="bg-surface-subtle border-b-2 border-border">
+              <th className="text-left px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Client</th>
+              <th className="text-left px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Plan Type</th>
+              <th className="text-left px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Plan(s)</th>
+              <th className="text-center px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Anniversary</th>
+              <th className="text-center px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Employees</th>
+              <th className="text-center px-4 py-3 text-xs font-bold text-muted-foreground uppercase tracking-widest">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -578,18 +578,18 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
               const anniversary = activePlans.length > 0 ? fmtAnniversary(activePlans[0].effectiveDate) : "—";
               const planNames = activePlans.map((p: any) => p.planName).join(", ") || "—";
               return (
-                <tr key={c.id} className="border-b border-gray-50">
+                <tr key={c.id} className="border-b border-border">
                   <td className="px-4 py-3">
-                    <p className="font-semibold text-[#2C3E50]">{c.clientName}</p>
-                    <p className="text-[10px] text-[#94A3B8]">{c.clientCode}</p>
+                    <p className="font-semibold text-foreground">{c.clientName}</p>
+                    <p className="text-xs text-muted-foreground">{c.clientCode}</p>
                   </td>
-                  <td className="px-4 py-3 text-[#64748B] text-xs">{PLAN_TYPE_LABELS[c.planType] ?? c.planType}</td>
-                  <td className="px-4 py-3 text-[#64748B] text-xs max-w-[200px] truncate">{planNames}</td>
-                  <td className="px-4 py-3 text-center text-[#2C3E50] text-xs">{anniversary}</td>
-                  <td className="px-4 py-3 text-center font-bold text-[#1A5276]">{(c.numberOfEmployees ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{PLAN_TYPE_LABELS[c.planType] ?? c.planType}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs max-w-[200px] truncate">{planNames}</td>
+                  <td className="px-4 py-3 text-center text-foreground text-xs">{anniversary}</td>
+                  <td className="px-4 py-3 text-center font-bold text-brand">{(c.numberOfEmployees ?? 0).toLocaleString()}</td>
                   <td className="px-4 py-3 text-center">
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                      className="text-xs px-2 py-0.5 rounded-full font-bold"
                       style={{
                         background: CLIENT_STATE_HEX[deriveClientState(c)].bg,
                         color: CLIENT_STATE_HEX[deriveClientState(c)].fg,
@@ -603,9 +603,9 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
             })}
           </tbody>
           <tfoot>
-            <tr className="bg-[#F0F4F8] border-t-2 border-gray-200">
-              <td colSpan={4} className="px-4 py-3 font-bold text-[#1A5276] text-xs uppercase tracking-wide">Totals</td>
-              <td className="px-4 py-3 text-center font-extrabold text-[#1A5276] text-base">{totalEmployees.toLocaleString()}</td>
+            <tr className="bg-surface-subtle border-t-2 border-border">
+              <td colSpan={4} className="px-4 py-3 font-bold text-brand text-xs uppercase tracking-wide">Totals</td>
+              <td className="px-4 py-3 text-center font-extrabold text-brand text-base">{totalEmployees.toLocaleString()}</td>
               <td />
             </tr>
           </tfoot>
@@ -676,7 +676,7 @@ function ClientSummaryTab() {
             <Button variant="outline" className="gap-2 text-sm" onClick={handlePrint} data-testid="button-print-client-summary">
               <Printer className="w-4 h-4" /> Print
             </Button>
-            <Button className="gap-2 text-sm bg-[#1A5276] text-white" onClick={handlePrint} data-testid="button-pdf-client-summary">
+            <Button className="gap-2 text-sm bg-brand text-brand-foreground" onClick={handlePrint} data-testid="button-pdf-client-summary">
               <Download className="w-4 h-4" /> Download PDF
             </Button>
           </div>
@@ -685,9 +685,9 @@ function ClientSummaryTab() {
 
       {!selectedId && (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-          <FileText className="w-12 h-12 text-[#CBD5E1] mb-4" />
-          <p className="text-[#94A3B8] font-medium">Select a client to generate the summary report</p>
-          <p className="text-sm text-[#CBD5E1] mt-1">Includes contacts, plans, rate cards and financial summary</p>
+          <FileText className="w-12 h-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground font-medium">Select a client to generate the summary report</p>
+          <p className="text-sm text-muted-foreground mt-1">Includes contacts, plans, rate cards and financial summary</p>
         </div>
       )}
 
@@ -738,7 +738,7 @@ function BrokerReportTab() {
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             ref={inputRef}
             value={firmInput}
@@ -753,7 +753,7 @@ function BrokerReportTab() {
             <Button variant="outline" className="gap-2 text-sm" onClick={handlePrint} data-testid="button-print-broker-report">
               <Printer className="w-4 h-4" /> Print
             </Button>
-            <Button className="gap-2 text-sm bg-[#1A5276] text-white" onClick={handlePrint} data-testid="button-pdf-broker-report">
+            <Button className="gap-2 text-sm bg-brand text-brand-foreground" onClick={handlePrint} data-testid="button-pdf-broker-report">
               <Download className="w-4 h-4" /> Download PDF
             </Button>
           </div>
@@ -762,9 +762,9 @@ function BrokerReportTab() {
 
       {firmInput.length < 2 && (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-          <Building2 className="w-12 h-12 text-[#CBD5E1] mb-4" />
-          <p className="text-[#94A3B8] font-medium">Search by broker firm name</p>
-          <p className="text-sm text-[#CBD5E1] mt-1">Lists all clients, their plans, anniversary and headcount</p>
+          <Building2 className="w-12 h-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground font-medium">Search by broker firm name</p>
+          <p className="text-sm text-muted-foreground mt-1">Lists all clients, their plans, anniversary and headcount</p>
         </div>
       )}
 
@@ -777,9 +777,9 @@ function BrokerReportTab() {
 
       {firmInput.length >= 2 && !isFetching && (clients as any[]).length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Users className="w-10 h-10 text-[#CBD5E1] mb-3" />
-          <p className="text-[#94A3B8] font-medium">No clients found for "{searchFirm}"</p>
-          <p className="text-sm text-[#CBD5E1] mt-1">Try a different broker firm name</p>
+          <Users className="w-10 h-10 text-muted-foreground mb-3" />
+          <p className="text-muted-foreground font-medium">No clients found for "{searchFirm}"</p>
+          <p className="text-sm text-muted-foreground mt-1">Try a different broker firm name</p>
         </div>
       )}
 
@@ -796,16 +796,16 @@ export default function ReportsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]">Reports</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">Generate, view, print, and download formatted reports</p>
+        <h1 className="text-2xl font-bold text-brand">Reports</h1>
+        <p className="text-sm text-muted-foreground mt-1">Generate, view, print, and download formatted reports</p>
       </div>
 
       <Tabs defaultValue="client-summary">
-        <TabsList className="bg-white border mb-6">
-          <TabsTrigger value="client-summary" data-testid="tab-report-client-summary" className="gap-2 data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">
+        <TabsList className="bg-card border mb-6">
+          <TabsTrigger value="client-summary" data-testid="tab-report-client-summary" className="gap-2 data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
             <FileText className="w-3.5 h-3.5" /> Client Summary
           </TabsTrigger>
-          <TabsTrigger value="broker" data-testid="tab-report-broker" className="gap-2 data-[state=active]:bg-[#1A5276] data-[state=active]:text-white">
+          <TabsTrigger value="broker" data-testid="tab-report-broker" className="gap-2 data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
             <Building2 className="w-3.5 h-3.5" /> Broker Report
           </TabsTrigger>
         </TabsList>

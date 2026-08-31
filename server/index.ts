@@ -870,6 +870,25 @@ app.use((req, res, next) => {
       log(`Startup migration: collapsed ${collapsed.rowCount} duplicate task row(s) onto shared tasks`);
     }
 
+    // ── Phase 18: Renewal completion timestamp ────────────────────────────────
+    // Sits immediately before Phase 10 because Phase 10 must remain last. On a
+    // fresh database Phase 10 creates the column below; on an existing database
+    // this adds it and dates already-complete rows from their last update.
+    await pool.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'renewals'
+        ) THEN
+          ALTER TABLE renewals ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+          UPDATE renewals
+             SET completed_at = updated_at
+           WHERE pipeline_step = 'EMAILED_TO_90D'
+             AND completed_at IS NULL;
+        END IF;
+      END $$;
+    `);
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at
@@ -888,6 +907,7 @@ app.use((req, res, next) => {
         proposal_version TEXT,
         acceptance_received_date TIMESTAMP,
         incomplete_prior_flag BOOLEAN NOT NULL DEFAULT false,
+        completed_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );

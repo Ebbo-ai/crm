@@ -35,16 +35,16 @@ interface ImportResult {
 
 function CountRow({ label, counts }: { label: string; counts: EntityCounts }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[#E2E8F0] last:border-0">
-      <span className="text-sm font-medium text-[#1A5276]">{label}</span>
+    <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
+      <span className="text-sm font-medium text-brand">{label}</span>
       <div className="flex items-center gap-4 text-sm tabular-nums">
-        <span className="text-[#059669]">
-          {counts.created} <span className="text-[#94A3B8] font-normal">new</span>
+        <span className="text-success-strong">
+          {counts.created} <span className="text-muted-foreground font-normal">new</span>
         </span>
-        <span className="text-[#1A5276]">
-          {counts.updated} <span className="text-[#94A3B8] font-normal">updated</span>
+        <span className="text-brand">
+          {counts.updated} <span className="text-muted-foreground font-normal">updated</span>
         </span>
-        <span className="text-[#94A3B8]">{counts.unchanged} unchanged</span>
+        <span className="text-muted-foreground">{counts.unchanged} unchanged</span>
       </div>
     </div>
   );
@@ -108,8 +108,8 @@ export default function CrmImportPage() {
   return (
     <div data-testid="crm-import-page">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[#1A5276]">CRM Data Import</h1>
-        <p className="text-sm text-[#94A3B8] mt-1">
+        <h1 className="text-2xl font-bold text-brand">CRM Data Import</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Load the Clients, Plans and Rate Cards workbook. Records are matched on client code, and on plan name,
           coverage and plan year, so a corrected file can be run again to update what is already stored.
         </p>
@@ -117,7 +117,7 @@ export default function CrmImportPage() {
 
       <Card className="mb-6">
         <CardHeader className="pb-3">
-          <h2 className="font-semibold text-[#1A5276]">Workbook</h2>
+          <h2 className="font-semibold text-brand">Workbook</h2>
         </CardHeader>
         <CardContent>
           <input
@@ -132,22 +132,22 @@ export default function CrmImportPage() {
           {!file ? (
             <div
               onClick={() => inputRef.current?.click()}
-              className="border-2 border-dashed border-[#CBD5E1] rounded-lg p-8 text-center cursor-pointer hover:border-[#1A5276] transition-colors"
+              className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-brand transition-colors"
               data-testid="dropzone-crm-file"
             >
-              <FileSpreadsheet className="w-8 h-8 mx-auto text-[#94A3B8] mb-2" />
-              <p className="text-sm font-medium text-[#1A5276]">Choose a spreadsheet</p>
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <FileSpreadsheet className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm font-medium text-brand">Choose a spreadsheet</p>
+              <p className="text-xs text-muted-foreground mt-1">
                 Needs Clients, Plans and Rate Cards sheets. All three must carry coverage type.
               </p>
             </div>
           ) : (
-            <div className="flex items-center justify-between border border-[#E2E8F0] rounded-lg px-4 py-3">
+            <div className="flex items-center justify-between border border-border rounded-lg px-4 py-3">
               <div className="flex items-center gap-3 min-w-0">
-                <FileSpreadsheet className="w-5 h-5 text-[#1A5276] flex-shrink-0" />
+                <FileSpreadsheet className="w-5 h-5 text-brand flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-[#1A5276] truncate">{file.name}</p>
-                  <p className="text-xs text-[#94A3B8]">{(file.size / 1024).toFixed(0)} KB</p>
+                  <p className="text-sm font-medium text-brand truncate">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} KB</p>
                 </div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => chooseFile(null)} data-testid="button-clear-file">
@@ -168,14 +168,14 @@ export default function CrmImportPage() {
             <Button
               disabled={!checked || run.isPending}
               onClick={() => run.mutate("apply")}
-              className="bg-[#1A5276] hover:bg-[#154360]"
+              className="bg-brand hover:bg-brand-dark"
               data-testid="button-apply-import"
             >
               <Upload className="w-4 h-4 mr-2" />
               {run.isPending && run.variables === "apply" ? "Importing…" : "Import"}
             </Button>
             {!checked && file && (
-              <span className="text-xs text-[#94A3B8]">Check the file before importing.</span>
+              <span className="text-xs text-muted-foreground">Check the file before importing.</span>
             )}
           </div>
         </CardContent>
@@ -184,11 +184,11 @@ export default function CrmImportPage() {
       {result && (
         <>
           {errors.length > 0 && (
-            <Card className="mb-6 border-[#EF4444]">
+            <Card className="mb-6 border-danger">
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
-                  <XCircle className="w-5 h-5 text-[#EF4444]" />
-                  <h2 className="font-semibold text-[#EF4444]">
+                  <XCircle className="w-5 h-5 text-danger" />
+                  <h2 className="font-semibold text-danger">
                     {errors.length} problem{errors.length === 1 ? "" : "s"} — nothing was written
                   </h2>
                 </div>
@@ -197,11 +197,11 @@ export default function CrmImportPage() {
                 <ul className="space-y-2" data-testid="list-errors">
                   {errors.map((e, i) => (
                     <li key={i} className="text-sm flex gap-3">
-                      <Badge variant="outline" className="flex-shrink-0 font-mono text-[10px]">
+                      <Badge variant="outline" className="flex-shrink-0 font-mono text-xs">
                         {e.sheet}
                         {e.row ? ` r${e.row}` : ""}
                       </Badge>
-                      <span className="text-[#334155]">
+                      <span className="text-foreground">
                         {e.ref && <span className="font-medium">{e.ref}: </span>}
                         {e.message}
                       </span>
@@ -217,11 +217,11 @@ export default function CrmImportPage() {
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
                   {result.applied ? (
-                    <CheckCircle className="w-5 h-5 text-[#059669]" />
+                    <CheckCircle className="w-5 h-5 text-success-strong" />
                   ) : (
-                    <Info className="w-5 h-5 text-[#1A5276]" />
+                    <Info className="w-5 h-5 text-brand" />
                   )}
-                  <h2 className="font-semibold text-[#1A5276]">
+                  <h2 className="font-semibold text-brand">
                     {result.applied ? "Imported" : "Preview — nothing written yet"}
                   </h2>
                 </div>
@@ -232,13 +232,13 @@ export default function CrmImportPage() {
                 <CountRow label="Rate card rows" counts={result.counts.rateCards} />
                 <CountRow label="Broker contacts" counts={result.counts.brokerContacts} />
                 {result.tiersRemoved > 0 && (
-                  <p className="text-xs text-[#94A3B8] mt-3">
+                  <p className="text-xs text-muted-foreground mt-3">
                     {result.tiersRemoved} tier{result.tiersRemoved === 1 ? "" : "s"} no longer listed for a plan in the
                     workbook {result.applied ? "were removed" : "will be removed"}.
                   </p>
                 )}
                 {result.brokerContactsRemoved > 0 && (
-                  <p className="text-xs text-[#94A3B8] mt-3">
+                  <p className="text-xs text-muted-foreground mt-3">
                     {result.brokerContactsRemoved} broker contact
                     {result.brokerContactsRemoved === 1 ? "" : "s"} no longer listed for a client in the workbook{" "}
                     {result.applied ? "were removed" : "will be removed"}.
@@ -252,22 +252,22 @@ export default function CrmImportPage() {
             <Card className="mb-6">
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-[#F59E0B]" />
-                  <h2 className="font-semibold text-[#1A5276]">
+                  <AlertTriangle className="w-5 h-5 text-warning" />
+                  <h2 className="font-semibold text-brand">
                     {warnings.length} thing{warnings.length === 1 ? "" : "s"} worth knowing
                   </h2>
                 </div>
-                <p className="text-xs text-[#94A3B8]">These do not stop the import.</p>
+                <p className="text-xs text-muted-foreground">These do not stop the import.</p>
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2" data-testid="list-warnings">
                   {warnings.map((w, i) => (
                     <li key={i} className="text-sm flex gap-3">
-                      <Badge variant="outline" className="flex-shrink-0 font-mono text-[10px]">
+                      <Badge variant="outline" className="flex-shrink-0 font-mono text-xs">
                         {w.sheet}
                         {w.row ? ` r${w.row}` : ""}
                       </Badge>
-                      <span className="text-[#334155]">
+                      <span className="text-foreground">
                         {w.ref && <span className="font-medium">{w.ref}: </span>}
                         {w.message}
                       </span>
@@ -281,8 +281,8 @@ export default function CrmImportPage() {
           {result.flagged.length > 0 && (
             <Card className="mb-6">
               <CardHeader className="pb-3">
-                <h2 className="font-semibold text-[#1A5276]">Rows the workbook flags ({result.flagged.length})</h2>
-                <p className="text-xs text-[#94A3B8]">
+                <h2 className="font-semibold text-brand">Rows the workbook flags ({result.flagged.length})</h2>
+                <p className="text-xs text-muted-foreground">
                   Notes carried in the file itself. Imported as given; listed here so they are not lost.
                 </p>
               </CardHeader>
@@ -290,8 +290,8 @@ export default function CrmImportPage() {
                 <ul className="space-y-1.5 max-h-72 overflow-y-auto" data-testid="list-flagged">
                   {result.flagged.map((f, i) => (
                     <li key={i} className="text-sm flex gap-3">
-                      <span className="font-mono text-xs text-[#1A5276] flex-shrink-0 w-56 truncate">{f.ref}</span>
-                      <span className="text-[#64748B]">{f.note}</span>
+                      <span className="font-mono text-xs text-brand flex-shrink-0 w-56 truncate">{f.ref}</span>
+                      <span className="text-muted-foreground">{f.note}</span>
                     </li>
                   ))}
                 </ul>
@@ -302,8 +302,8 @@ export default function CrmImportPage() {
           {(result.notInFile.clients.length > 0 || result.notInFile.plans.length > 0) && (
             <Card className="mb-6">
               <CardHeader className="pb-3">
-                <h2 className="font-semibold text-[#1A5276]">Already stored, not in this workbook</h2>
-                <p className="text-xs text-[#94A3B8]">
+                <h2 className="font-semibold text-brand">Already stored, not in this workbook</h2>
+                <p className="text-xs text-muted-foreground">
                   Left exactly as they are. The import never deletes a client or a plan, because a workbook covering
                   part of the book is not a statement that everything else has ended.
                 </p>
@@ -311,16 +311,16 @@ export default function CrmImportPage() {
               <CardContent className="space-y-3">
                 {result.notInFile.clients.length > 0 && (
                   <div>
-                    <p className="text-xs font-medium text-[#1A5276] mb-1">
+                    <p className="text-xs font-medium text-brand mb-1">
                       Clients ({result.notInFile.clients.length})
                     </p>
-                    <p className="text-sm text-[#64748B] font-mono">{result.notInFile.clients.join(", ")}</p>
+                    <p className="text-sm text-muted-foreground font-mono">{result.notInFile.clients.join(", ")}</p>
                   </div>
                 )}
                 {result.notInFile.plans.length > 0 && (
                   <div>
-                    <p className="text-xs font-medium text-[#1A5276] mb-1">Plans ({result.notInFile.plans.length})</p>
-                    <ul className="text-sm text-[#64748B] font-mono max-h-48 overflow-y-auto space-y-0.5">
+                    <p className="text-xs font-medium text-brand mb-1">Plans ({result.notInFile.plans.length})</p>
+                    <ul className="text-sm text-muted-foreground font-mono max-h-48 overflow-y-auto space-y-0.5">
                       {result.notInFile.plans.map((p, i) => (
                         <li key={i}>{p}</li>
                       ))}

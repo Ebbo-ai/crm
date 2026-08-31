@@ -32,11 +32,11 @@ export const CLIENT_STATE_HEX: Record<ClientLifecycleState, { solid: string; bg:
 };
 
 const STYLES: Record<ClientLifecycleState, string> = {
-  ACTIVE: "bg-[#22C55E]/10 text-[#22C55E]",
-  PROSPECT: "bg-[#2E86C1]/10 text-[#2E86C1]",
-  TERMINATING: "bg-[#F59E0B]/10 text-[#B45309]",
-  RUN_OUT: "bg-[#F97316]/10 text-[#C2410C]",
-  CLOSED: "bg-[#EF4444]/10 text-[#EF4444]",
+  ACTIVE: "bg-success/10 text-success",
+  PROSPECT: "bg-brand-accent/10 text-brand-accent",
+  TERMINATING: "bg-warning/10 text-warning-strong",
+  RUN_OUT: "bg-warning/10 text-warning-strong",
+  CLOSED: "bg-danger/10 text-danger",
 };
 
 export function clientStateSummary(client: ClientStateInput | null | undefined) {

@@ -82,11 +82,11 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
   return (
     <div data-testid="plans-tab">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-[#1A5276]">Current Plans</h2>
+        <h2 className="text-lg font-semibold text-brand">Current Plans</h2>
         <Button
           onClick={() => { setEditingPlan(null); setShowPlanForm(true); }}
           disabled={currentPlans.length >= 6}
-          className="bg-[#1A5276] text-white gap-2"
+          className="bg-brand text-brand-foreground gap-2"
           title={currentPlans.length >= 6 ? "Maximum of 6 active plans reached" : ""}
           data-testid="button-add-plan"
         >
@@ -97,8 +97,8 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
       {!currentPlans.length && !isLoading && (
         <Card className="border-0 shadow-sm mb-6">
           <CardContent className="py-12 text-center">
-            <FileText className="w-10 h-10 text-[#94A3B8] mx-auto mb-2" />
-            <p className="text-sm text-[#94A3B8]">No plans configured for this client yet</p>
+            <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No plans configured for this client yet</p>
           </CardContent>
         </Card>
       )}
@@ -121,7 +121,7 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
       {archivedPlans.length > 0 && (
         <Collapsible open={showArchived} onOpenChange={setShowArchived}>
           <CollapsibleTrigger asChild>
-            <button className="flex items-center gap-2 text-sm font-medium text-[#94A3B8] mb-3 hover:text-[#2C3E50] transition-colors" data-testid="button-toggle-archived">
+            <button className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-3 hover:text-foreground transition-colors" data-testid="button-toggle-archived">
               {showArchived ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               Archived Plans ({archivedPlans.length})
             </button>
@@ -243,7 +243,7 @@ function RenewalPipeline({ planId, onStep7Change }: {
   return (
     <div>
       {isComplete && (
-        <div className="mb-3 px-3 py-2 bg-[#22C55E]/10 rounded text-xs text-[#22C55E] font-semibold flex items-center gap-1.5">
+        <div className="mb-3 px-3 py-2 bg-success/10 rounded text-xs text-success font-semibold flex items-center gap-1.5">
           <CheckCircle2 className="w-3.5 h-3.5" /> Renewal complete — all steps done.
         </div>
       )}
@@ -260,35 +260,35 @@ function RenewalPipeline({ planId, onStep7Change }: {
               <div className={`flex items-start gap-2.5 py-2 ${isFuture ? "opacity-40" : ""}`}>
                 <div className="flex-shrink-0 mt-0.5">
                   {isDone
-                    ? <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
+                    ? <CheckCircle2 className="w-4 h-4 text-success" />
                     : isActive
-                      ? <div className="w-4 h-4 rounded-full border-2 border-[#2E86C1] bg-white" />
-                      : <div className="w-4 h-4 rounded-full border-2 border-[#CBD5E1] bg-white" />}
+                      ? <div className="w-4 h-4 rounded-full border-2 border-brand-accent bg-card" />
+                      : <div className="w-4 h-4 rounded-full border-2 border-border bg-card" />}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between flex-wrap gap-1.5">
                     <div>
-                      <span className={`text-xs font-medium ${isDone ? "text-[#22C55E]" : isActive ? "text-[#1A5276]" : "text-[#94A3B8]"}`}>
+                      <span className={`text-xs font-medium ${isDone ? "text-success" : isActive ? "text-brand" : "text-muted-foreground"}`}>
                         {step.label}
                       </span>
-                      {!isDone && <p className="text-[10px] text-[#94A3B8] mt-0.5">{step.desc}</p>}
+                      {!isDone && <p className="text-xs text-muted-foreground mt-0.5">{step.desc}</p>}
                     </div>
 
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {isDone && (
                         <>
-                          <span className="text-[11px] text-[#94A3B8]">{format(stepDate!, "MMM d, yyyy")}</span>
+                          <span className="text-xs text-muted-foreground">{format(stepDate!, "MMM d, yyyy")}</span>
                           {"hasUpload" in step && step.hasUpload && (
                             <>
                               <input ref={fileRef} type="file" className="hidden" accept=".pdf,.doc,.docx,.png,.jpg" onChange={handleFileChange} />
-                              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] text-[#2E86C1]" onClick={() => fileRef.current?.click()}>
+                              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs text-brand-accent" onClick={() => fileRef.current?.click()}>
                                 {prog?.step6DocumentId ? "Re-upload" : "Upload"}
                               </Button>
                             </>
                           )}
                           {!isComplete && (
-                            <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] text-[#94A3B8] hover:text-[#EF4444]"
+                            <Button size="sm" variant="ghost" className="h-5 px-1.5 text-xs text-muted-foreground hover:text-danger"
                               onClick={() => updateMutation.mutate({ [step.key]: null, ...(step.key === "step3Date" && revisions.length > 0 ? { step4Revisions: [] } : {}) })}>
                               Undo
                             </Button>
@@ -296,7 +296,7 @@ function RenewalPipeline({ planId, onStep7Change }: {
                         </>
                       )}
                       {isActive && (
-                        <Button size="sm" className="h-6 px-2.5 text-[11px] bg-[#2E86C1] text-white hover:bg-[#1A5276]"
+                        <Button size="sm" className="h-6 px-2.5 text-xs bg-brand-accent text-brand-foreground hover:bg-brand"
                           onClick={() => { setMarkingKey(step.key); setMarkDate(today); }}>
                           Mark Done
                         </Button>
@@ -309,23 +309,23 @@ function RenewalPipeline({ planId, onStep7Change }: {
               {/* Step 4 revisions — shown after step3 (idx 2) */}
               {idx === 2 && (
                 <div className={`ml-6 mb-1 ${!prog?.step3Date ? "opacity-30 pointer-events-none" : ""}`}>
-                  <div className="border-l-2 border-dashed border-[#CBD5E1] pl-3 pb-1">
+                  <div className="border-l-2 border-dashed border-border pl-3 pb-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wide">Revisions (optional)</p>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Revisions (optional)</p>
                       {prog?.step3Date && !isComplete && (
-                        <Button size="sm" variant="ghost" className="h-4 px-1.5 text-[10px] text-[#2E86C1]"
+                        <Button size="sm" variant="ghost" className="h-4 px-1.5 text-xs text-brand-accent"
                           onClick={() => { setAddingRevision(true); setRevisionDate(today); }}>
                           + Add
                         </Button>
                       )}
                     </div>
-                    {revisions.length === 0 && <p className="text-[10px] text-[#94A3B8] italic">None</p>}
+                    {revisions.length === 0 && <p className="text-xs text-muted-foreground italic">None</p>}
                     {revisions.map((rev: string, i: number) => (
-                      <div key={i} className="flex items-center gap-1.5 text-[11px] py-0.5">
-                        <RefreshCw className="w-3 h-3 text-[#F5A623]" />
-                        <span className="text-[#2C3E50]">Revised {format(new Date(rev), "MMM d, yyyy")}</span>
+                      <div key={i} className="flex items-center gap-1.5 text-xs py-0.5">
+                        <RefreshCw className="w-3 h-3 text-warning-strong" />
+                        <span className="text-foreground">Revised {format(new Date(rev), "MMM d, yyyy")}</span>
                         {!isComplete && (
-                          <button className="text-[10px] text-[#EF4444] hover:underline ml-0.5"
+                          <button className="text-xs text-danger hover:underline ml-0.5"
                             onClick={() => updateMutation.mutate({ step4Revisions: revisions.filter((_: any, j: number) => j !== i) })}>
                             ×
                           </button>
@@ -335,12 +335,12 @@ function RenewalPipeline({ planId, onStep7Change }: {
                     {addingRevision && (
                       <div className="flex items-center gap-1.5 mt-1">
                         <input type="date" value={revisionDate} onChange={e => setRevisionDate(e.target.value)}
-                          className="text-[11px] border rounded px-1.5 py-0.5 h-6 bg-white" />
-                        <Button size="sm" className="h-6 px-2 text-[10px] bg-[#2E86C1] text-white"
+                          className="text-xs border rounded px-1.5 py-0.5 h-6 bg-card" />
+                        <Button size="sm" className="h-6 px-2 text-xs bg-brand-accent text-brand-foreground"
                           onClick={() => updateMutation.mutate({ step4Revisions: [...revisions, revisionDate || today] })}>
                           Save
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
                           onClick={() => setAddingRevision(false)}>
                           Cancel
                         </Button>
@@ -365,14 +365,14 @@ function RenewalPipeline({ planId, onStep7Change }: {
               <Label className="text-xs">Date completed</Label>
               <Input type="date" value={markDate} onChange={e => setMarkDate(e.target.value)} className="mt-1 h-8 text-sm" />
               {"hasUpload" in markingStep && markingStep.hasUpload && (
-                <p className="text-[11px] text-[#94A3B8] mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   You can upload the signed form after marking this step done.
                 </p>
               )}
             </div>
             <DialogFooter>
               <Button variant="outline" size="sm" onClick={() => setMarkingKey(null)}>Cancel</Button>
-              <Button size="sm" className="bg-[#2E86C1] text-white"
+              <Button size="sm" className="bg-brand-accent text-brand-foreground"
                 onClick={() => updateMutation.mutate({ [markingStep.key]: markDate || today })}
                 disabled={updateMutation.isPending}>
                 {updateMutation.isPending ? "Saving…" : "Mark Done"}
@@ -430,14 +430,14 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
   const sortedDocs = sortDocsByVersion(planDocs);
 
   return (
-    <Card className={`border-0 shadow-sm ${archived ? "bg-gray-50" : ""}`} data-testid={`plan-card-${plan.id}`}>
+    <Card className={`border-0 shadow-sm ${archived ? "bg-surface-subtle" : ""}`} data-testid={`plan-card-${plan.id}`}>
       {/* header row */}
       <div className="px-5 py-4 cursor-pointer flex items-center justify-between gap-4" onClick={onToggle}>
         <div className="flex items-center gap-3 min-w-0">
-          <CalendarDays className="w-5 h-5 text-[#2E86C1] flex-shrink-0" />
+          <CalendarDays className="w-5 h-5 text-brand-accent flex-shrink-0" />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-[#2C3E50] truncate">{plan.planName}</p>
-            <p className="text-xs text-[#94A3B8]">
+            <p className="text-sm font-semibold text-foreground truncate">{plan.planName}</p>
+            <p className="text-xs text-muted-foreground">
               {format(effectiveDate, "MMM d, yyyy")} | {PLAN_BASIS_LABELS[plan.planBasis]}{plan.coverageType ? ` | ${PLAN_COVERAGE_TYPE_LABELS[plan.coverageType] ?? plan.coverageType}` : ""} | Renews {format(nextRenewal, "MMM d, yyyy")}
             </p>
           </div>
@@ -445,21 +445,21 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
         <div className="flex items-center gap-2 flex-shrink-0">
           {!archived && (
             plan.isRenewalComplete
-              ? <span className="text-[10px] px-2 py-1 rounded-full font-medium bg-[#22C55E]/10 text-[#22C55E] flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Renewal Done</span>
+              ? <span className="text-xs px-2 py-1 rounded-full font-medium bg-success/10 text-success flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Renewal Done</span>
               : isDueSoon
-                ? <span className="text-[10px] px-2 py-1 rounded-full font-medium bg-[#F5A623]/10 text-[#F5A623] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Due Soon</span>
+                ? <span className="text-xs px-2 py-1 rounded-full font-medium bg-gold/10 text-warning-strong flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Due Soon</span>
                 : null
           )}
           {plan.terminationDate ? (
-            <span className="text-[10px] px-2 py-1 rounded-full font-medium bg-[#EF4444]/10 text-[#EF4444]">
+            <span className="text-xs px-2 py-1 rounded-full font-medium bg-danger/10 text-danger">
               Terminated {format(parseLocalDate(plan.terminationDate), "MMM d, yyyy")}
             </span>
           ) : (
-            <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${archived ? "bg-gray-200 text-gray-600" : "bg-[#22C55E]/10 text-[#22C55E]"}`}>
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${archived ? "bg-muted text-muted-foreground" : "bg-success/10 text-success"}`}>
               {archived ? "Archived" : "Current"}
             </span>
           )}
-          {expanded ? <ChevronUp className="w-4 h-4 text-[#94A3B8]" /> : <ChevronDown className="w-4 h-4 text-[#94A3B8]" />}
+          {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </div>
       </div>
 
@@ -467,19 +467,19 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
         <CardContent className="px-5 pb-5 pt-0 border-t">
           {/* plan details grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 py-4">
-            <div><p className="text-xs text-[#94A3B8]">Plan Basis</p><p className="text-sm font-medium">{PLAN_BASIS_LABELS[plan.planBasis]}</p></div>
-            <div><p className="text-xs text-[#94A3B8]">Annual Limit</p><p className="text-sm font-medium">{formatCurrency(plan.annualLimit)}</p></div>
-            {plan.deductible && <div><p className="text-xs text-[#94A3B8]">Deductible</p><p className="text-sm font-medium">{formatCurrency(plan.deductible)}</p></div>}
+            <div><p className="text-xs text-muted-foreground">Plan Basis</p><p className="text-sm font-medium">{PLAN_BASIS_LABELS[plan.planBasis]}</p></div>
+            <div><p className="text-xs text-muted-foreground">Annual Limit</p><p className="text-sm font-medium">{formatCurrency(plan.annualLimit)}</p></div>
+            {plan.deductible && <div><p className="text-xs text-muted-foreground">Deductible</p><p className="text-sm font-medium">{formatCurrency(plan.deductible)}</p></div>}
             {plan.planBasis === "PROCEDURE_BASED" && (
               <>
-                <div><p className="text-xs text-[#94A3B8]">Preventive</p><p className="text-sm font-medium">{plan.preventivePercent}%</p></div>
-                <div><p className="text-xs text-[#94A3B8]">Corrective</p><p className="text-sm font-medium">{plan.correctivePercent}%</p></div>
-                <div><p className="text-xs text-[#94A3B8]">Restorative</p><p className="text-sm font-medium">{plan.restorativePercent}%</p></div>
+                <div><p className="text-xs text-muted-foreground">Preventive</p><p className="text-sm font-medium">{plan.preventivePercent}%</p></div>
+                <div><p className="text-xs text-muted-foreground">Corrective</p><p className="text-sm font-medium">{plan.correctivePercent}%</p></div>
+                <div><p className="text-xs text-muted-foreground">Restorative</p><p className="text-sm font-medium">{plan.restorativePercent}%</p></div>
               </>
             )}
             {plan.planBasis === "DOLLAR_BASED" && plan.dollarTier1Percent != null && (
               <div className="col-span-2 md:col-span-4">
-                <p className="text-xs text-[#94A3B8] mb-1">Coverage Tiers</p>
+                <p className="text-xs text-muted-foreground mb-1">Coverage Tiers</p>
                 <div className="space-y-1">
                   <p className="text-sm font-medium">{plan.dollarTier1Percent}% of the first {formatCurrency(plan.dollarTier1Limit)}</p>
                   {plan.dollarTier2Percent != null && plan.dollarTier2Limit && (
@@ -495,25 +495,25 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
 
           {/* orthodontia details */}
           <div className="pt-2 pb-2">
-            <p className="text-xs font-semibold text-[#1A5276] mb-2">Orthodontia</p>
+            <p className="text-xs font-semibold text-brand mb-2">Orthodontia</p>
             {(!plan.orthoEligibility || plan.orthoEligibility === "NONE") ? (
-              <p className="text-sm text-[#94A3B8]">Not covered</p>
+              <p className="text-sm text-muted-foreground">Not covered</p>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-xs text-[#94A3B8]">Eligible</p>
+                  <p className="text-xs text-muted-foreground">Eligible</p>
                   <p className="text-sm font-medium">
                     {plan.orthoEligibility === "CHILDREN" ? "Children only" : "All enrollees"}
                   </p>
                 </div>
                 {plan.orthoCoinsurancePercent != null && (
                   <div>
-                    <p className="text-xs text-[#94A3B8]">Coinsurance</p>
+                    <p className="text-xs text-muted-foreground">Coinsurance</p>
                     <p className="text-sm font-medium">{plan.orthoCoinsurancePercent}%</p>
                   </div>
                 )}
                 <div>
-                  <p className="text-xs text-[#94A3B8]">Maximum</p>
+                  <p className="text-xs text-muted-foreground">Maximum</p>
                   <p className="text-sm font-medium">
                     {plan.orthoMaxType === "SEPARATE_LIFETIME"
                       ? `Separate lifetime${plan.orthoLifetimeMax ? ` — ${formatCurrency(plan.orthoLifetimeMax)}` : ""}`
@@ -527,15 +527,15 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           {/* assignment of benefits */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2">
             <div className="flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${plan.assignmentOfBenefits !== false ? "bg-green-50 text-green-700" : "bg-[#F0F4F8] text-[#94A3B8]"}`}>
+              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${plan.assignmentOfBenefits !== false ? "bg-success-tint text-success-strong" : "bg-surface-subtle text-muted-foreground"}`}>
                 {plan.assignmentOfBenefits !== false ? "✓ Assignment of Benefits" : "✗ No Assignment of Benefits"}
               </span>
             </div>
           </div>
           {plan.planNotes && (
-            <div className="mt-1 mb-3 p-3 bg-amber-50 border border-amber-100 rounded-md">
-              <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider mb-1">Plan Design Notes</p>
-              <p className="text-sm text-[#2C3E50] whitespace-pre-wrap">{plan.planNotes}</p>
+            <div className="mt-1 mb-3 p-3 bg-warning-tint border border-warning/40 rounded-md">
+              <p className="text-xs font-semibold text-warning-strong uppercase tracking-wider mb-1">Plan Design Notes</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{plan.planNotes}</p>
             </div>
           )}
 
@@ -562,10 +562,10 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
             return (
               <div className="mt-2 mb-4">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-semibold text-[#1A5276]">Rate Card</h4>
-                  <div className="flex items-center gap-3 text-[10px] text-[#94A3B8]">
+                  <h4 className="text-sm font-semibold text-brand">Rate Card</h4>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     {isFixedMonthly && (
-                      <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5">
+                      <span className="bg-warning-tint text-warning-strong border border-warning/40 rounded px-1.5 py-0.5">
                         {(() => {
                           const db90n    = parseFloat(plan.flat90DBFee    ?? "0") || 0;
                           const simplen  = parseFloat(plan.flatSimpleFee  ?? "0") || 0;
@@ -600,7 +600,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
                       <thead>
-                        <tr className="bg-[#1A5276] text-white">
+                        <tr className="bg-brand text-brand-foreground">
                           <th className="px-3 py-2 text-left text-xs font-medium">Tier</th>
                           {sortedCards.map((rc: any) => (
                             <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
@@ -610,14 +610,14 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="bg-white">
+                        <tr className="bg-card">
                           <td className="px-3 py-2 text-xs">Expected Claims (PEPM)</td>
                           {sortedCards.map((rc: any) => (
                             <td key={rc.id} className="px-3 py-2 text-right text-xs">{formatCurrency(rc.expectedClaims ?? 0)}</td>
                           ))}
                         </tr>
-                        <tr className="bg-amber-50">
-                          <td colSpan={sortedCards.length + 1} className="px-3 py-1.5 text-[10px] text-amber-700">
+                        <tr className="bg-warning-tint">
+                          <td colSpan={sortedCards.length + 1} className="px-3 py-1.5 text-xs text-warning-strong">
                             Administration fee: <strong>${flatFee.toFixed(2)}/month</strong> for the group
                             {flatBroker > 0 && <> · Broker: <strong>${flatBroker.toFixed(2)}/month</strong> for the group</>}
                           </td>
@@ -630,7 +630,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm" data-testid={`rate-table-${plan.id}`}>
                       <thead>
-                        <tr className="bg-[#1A5276] text-white">
+                        <tr className="bg-brand text-brand-foreground">
                           <th className="px-3 py-2 text-left text-xs font-medium">Fee Type</th>
                           {sortedCards.map((rc: any) => (
                             <th key={rc.id} className="px-3 py-2 text-right text-xs font-medium">
@@ -641,12 +641,12 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                       </thead>
                       <tbody>
                         {pepmRows.map((row, i) => (
-                          <tr key={row.key} className={`${i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"} ${(row as any).highlight ? "font-bold" : ""}`}>
-                            <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-[#F5A623]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                          <tr key={row.key} className={`${i % 2 === 0 ? "bg-card" : "bg-surface-subtle"} ${(row as any).highlight ? "font-bold" : ""}`}>
+                            <td className={`px-3 py-2 text-xs ${(row as any).highlight ? "border-l-4 border-warning-strong" : ""} ${(row as any).subtotal ? "font-semibold text-brand" : ""}`}>
                               {row.label}
                             </td>
                             {sortedCards.map((rc: any) => (
-                              <td key={rc.id} className={`px-3 py-2 text-right text-xs ${(row as any).highlight ? "font-bold text-[#1A5276]" : ""} ${(row as any).subtotal ? "font-semibold text-[#1A5276]" : ""}`}>
+                              <td key={rc.id} className={`px-3 py-2 text-right text-xs ${(row as any).highlight ? "font-bold text-brand" : ""} ${(row as any).subtotal ? "font-semibold text-brand" : ""}`}>
                                 {formatCurrency((rc as any)[row.key] ?? 0)}
                               </td>
                             ))}
@@ -664,12 +664,12 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           {!archived && (
             <div className="mt-4 pt-4 border-t">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold text-[#1A5276] flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-brand flex items-center gap-2">
                   <Clock className="w-4 h-4" /> Renewal Tracking
                 </h4>
-                <div className="flex items-center gap-3 text-xs text-[#94A3B8]">
-                  <span>Next renewal: <span className="font-medium text-[#2C3E50]">{format(nextRenewal, "MMM d, yyyy")}</span></span>
-                  <span>Proposal due: <span className={`font-medium ${isDueSoon && !plan.isRenewalComplete ? "text-[#F5A623]" : "text-[#2C3E50]"}`}>{format(renewalDueDate, "MMM d, yyyy")}</span></span>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>Next renewal: <span className="font-medium text-foreground">{format(nextRenewal, "MMM d, yyyy")}</span></span>
+                  <span>Proposal due: <span className={`font-medium ${isDueSoon && !plan.isRenewalComplete ? "text-warning-strong" : "text-foreground"}`}>{format(renewalDueDate, "MMM d, yyyy")}</span></span>
                 </div>
               </div>
 
@@ -687,7 +687,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
               {/* renewal proposal documents */}
               <div className="mt-3 pt-3 border-t">
                 <button
-                  className="flex items-center gap-1 text-xs font-medium text-[#2E86C1] hover:text-[#1A5276] mb-2"
+                  className="flex items-center gap-1 text-xs font-medium text-brand-accent hover:text-brand mb-2"
                   onClick={() => setShowRenewalDocs(!showRenewalDocs)}
                   data-testid={`button-toggle-renewal-docs-${plan.id}`}
                 >
@@ -698,16 +698,16 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 {showRenewalDocs && (
                   <div className="space-y-1 mb-2">
                     {sortedDocs.length === 0 && (
-                      <p className="text-xs text-[#94A3B8] italic pl-2">No renewal proposals uploaded yet</p>
+                      <p className="text-xs text-muted-foreground italic pl-2">No renewal proposals uploaded yet</p>
                     )}
                     {sortedDocs.map((doc: any) => (
-                      <div key={doc.id} className="flex items-center justify-between bg-[#F0F4F8] rounded px-3 py-2" data-testid={`renewal-doc-${doc.id}`}>
+                      <div key={doc.id} className="flex items-center justify-between bg-surface-subtle rounded px-3 py-2" data-testid={`renewal-doc-${doc.id}`}>
                         <div className="flex items-center gap-2 min-w-0">
-                          <FileText className="w-3 h-3 text-[#2E86C1] flex-shrink-0" />
+                          <FileText className="w-3 h-3 text-brand-accent flex-shrink-0" />
                           <div className="min-w-0">
                             <p className="text-xs font-medium truncate">{doc.documentName}</p>
-                            <p className="text-[10px] text-[#94A3B8]">
-                              {doc.version && <span className="font-semibold text-[#1A5276] mr-1">{doc.version}</span>}
+                            <p className="text-xs text-muted-foreground">
+                              {doc.version && <span className="font-semibold text-brand mr-1">{doc.version}</span>}
                               {format(new Date(doc.uploadedAt), "MMM d, yyyy")} · {doc.uploadedBy}
                             </p>
                           </div>
@@ -720,7 +720,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                           </a>
                           <Button
                             size="sm" variant="ghost"
-                            className="h-6 w-6 p-0 text-[#EF4444] hover:text-[#EF4444]"
+                            className="h-6 w-6 p-0 text-danger hover:text-danger"
                             onClick={() => deleteDocMutation.mutate(doc.id)}
                             data-testid={`button-delete-doc-${doc.id}`}
                           >
@@ -733,7 +733,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 )}
                 <Button
                   size="sm" variant="outline"
-                  className="gap-1 text-[#2E86C1] border-[#2E86C1]"
+                  className="gap-1 text-brand-accent border-brand-accent"
                   onClick={() => setShowUploadDialog(true)}
                   data-testid={`button-upload-renewal-${plan.id}`}
                 >
@@ -746,7 +746,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           {/* bottom action row */}
           <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t">
             {!archived && onEdit && (
-              <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); onEdit(); }} className="gap-1 text-[#2E86C1] border-[#2E86C1]" data-testid={`button-edit-plan-${plan.id}`}>
+              <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); onEdit(); }} className="gap-1 text-brand-accent border-brand-accent" data-testid={`button-edit-plan-${plan.id}`}>
                 <Edit className="w-3 h-3" /> Edit Plan
               </Button>
             )}
@@ -755,7 +755,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 <Edit className="w-3 h-3" /> Edit Rates
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); onRenew(); }} className="gap-1 text-[#F5A623] border-[#F5A623]" data-testid={`button-renew-plan-${plan.id}`}>
+            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); onRenew(); }} className="gap-1 text-warning-strong border-warning-strong" data-testid={`button-renew-plan-${plan.id}`}>
               <RefreshCw className="w-3 h-3" /> Renew Plan
             </Button>
           </div>
@@ -840,11 +840,11 @@ function RenewalDocUploadDialog({ plan, onClose, onUploaded }: any) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Upload Renewal Proposal</DialogTitle>
+          <DialogTitle className="text-brand">Upload Renewal Proposal</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label className="text-sm font-medium">Document Name <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Document Name <span className="text-danger">*</span></Label>
             <Input
               value={docName}
               onChange={e => setDocName(e.target.value)}
@@ -853,7 +853,7 @@ function RenewalDocUploadDialog({ plan, onClose, onUploaded }: any) {
             />
           </div>
           <div>
-            <Label className="text-sm font-medium">Version <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Version <span className="text-danger">*</span></Label>
             <Select value={version} onValueChange={setVersion}>
               <SelectTrigger data-testid="select-renewal-version">
                 <SelectValue placeholder="Select version..." />
@@ -862,10 +862,10 @@ function RenewalDocUploadDialog({ plan, onClose, onUploaded }: any) {
                 {versionOptions.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
               </SelectContent>
             </Select>
-            <p className="text-xs text-[#94A3B8] mt-1">Most recent version is displayed first</p>
+            <p className="text-xs text-muted-foreground mt-1">Most recent version is displayed first</p>
           </div>
           <div>
-            <Label className="text-sm font-medium">File <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">File <span className="text-danger">*</span></Label>
             <Input
               type="file"
               ref={fileRef}
@@ -875,7 +875,7 @@ function RenewalDocUploadDialog({ plan, onClose, onUploaded }: any) {
             />
           </div>
           <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={uploading} className="bg-[#1A5276] text-white" data-testid="button-upload-renewal-submit">
+            <Button type="submit" disabled={uploading} className="bg-brand text-brand-foreground" data-testid="button-upload-renewal-submit">
               {uploading ? "Uploading..." : "Upload"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -894,10 +894,10 @@ function MarkCompleteDialog({ plan, onClose, onConfirm, isPending }: any) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Mark Renewal Complete</DialogTitle>
+          <DialogTitle className="text-brand">Mark Renewal Complete</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <p className="text-sm text-[#94A3B8]">Confirm the date the renewal proposal was completed for <strong className="text-[#2C3E50]">{plan.planName}</strong>.</p>
+          <p className="text-sm text-muted-foreground">Confirm the date the renewal proposal was completed for <strong className="text-foreground">{plan.planName}</strong>.</p>
           <div>
             <Label className="text-sm font-medium">Completion Date</Label>
             <Input
@@ -911,7 +911,7 @@ function MarkCompleteDialog({ plan, onClose, onConfirm, isPending }: any) {
             <Button
               onClick={() => onConfirm(completedDate)}
               disabled={isPending || !completedDate}
-              className="bg-[#22C55E] text-white"
+              className="bg-success text-success-foreground"
               data-testid="button-confirm-complete"
             >
               {isPending ? "Saving..." : "Confirm"}
@@ -1029,13 +1029,13 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">{isEdit ? "Edit Plan" : "Add New Plan"}</DialogTitle>
+          <DialogTitle className="text-brand">{isEdit ? "Edit Plan" : "Add New Plan"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label className="text-sm font-medium">Plan Name <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Plan Name <span className="text-danger">*</span></Label>
             <Input value={form.planName} onChange={e => setForm(f => ({ ...f, planName: e.target.value }))} data-testid="input-plan-name" />
-            {errors.planName && <p className="text-xs text-[#EF4444] mt-1">{errors.planName}</p>}
+            {errors.planName && <p className="text-xs text-danger mt-1">{errors.planName}</p>}
           </div>
           <div>
             <Label className="text-sm font-medium">Coverage Type</Label>
@@ -1047,18 +1047,18 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-[#94A3B8] mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Describes how this plan is funded and reported. A group with one rate covering both dental and vision is a single combined plan — do not create separate dental and vision entries for it.
             </p>
           </div>
           <div>
-            <Label className="text-sm font-medium">Effective Date <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Effective Date <span className="text-danger">*</span></Label>
             <Input type="date" value={form.effectiveDate} onChange={e => setForm(f => ({ ...f, effectiveDate: e.target.value }))} data-testid="input-effective-date" />
-            <p className="text-xs text-[#94A3B8] mt-1">Must be the 1st of a month</p>
-            {errors.effectiveDate && <p className="text-xs text-[#EF4444] mt-1">{errors.effectiveDate}</p>}
+            <p className="text-xs text-muted-foreground mt-1">Must be the 1st of a month</p>
+            {errors.effectiveDate && <p className="text-xs text-danger mt-1">{errors.effectiveDate}</p>}
           </div>
           <div>
-            <Label className="text-sm font-medium">Plan Basis <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Plan Basis <span className="text-danger">*</span></Label>
             <Select value={form.planBasis} onValueChange={v => setForm(f => ({ ...f, planBasis: v }))}>
               <SelectTrigger data-testid="select-plan-basis"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -1081,44 +1081,44 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                 <Label className="text-xs">Restorative %</Label>
                 <Input type="number" min={0} max={100} value={form.restorativePercent} onChange={e => setForm(f => ({ ...f, restorativePercent: Number(e.target.value) }))} data-testid="input-restorative" />
               </div>
-              <p className="text-xs text-[#94A3B8] col-span-3">Deductible is waived for Preventive tier</p>
+              <p className="text-xs text-muted-foreground col-span-3">Deductible is waived for Preventive tier</p>
             </div>
           )}
           {form.planBasis === "DOLLAR_BASED" && (
-            <div className="space-y-3 p-3 bg-[#F0F4F8] rounded-md border">
-              <p className="text-xs font-semibold text-[#1A5276]">Dollar-Based Coverage Tiers</p>
+            <div className="space-y-3 p-3 bg-surface-subtle rounded-md border">
+              <p className="text-xs font-semibold text-brand">Dollar-Based Coverage Tiers</p>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <Label className="text-xs">Tier 1 — Percentage <span className="text-[#EF4444]">*</span></Label>
+                  <Label className="text-xs">Tier 1 — Percentage <span className="text-danger">*</span></Label>
                   <div className="relative">
                     <Input type="number" min={0} max={100} value={form.dollarTier1Percent} onChange={e => setForm(f => ({ ...f, dollarTier1Percent: e.target.value }))} placeholder="100" data-testid="input-dollar-tier1-percent" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                   </div>
                 </div>
-                <span className="text-xs text-[#94A3B8] pb-3">of the first</span>
+                <span className="text-xs text-muted-foreground pb-3">of the first</span>
                 <div className="flex-1">
-                  <Label className="text-xs">Amount ($) <span className="text-[#EF4444]">*</span></Label>
+                  <Label className="text-xs">Amount ($) <span className="text-danger">*</span></Label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
                     <Input className="pl-6" value={form.dollarTier1Limit} onChange={e => setForm(f => ({ ...f, dollarTier1Limit: e.target.value }))} placeholder="300" data-testid="input-dollar-tier1-limit" />
                   </div>
                 </div>
               </div>
-              {errors.dollarTier1Percent && <p className="text-xs text-[#EF4444]">{errors.dollarTier1Percent}</p>}
-              {errors.dollarTier1Limit && <p className="text-xs text-[#EF4444]">{errors.dollarTier1Limit}</p>}
+              {errors.dollarTier1Percent && <p className="text-xs text-danger">{errors.dollarTier1Percent}</p>}
+              {errors.dollarTier1Limit && <p className="text-xs text-danger">{errors.dollarTier1Limit}</p>}
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <Label className="text-xs">Tier 2 — Percentage</Label>
                   <div className="relative">
                     <Input type="number" min={0} max={100} value={form.dollarTier2Percent} onChange={e => setForm(f => ({ ...f, dollarTier2Percent: e.target.value }))} placeholder="70" data-testid="input-dollar-tier2-percent" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                   </div>
                 </div>
-                <span className="text-xs text-[#94A3B8] pb-3">of the next</span>
+                <span className="text-xs text-muted-foreground pb-3">of the next</span>
                 <div className="flex-1">
                   <Label className="text-xs">Amount ($)</Label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
                     <Input className="pl-6" value={form.dollarTier2Limit} onChange={e => setForm(f => ({ ...f, dollarTier2Limit: e.target.value }))} placeholder="500" data-testid="input-dollar-tier2-limit" />
                   </div>
                 </div>
@@ -1128,13 +1128,13 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                   <Label className="text-xs">Tier 3 — Percentage</Label>
                   <div className="relative">
                     <Input type="number" min={0} max={100} value={form.dollarTier3Percent} onChange={e => setForm(f => ({ ...f, dollarTier3Percent: e.target.value }))} placeholder="50" data-testid="input-dollar-tier3-percent" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                   </div>
                 </div>
-                <span className="text-xs text-[#94A3B8] pb-3">of the balance</span>
+                <span className="text-xs text-muted-foreground pb-3">of the balance</span>
                 <div className="flex-1" />
               </div>
-              <p className="text-xs text-[#94A3B8] italic">Example: 100% of the first $300, 70% of the next $500, 50% of the balance</p>
+              <p className="text-xs text-muted-foreground italic">Example: 100% of the first $300, 70% of the next $500, 50% of the balance</p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -1145,13 +1145,13 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
             <div>
               <Label className="text-xs">Deductible ($)</Label>
               <Input value={form.deductible} onChange={e => setForm(f => ({ ...f, deductible: e.target.value }))} placeholder="Optional" data-testid="input-deductible" />
-              <p className="text-xs text-[#94A3B8] mt-1">Corrective & Restorative only</p>
+              <p className="text-xs text-muted-foreground mt-1">Corrective & Restorative only</p>
             </div>
           </div>
 
           {/* orthodontia settings */}
-          <div className="p-3 bg-[#F0F4F8] rounded-md border space-y-3">
-            <p className="text-xs font-semibold text-[#1A5276]">Orthodontia</p>
+          <div className="p-3 bg-surface-subtle rounded-md border space-y-3">
+            <p className="text-xs font-semibold text-brand">Orthodontia</p>
             <div>
               <Label className="text-xs">Ortho Coverage</Label>
               <Select value={form.orthoEligibility} onValueChange={v => setForm(f => ({ ...f, orthoEligibility: v as any, orthoCoinsurancePercent: v === "NONE" ? "" : f.orthoCoinsurancePercent, orthoMaxType: v === "NONE" ? "SHARED_ANNUAL" : f.orthoMaxType, orthoLifetimeMax: v === "NONE" ? "" : f.orthoLifetimeMax }))}>
@@ -1176,7 +1176,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                         placeholder="50"
                         data-testid="input-ortho-coinsurance"
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">%</span>
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                     </div>
                   </div>
                   <div>
@@ -1194,7 +1194,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
                   <div>
                     <Label className="text-xs">Ortho Lifetime Max ($)</Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
                       <Input
                         className="pl-6"
                         value={form.orthoLifetimeMax}
@@ -1211,18 +1211,18 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
 
           {/* assignment of benefits + plan notes */}
           <div className="space-y-4">
-            <div className="flex items-start gap-3 p-3 bg-[#F0F4F8] rounded-md border">
+            <div className="flex items-start gap-3 p-3 bg-surface-subtle rounded-md border">
               <input
                 type="checkbox"
                 id="aob-checkbox"
                 checked={form.assignmentOfBenefits}
                 onChange={e => setForm(f => ({ ...f, assignmentOfBenefits: e.target.checked }))}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#1A5276] focus:ring-[#1A5276]"
+                className="mt-0.5 h-4 w-4 rounded border-border text-brand focus:ring-brand"
                 data-testid="input-assignment-of-benefits"
               />
               <div>
                 <label htmlFor="aob-checkbox" className="text-sm font-medium cursor-pointer">Assignment of Benefits</label>
-                <p className="text-xs text-[#94A3B8] mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   When checked, claims are paid directly to the provider. When unchecked, the member pays out of pocket and seeks reimbursement. This appears on member-facing documents.
                 </p>
               </div>
@@ -1241,8 +1241,8 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
           </div>
 
           {/* renewal settings */}
-          <div className="p-3 bg-[#F0F4F8] rounded-md border space-y-3">
-            <p className="text-xs font-semibold text-[#1A5276] flex items-center gap-1"><Clock className="w-3 h-3" /> Renewal Settings</p>
+          <div className="p-3 bg-surface-subtle rounded-md border space-y-3">
+            <p className="text-xs font-semibold text-brand flex items-center gap-1"><Clock className="w-3 h-3" /> Renewal Settings</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Renewal Due (months before anniversary)</Label>
@@ -1277,7 +1277,7 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
           </div>
 
           <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-plan">
+            <Button type="submit" disabled={mutation.isPending} className="bg-brand text-brand-foreground" data-testid="button-save-plan">
               {mutation.isPending ? "Saving..." : "Save Plan"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -1519,7 +1519,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
   const FeeInput = ({ tierId, field }: { tierId: string; field: keyof RateInputs }) => (
     <td className="px-1 py-1">
       <div className="relative">
-        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[#94A3B8]">$</span>
+        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
         <Input
           value={rates[tierId]?.[field] ?? ""}
           onChange={e => updateRate(tierId, field, e.target.value)}
@@ -1533,7 +1533,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
   const CalcCell = ({ tierId, field }: { tierId: string; field: "brokerFee" | "totalAdminFee" | "monthlyPremium" }) => {
     const calc = calcTierOutputs(rates[tierId] || {}, brokerMode, brokerPct, brokerAmt);
     return (
-      <td className="px-3 py-1.5 text-right text-xs font-semibold text-[#1A5276] bg-[#EBF5FB]">
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-brand bg-info-tint">
         ${parseFloat(calc[field]).toFixed(2)}
       </td>
     );
@@ -1554,18 +1554,18 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Edit Rate Card</DialogTitle>
+          <DialogTitle className="text-brand">Edit Rate Card</DialogTitle>
         </DialogHeader>
 
         {/* ── TIERS SECTION ─────────────────────────────────────── */}
         <div className="space-y-2 mb-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-[#1A5276]">Tiers ({localTiers.length}/4)</p>
+            <p className="text-sm font-semibold text-brand">Tiers ({localTiers.length}/4)</p>
             <Button type="button" size="sm" variant="outline" onClick={addTier} disabled={localTiers.length >= 4} className="h-7 text-xs gap-1">
               <Plus className="w-3 h-3" /> Add Tier
             </Button>
           </div>
-          <p className="text-[11px] text-[#64748B]">
+          <p className="text-xs text-muted-foreground">
             Use the standard labels wherever they fit, so plans stay comparable across
             years and clients. Pick Custom only for a genuinely different structure.
           </p>
@@ -1593,14 +1593,14 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                         {STANDARD_TIER_LABELS.map(label => (
                           <SelectItem key={label} value={label}>
                             <span className="font-semibold">{label}</span>
-                            <span className="text-[#64748B] ml-2">{STANDARD_TIER_DESCRIPTIONS[label]}</span>
+                            <span className="text-muted-foreground ml-2">{STANDARD_TIER_DESCRIPTIONS[label]}</span>
                           </SelectItem>
                         ))}
                         <SelectItem value={CUSTOM_TIER}>Custom...</SelectItem>
                       </SelectContent>
                     </Select>
                     {localTiers.length > 1 && (
-                      <button type="button" onClick={() => removeTier(tier.id)} className="text-[#94A3B8] hover:text-[#EF4444] flex-shrink-0">
+                      <button type="button" onClick={() => removeTier(tier.id)} className="text-muted-foreground hover:text-danger flex-shrink-0">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -1631,10 +1631,10 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
           const effectiveAdmin = hasComponents ? componentAdminSum : (parseFloat(flatMonthlyFee || "0") || 0);
           const grandTotal = Math.round((effectiveAdmin + brokerFixed) * 100) / 100;
           return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-3 bg-[#F8FAFC] rounded-lg border">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-3 bg-surface-subtle rounded-lg border">
           <div className="space-y-2">
             <div>
-              <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Fee Basis</Label>
+              <Label className="text-xs font-semibold text-brand block mb-1.5">Fee Basis</Label>
               <Select value={feeBasis} onValueChange={v => {
                 setFeeBasis(v);
                 if (v !== "FIXED_MONTHLY") { setFlatMonthlyFee(""); setFlat90DBFee(""); setFlatSimpleFee(""); setFlatNetworkFee(""); }
@@ -1648,8 +1648,8 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
             </div>
             {feeBasis === "FIXED_MONTHLY" && (
               <div className="space-y-2">
-                <Label className="text-xs font-semibold text-[#1A5276] block">Fee Components (group / month)</Label>
-                <p className="text-[10px] text-[#94A3B8] -mt-1">Enter the breakdown when known. Leave blank to record only the total for now.</p>
+                <Label className="text-xs font-semibold text-brand block">Fee Components (group / month)</Label>
+                <p className="text-xs text-muted-foreground -mt-1">Enter the breakdown when known. Leave blank to record only the total for now.</p>
 
                 {[
                   { label: "90 Degree fee", val: flat90DBFee, set: setFlat90DBFee },
@@ -1657,19 +1657,19 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                   { label: "Network fee",   val: flatNetworkFee, set: setFlatNetworkFee },
                 ].map(({ label, val, set }) => (
                   <div key={label} className="flex items-center gap-2">
-                    <span className="text-xs text-[#64748B] w-28 shrink-0">{label}</span>
-                    <span className="text-xs text-[#94A3B8]">$</span>
+                    <span className="text-xs text-muted-foreground w-28 shrink-0">{label}</span>
+                    <span className="text-xs text-muted-foreground">$</span>
                     <Input type="number" step="0.01" min="0" value={val}
                       onChange={e => set(e.target.value)}
                       placeholder="0.00" className="h-7 text-xs w-24" />
                   </div>
                 ))}
 
-                <div className="flex items-center gap-2 border-t border-dashed border-[#E2E8F0] pt-2">
-                  <span className="text-xs font-semibold text-[#1A5276] w-28 shrink-0">Admin total</span>
-                  <span className="text-xs text-[#94A3B8]">$</span>
+                <div className="flex items-center gap-2 border-t border-dashed border-border pt-2">
+                  <span className="text-xs font-semibold text-brand w-28 shrink-0">Admin total</span>
+                  <span className="text-xs text-muted-foreground">$</span>
                   {hasComponents ? (
-                    <span className="text-xs font-mono font-semibold text-[#1A5276] w-24">
+                    <span className="text-xs font-mono font-semibold text-brand w-24">
                       {componentAdminSum.toFixed(2)}
                     </span>
                   ) : (
@@ -1677,15 +1677,15 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                       onChange={e => setFlatMonthlyFee(e.target.value)}
                       placeholder="0.00" className="h-7 text-xs w-24" />
                   )}
-                  <span className="text-[10px] text-amber-700">/ mo, whole group</span>
+                  <span className="text-xs text-warning-strong">/ mo, whole group</span>
                 </div>
 
                 {grandTotal > 0 && (
-                  <div className="flex items-center gap-2 bg-[#EFF6FF] rounded px-2 py-1.5">
-                    <span className="text-xs font-semibold text-[#1A5276] w-28 shrink-0">Grand total</span>
-                    <span className="text-xs font-mono font-bold text-[#1A5276]">${grandTotal.toFixed(2)}/mo</span>
+                  <div className="flex items-center gap-2 bg-info-tint rounded px-2 py-1.5">
+                    <span className="text-xs font-semibold text-brand w-28 shrink-0">Grand total</span>
+                    <span className="text-xs font-mono font-bold text-brand">${grandTotal.toFixed(2)}/mo</span>
                     {brokerFixed > 0 && (
-                      <span className="text-[10px] text-[#64748B]">(incl. ${brokerFixed.toFixed(2)} broker)</span>
+                      <span className="text-xs text-muted-foreground">(incl. ${brokerFixed.toFixed(2)} broker)</span>
                     )}
                   </div>
                 )}
@@ -1693,7 +1693,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
             )}
           </div>
           <div>
-            <Label className="text-xs font-semibold text-[#1A5276] block mb-1.5">Broker Compensation</Label>
+            <Label className="text-xs font-semibold text-brand block mb-1.5">Broker Compensation</Label>
             <Select value={brokerMode} onValueChange={v => { setBrokerMode(v); setBrokerPct(""); setBrokerAmt(""); }}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -1714,12 +1714,12 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                   placeholder="e.g. 8"
                   className="h-7 text-xs w-24"
                 />
-                <span className="text-xs text-[#94A3B8]">% of premium (gross-up method)</span>
+                <span className="text-xs text-muted-foreground">% of premium (gross-up method)</span>
               </div>
             )}
             {(brokerMode === "FLAT_PEPM" || brokerMode === "FIXED_MONTHLY") && (
               <div className="flex items-center gap-1 mt-1.5">
-                <span className="text-xs text-[#94A3B8]">$</span>
+                <span className="text-xs text-muted-foreground">$</span>
                 <Input
                   type="number"
                   step="0.01"
@@ -1729,7 +1729,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                   placeholder="0.00"
                   className="h-7 text-xs w-24"
                 />
-                <span className="text-xs text-[#94A3B8]">
+                <span className="text-xs text-muted-foreground">
                   {brokerMode === "FLAT_PEPM" ? "per employee / month (same across all tiers)" : "per month for the whole group"}
                 </span>
               </div>
@@ -1744,7 +1744,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="rate-form-table">
               <thead>
-                <tr className="bg-[#1A5276] text-white">
+                <tr className="bg-brand text-brand-foreground">
                   <th className="px-3 py-2 text-left text-xs font-medium w-44">Tier</th>
                   {localTiers.map((t, i) => (
                     <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
@@ -1754,12 +1754,12 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
                 </tr>
               </thead>
               <tbody>
-                <tr className="bg-white">
-                  <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Expected Claims (PEPM)</td>
+                <tr className="bg-card">
+                  <td className="px-3 py-1.5 text-xs text-foreground">Expected Claims (PEPM)</td>
                   {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field="expectedClaims" />)}
                 </tr>
-                <tr className="bg-[#F0F4F8]">
-                  <td colSpan={localTiers.length + 1} className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50">
+                <tr className="bg-surface-subtle">
+                  <td colSpan={localTiers.length + 1} className="px-3 py-2 text-xs text-warning-strong bg-warning-tint">
                     {(() => {
                       const db90n    = parseFloat(flat90DBFee    || "0") || 0;
                       const simplen  = parseFloat(flatSimpleFee  || "0") || 0;
@@ -1794,7 +1794,7 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="rate-form-table">
               <thead>
-                <tr className="bg-[#1A5276] text-white">
+                <tr className="bg-brand text-brand-foreground">
                   <th className="px-3 py-2 text-left text-xs font-medium w-44">Fee Component</th>
                   {localTiers.map((t, i) => (
                     <th key={t.id} className="px-3 py-2 text-center text-xs font-medium">
@@ -1805,31 +1805,31 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
               </thead>
               <tbody>
                 {visibleEditable.map((row, i) => (
-                  <tr key={row.field} className={i % 2 === 0 ? "bg-white" : "bg-[#F0F4F8]"}>
-                    <td className="px-3 py-1.5 text-xs text-[#2C3E50]">{row.label}</td>
+                  <tr key={row.field} className={i % 2 === 0 ? "bg-card" : "bg-surface-subtle"}>
+                    <td className="px-3 py-1.5 text-xs text-foreground">{row.label}</td>
                     {localTiers.map(t => <FeeInput key={t.id} tierId={t.id} field={row.field} />)}
                   </tr>
                 ))}
 
                 {/* Separator row */}
-                <tr className="bg-[#F0F4F8]">
-                  <td colSpan={localTiers.length + 1} className="px-3 py-1 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                <tr className="bg-surface-subtle">
+                  <td colSpan={localTiers.length + 1} className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Calculated — read only
                   </td>
                 </tr>
 
                 {hasBrokerCalc && (
-                  <tr className="bg-white">
-                    <td className="px-3 py-1.5 text-xs text-[#2C3E50]">Broker Fee</td>
+                  <tr className="bg-card">
+                    <td className="px-3 py-1.5 text-xs text-foreground">Broker Fee</td>
                     {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="brokerFee" />)}
                   </tr>
                 )}
-                <tr className="bg-[#F0F4F8]">
-                  <td className="px-3 py-1.5 text-xs font-semibold text-[#1A5276]">Total Admin Fee</td>
+                <tr className="bg-surface-subtle">
+                  <td className="px-3 py-1.5 text-xs font-semibold text-brand">Total Admin Fee</td>
                   {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="totalAdminFee" />)}
                 </tr>
-                <tr className="bg-white">
-                  <td className="px-3 py-2 text-xs font-bold text-[#1A5276] border-l-4 border-[#F5A623]">Monthly Premium</td>
+                <tr className="bg-card">
+                  <td className="px-3 py-2 text-xs font-bold text-brand border-l-4 border-warning-strong">Monthly Premium</td>
                   {localTiers.map(t => <CalcCell key={t.id} tierId={t.id} field="monthlyPremium" />)}
                 </tr>
               </tbody>
@@ -1839,15 +1839,15 @@ function RateFormDialog({ open, onClose, planId, clientId, client, plan, existin
 
         {/* Formula reminder */}
         {feeBasis !== "FIXED_MONTHLY" && (
-          <div className="mt-2 p-2 bg-[#F0F4F8] rounded text-[10px] text-[#94A3B8] space-y-0.5">
+          <div className="mt-2 p-2 bg-surface-subtle rounded text-xs text-muted-foreground space-y-0.5">
             <p>Admin Fee = Base Admin + COBRA Fee + Simple Fee + Network Fee</p>
             <p>Total Admin Fee = Admin Fee + Broker Fee &nbsp;·&nbsp; Monthly Premium = Total Admin Fee + Expected Claims</p>
-            {brokerMode === "PERCENT_OF_PREMIUM" && <p className="text-[#2E86C1]">Broker % uses gross-up: Premium = (Admin + Claims) ÷ (1 − rate). Broker fee derived from rounded premium so totals always balance exactly.</p>}
+            {brokerMode === "PERCENT_OF_PREMIUM" && <p className="text-brand-accent">Broker % uses gross-up: Premium = (Admin + Claims) ÷ (1 − rate). Broker fee derived from rounded premium so totals always balance exactly.</p>}
           </div>
         )}
 
         <div className="flex gap-2 mt-4">
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-rates">
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="bg-brand text-brand-foreground" data-testid="button-save-rates">
             {mutation.isPending ? "Saving..." : "Save Rate Card"}
           </Button>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

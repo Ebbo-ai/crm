@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { US_STATES, formatPhone } from "@/lib/constants";
 import { deriveClientState, runOutEndDate } from "@shared/client-state";
-import { ArrowLeft, Save, Plus, Trash2 } from "lucide-react";
+import { Save, Plus, Trash2 } from "lucide-react";
 
 const planTypeOptions = [
   { value: "DENTAL", label: "Dental" },
@@ -410,16 +410,16 @@ export default function ClientFormPage() {
   };
 
   const FieldError = ({ field }: { field: string }) =>
-    errors[field] ? <p className="text-xs text-[#EF4444] mt-1">{errors[field]}</p> : null;
+    errors[field] ? <p className="text-xs text-danger mt-1">{errors[field]}</p> : null;
 
   const RequiredLabel = ({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) => (
-    <Label htmlFor={htmlFor} className="text-sm font-medium text-[#2C3E50]">
-      {children} <span className="text-[#EF4444]">*</span>
+    <Label htmlFor={htmlFor} className="text-sm font-medium text-foreground">
+      {children} <span className="text-danger">*</span>
     </Label>
   );
 
   const OptionalLabel = ({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) => (
-    <Label htmlFor={htmlFor} className="text-sm font-medium text-[#2C3E50]">
+    <Label htmlFor={htmlFor} className="text-sm font-medium text-foreground">
       {children}
     </Label>
   );
@@ -429,14 +429,11 @@ export default function ClientFormPage() {
   return (
     <div data-testid="client-form-page">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/clients")} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
         <div>
-          <h1 className="text-2xl font-bold text-[#1A5276]">
+          <h1 className="text-2xl font-bold text-brand">
             {isEdit ? "Edit Client" : "Add New Client"}
           </h1>
-          <p className="text-sm text-[#94A3B8]">
+          <p className="text-sm text-muted-foreground">
             Only Client ID, Client Name, and Plan Type are required. All other fields can be filled in later.
           </p>
         </div>
@@ -446,13 +443,13 @@ export default function ClientFormPage() {
         {/* ── Client Information ─────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Client Information</h2>
+            <h2 className="text-lg font-semibold text-brand">Client Information</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <RequiredLabel htmlFor="clientCode">Client ID</RequiredLabel>
               <div className="flex items-center gap-1">
-                <span className="text-sm font-semibold text-[#1A5276] bg-[#F0F4F8] px-3 py-2 rounded-l-md border border-r-0 border-input">S-</span>
+                <span className="text-sm font-semibold text-brand bg-surface-subtle px-3 py-2 rounded-l-md border border-r-0 border-input">S-</span>
                 <Input
                   id="clientCode"
                   value={form.clientCode}
@@ -463,7 +460,7 @@ export default function ClientFormPage() {
                   data-testid="input-client-code"
                 />
               </div>
-              <p className="text-xs text-[#94A3B8] mt-1">Digits only — enter what 90 Degree assigned (e.g. 20 → S-20, 111 → S-111)</p>
+              <p className="text-xs text-muted-foreground mt-1">Digits only — enter what 90 Degree assigned (e.g. 20 → S-20, 111 → S-111)</p>
               <FieldError field="clientCode" />
             </div>
             <div>
@@ -522,10 +519,10 @@ export default function ClientFormPage() {
                 onChange={e => updateField("anniversaryDate", e.target.value)}
                 data-testid="input-anniversary-date"
               />
-              <p className="text-xs text-[#94A3B8] mt-1">Plan anniversary — drives renewal timing</p>
+              <p className="text-xs text-muted-foreground mt-1">Plan anniversary — drives renewal timing</p>
             </div>
             <div>
-              <Label htmlFor="renewalLeadMonths" className="text-sm font-medium text-[#2C3E50]">Renewal Lead Time</Label>
+              <Label htmlFor="renewalLeadMonths" className="text-sm font-medium text-foreground">Renewal Lead Time</Label>
               <Select value={String(form.renewalLeadMonths)} onValueChange={v => updateField("renewalLeadMonths", Number(v))}>
                 <SelectTrigger id="renewalLeadMonths" data-testid="select-renewal-lead-months">
                   <SelectValue />
@@ -536,7 +533,7 @@ export default function ClientFormPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-[#94A3B8] mt-1">How far in advance to prepare the renewal proposal</p>
+              <p className="text-xs text-muted-foreground mt-1">How far in advance to prepare the renewal proposal</p>
             </div>
           </CardContent>
         </Card>
@@ -548,7 +545,7 @@ export default function ClientFormPage() {
         {/* ── Plan Type ──────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Plan Type <span className="text-[#EF4444]">*</span></h2>
+            <h2 className="text-lg font-semibold text-brand">Plan Type <span className="text-danger">*</span></h2>
           </CardHeader>
           <CardContent className="px-6 pb-6">
             <Select value={form.planType} onValueChange={v => updateField("planType", v)}>
@@ -563,12 +560,12 @@ export default function ClientFormPage() {
         {/* ── Network ────────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Network</h2>
+            <h2 className="text-lg font-semibold text-brand">Network</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
             <div className="flex items-center gap-3">
               <Switch checked={form.networkActive} onCheckedChange={v => updateField("networkActive", v)} data-testid="switch-network" />
-              <Label className="text-sm text-[#2C3E50]">Network Active</Label>
+              <Label className="text-sm text-foreground">Network Active</Label>
             </div>
             {form.networkActive && (
               <div>
@@ -582,8 +579,8 @@ export default function ClientFormPage() {
         {/* ── Decision Maker ─────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Decision Maker (Primary Contact)</h2>
-            <p className="text-xs text-[#94A3B8] mt-0.5">All fields optional — enter whatever you have</p>
+            <h2 className="text-lg font-semibold text-brand">Decision Maker (Primary Contact)</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">All fields optional — enter whatever you have</p>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -611,8 +608,8 @@ export default function ClientFormPage() {
           <CardHeader className="pb-3 pt-5 px-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-[#1A5276]">Administrative Support Contact</h2>
-                <p className="text-xs text-[#94A3B8] mt-0.5">All fields optional — enter whatever you have</p>
+                <h2 className="text-lg font-semibold text-brand">Administrative Support Contact</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">All fields optional — enter whatever you have</p>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -633,26 +630,26 @@ export default function ClientFormPage() {
                   }}
                   data-testid="checkbox-same-as-primary"
                 />
-                <Label htmlFor="sameAsPrimary" className="text-sm text-[#2C3E50] cursor-pointer">Same as Primary</Label>
+                <Label htmlFor="sameAsPrimary" className="text-sm text-foreground cursor-pointer">Same as Primary</Label>
               </div>
             </div>
           </CardHeader>
           <CardContent className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <OptionalLabel htmlFor="acName">Full Name</OptionalLabel>
-              <Input id="acName" value={form.adminContactName} onChange={e => updateField("adminContactName", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-name" />
+              <Input id="acName" value={form.adminContactName} onChange={e => updateField("adminContactName", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-surface-subtle" : ""} data-testid="input-ac-name" />
             </div>
             <div>
               <OptionalLabel htmlFor="acTitle">Title</OptionalLabel>
-              <Input id="acTitle" value={form.adminContactTitle} onChange={e => updateField("adminContactTitle", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-title" />
+              <Input id="acTitle" value={form.adminContactTitle} onChange={e => updateField("adminContactTitle", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-surface-subtle" : ""} data-testid="input-ac-title" />
             </div>
             <div>
               <OptionalLabel htmlFor="acPhone">Phone</OptionalLabel>
-              <Input id="acPhone" value={form.adminContactPhone} onChange={e => updateField("adminContactPhone", e.target.value)} onBlur={e => updateField("adminContactPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-phone" />
+              <Input id="acPhone" value={form.adminContactPhone} onChange={e => updateField("adminContactPhone", e.target.value)} onBlur={e => updateField("adminContactPhone", formatPhone(e.target.value))} placeholder="(XXX) XXX-XXXX" disabled={sameAsPrimary} className={sameAsPrimary ? "bg-surface-subtle" : ""} data-testid="input-ac-phone" />
             </div>
             <div>
               <OptionalLabel htmlFor="acEmail">Email</OptionalLabel>
-              <Input id="acEmail" type="email" value={form.adminContactEmail} onChange={e => updateField("adminContactEmail", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-[#F0F4F8]" : ""} data-testid="input-ac-email" />
+              <Input id="acEmail" type="email" value={form.adminContactEmail} onChange={e => updateField("adminContactEmail", e.target.value)} disabled={sameAsPrimary} className={sameAsPrimary ? "bg-surface-subtle" : ""} data-testid="input-ac-email" />
               <FieldError field="adminContactEmail" />
             </div>
           </CardContent>
@@ -661,12 +658,12 @@ export default function ClientFormPage() {
         {/* ── Broker ─────────────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Broker</h2>
+            <h2 className="text-lg font-semibold text-brand">Broker</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
             <div className="flex items-center gap-3">
               <Switch checked={form.hasBroker} onCheckedChange={v => updateField("hasBroker", v)} data-testid="switch-broker" />
-              <Label className="text-sm text-[#2C3E50]">Has Broker</Label>
+              <Label className="text-sm text-foreground">Has Broker</Label>
             </div>
             {form.hasBroker && (
               <div className="space-y-4">
@@ -679,7 +676,7 @@ export default function ClientFormPage() {
 
                 <div className="pt-1">
                   <div className="flex items-center justify-between mb-1">
-                    <Label className="text-sm font-medium text-[#2C3E50]">Broker Contacts</Label>
+                    <Label className="text-sm font-medium text-foreground">Broker Contacts</Label>
                     <Button
                       type="button"
                       variant="outline"
@@ -691,13 +688,13 @@ export default function ClientFormPage() {
                       <Plus className="w-3.5 h-3.5" /> Add Contact
                     </Button>
                   </div>
-                  <p className="text-xs text-[#94A3B8] mb-3">
+                  <p className="text-xs text-muted-foreground mb-3">
                     The brokerage usually names a lead plus a service representative. Mark the lead as
                     primary — that is the one shown wherever a single broker contact is displayed.
                   </p>
 
                   {brokerContacts.length === 0 && (
-                    <p className="text-xs text-[#94A3B8] italic py-2" data-testid="text-no-broker-contacts">
+                    <p className="text-xs text-muted-foreground italic py-2" data-testid="text-no-broker-contacts">
                       No contacts recorded yet.
                     </p>
                   )}
@@ -706,7 +703,7 @@ export default function ClientFormPage() {
                     {brokerContacts.map((c, i) => (
                       <div
                         key={i}
-                        className="rounded-md border border-[#E2E8F0] p-3 space-y-3"
+                        className="rounded-md border border-border p-3 space-y-3"
                         data-testid={`row-broker-contact-${i}`}
                       >
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -766,7 +763,7 @@ export default function ClientFormPage() {
                           />
                         </div>
                         <div className="flex items-center justify-between">
-                          <label className="flex items-center gap-2 text-xs text-[#2C3E50] cursor-pointer">
+                          <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
                             <Checkbox
                               checked={c.isPrimary}
                               onCheckedChange={() => setPrimaryBrokerContact(i)}
@@ -778,7 +775,7 @@ export default function ClientFormPage() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="text-xs text-[#EF4444] hover:text-[#EF4444] gap-1.5"
+                            className="text-xs text-danger hover:text-danger gap-1.5"
                             onClick={() => removeBrokerContact(i)}
                             data-testid={`button-remove-broker-contact-${i}`}
                           >
@@ -802,7 +799,7 @@ export default function ClientFormPage() {
         {/* ── Banking, Funding & COBRA ───────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Banking, Funding & COBRA</h2>
+            <h2 className="text-lg font-semibold text-brand">Banking, Funding & COBRA</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -831,8 +828,8 @@ export default function ClientFormPage() {
             {/* Account balance — only when 90 Degree holds the funds */}
             {is90dBank && (
               <div className="border-t pt-4">
-                <p className="text-sm font-medium text-[#2C3E50] mb-3">Account Balance</p>
-                <p className="text-xs text-[#94A3B8] mb-3">
+                <p className="text-sm font-medium text-foreground mb-3">Account Balance</p>
+                <p className="text-xs text-muted-foreground mb-3">
                   This is the actual bank account balance supplied by 90 Degree monthly. It is separate
                   from the plan surplus or deficit — the account holds more than just claims funds, and
                   admin fees are drawn from it, so the two numbers will legitimately differ. Leave blank
@@ -867,7 +864,7 @@ export default function ClientFormPage() {
 
             {/* COBRA */}
             <div className="border-t pt-4">
-              <p className="text-sm font-medium text-[#2C3E50] mb-3">COBRA Administration</p>
+              <p className="text-sm font-medium text-foreground mb-3">COBRA Administration</p>
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <Checkbox
@@ -876,7 +873,7 @@ export default function ClientFormPage() {
                     onCheckedChange={v => updateField("cobraAdministeredBy90d", !!v)}
                     data-testid="checkbox-cobra"
                   />
-                  <Label htmlFor="cobraAdministeredBy90d" className="text-sm text-[#2C3E50] cursor-pointer">
+                  <Label htmlFor="cobraAdministeredBy90d" className="text-sm text-foreground cursor-pointer">
                     90 Degree Benefits administers COBRA for this client
                   </Label>
                 </div>
@@ -893,7 +890,7 @@ export default function ClientFormPage() {
                       placeholder="1.00"
                       data-testid="input-cobra-fee"
                     />
-                    <p className="text-xs text-[#94A3B8] mt-1">Standard rate is $1.00/month. Edit only if this client differs.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Standard rate is $1.00/month. Edit only if this client differs.</p>
                   </div>
                 )}
               </div>
@@ -904,7 +901,7 @@ export default function ClientFormPage() {
         {/* ── Account Status ─────────────────────────────────────────── */}
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-3 pt-5 px-6">
-            <h2 className="text-lg font-semibold text-[#1A5276]">Account Status</h2>
+            <h2 className="text-lg font-semibold text-brand">Account Status</h2>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
             <div>
@@ -927,7 +924,7 @@ export default function ClientFormPage() {
                   <SelectItem value="TERMINATED">Terminated — closed, no date on file</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {form.clientStatus === "PROSPECT"
                   ? "Prospect clients are being quoted but have not yet signed."
                   : form.clientStatus === "TERMINATED"
@@ -945,7 +942,7 @@ export default function ClientFormPage() {
                   onChange={e => updateField("terminationDate", e.target.value)}
                   data-testid="input-termination-date"
                 />
-                <p className="text-xs text-[#94A3B8] mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Must be the last day of a calendar month. Setting it stops the renewal straight
                   away; services, PPRs and claims continue through the run-out window.
                 </p>
@@ -971,8 +968,8 @@ export default function ClientFormPage() {
                     <p
                       className={`text-xs mt-2 rounded-md px-3 py-2 ${
                         state === "CLOSED"
-                          ? "bg-[#EF4444]/10 text-[#EF4444]"
-                          : "bg-[#F59E0B]/10 text-[#B45309]"
+                          ? "bg-danger/10 text-danger"
+                          : "bg-warning/10 text-warning-strong"
                       }`}
                       data-testid="text-termination-effect"
                     >
@@ -989,7 +986,7 @@ export default function ClientFormPage() {
           <Button
             type="submit"
             disabled={mutation.isPending || codeChecking}
-            className="bg-[#1A5276] text-white gap-2"
+            className="bg-brand text-brand-foreground gap-2"
             data-testid="button-save"
           >
             <Save className="w-4 h-4" />

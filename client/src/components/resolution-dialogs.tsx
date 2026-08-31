@@ -46,15 +46,15 @@ export function ResolveDialog({
     <Dialog open onOpenChange={() => !isPending && onCancel()}>
       <DialogContent className="max-w-lg" data-testid="dialog-resolve">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">{title}</DialogTitle>
-          <DialogDescription className="text-xs text-[#94A3B8]">
-            {subject ? <span className="block truncate mb-1 text-[#2C3E50]">{subject}</span> : null}
+          <DialogTitle className="text-brand">{title}</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
+            {subject ? <span className="block truncate mb-1 text-foreground">{subject}</span> : null}
             Record what was done. This note is kept permanently as the record of how it was handled.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 mt-1">
-          <Label className="text-xs" htmlFor="resolution-note">What was done? <span className="text-[#EF4444]">*</span></Label>
+          <Label className="text-xs" htmlFor="resolution-note">What was done? <span className="text-danger">*</span></Label>
           <Textarea
             id="resolution-note"
             autoFocus
@@ -63,14 +63,14 @@ export function ResolveDialog({
             onBlur={() => setTouched(true)}
             rows={5}
             placeholder="e.g. Called Christina at Leavitt and re-sent the 2027 renewal packet."
-            className={`text-sm ${showError ? "border-[#EF4444] focus-visible:ring-[#EF4444]" : ""}`}
+            className={`text-sm ${showError ? "border-danger focus-visible:ring-danger" : ""}`}
             data-testid="textarea-resolution-note"
           />
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[#EF4444]" data-testid="text-resolution-error">
+            <span className="text-xs text-danger" data-testid="text-resolution-error">
               {showError ? check.error : ""}
             </span>
-            <span className={`text-xs tabular-nums ${remaining < 50 ? "text-[#F5A623]" : "text-[#94A3B8]"}`} data-testid="text-note-remaining">
+            <span className={`text-xs tabular-nums ${remaining < 50 ? "text-warning-strong" : "text-muted-foreground"}`} data-testid="text-note-remaining">
               {remaining} left
             </span>
           </div>
@@ -83,7 +83,7 @@ export function ResolveDialog({
           <Button
             onClick={submit}
             disabled={isPending || !check.ok}
-            className="bg-[#22C55E] hover:bg-[#16A34A] text-white gap-2"
+            className="bg-success hover:bg-success text-success-foreground gap-2"
             data-testid="button-confirm-resolve"
           >
             {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -116,9 +116,9 @@ export function AddToTodoDialog({
     <Dialog open onOpenChange={() => !isPending && onCancel()}>
       <DialogContent className="max-w-md" data-testid="dialog-add-todo">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Add to to-do list</DialogTitle>
-          <DialogDescription className="text-xs text-[#94A3B8]">
-            {subject ? <span className="block truncate mb-1 text-[#2C3E50]">{subject}</span> : null}
+          <DialogTitle className="text-brand">Add to to-do list</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
+            {subject ? <span className="block truncate mb-1 text-foreground">{subject}</span> : null}
             How urgent is this? It will sit in that section until it is resolved.
           </DialogDescription>
         </DialogHeader>
@@ -141,7 +141,7 @@ export function AddToTodoDialog({
                 <span className="text-sm font-semibold" style={{ color: style.text }}>
                   {PRIORITY_LABEL[p]}
                 </span>
-                <span className="block text-xs text-[#94A3B8] mt-0.5">
+                <span className="block text-xs text-muted-foreground mt-0.5">
                   {p === "URGENT" && "Needs chasing today."}
                   {p === "NORMAL" && "Work it in the usual course."}
                   {p === "CASUAL" && "No deadline pressure."}
@@ -158,7 +158,7 @@ export function AddToTodoDialog({
           <Button
             onClick={() => priority && onConfirm(priority)}
             disabled={isPending || !priority}
-            className="bg-[#1A5276] hover:bg-[#154360] text-white gap-2"
+            className="bg-brand hover:bg-brand-dark text-brand-foreground gap-2"
             data-testid="button-confirm-todo"
           >
             {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ListPlus className="w-4 h-4" />}

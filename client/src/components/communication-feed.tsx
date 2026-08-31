@@ -65,13 +65,13 @@ function AssignDialog({ comm, onClose }: { comm: FeedComm; onClose: () => void }
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md" data-testid="dialog-feed-assign">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Assign to a client</DialogTitle>
+          <DialogTitle className="text-brand">Assign to a client</DialogTitle>
         </DialogHeader>
-        <p className="text-xs text-[#94A3B8] -mt-2 truncate">
+        <p className="text-xs text-muted-foreground -mt-2 truncate">
           {comm.subject || "(no subject)"} — from {comm.senderName || comm.senderEmail}
         </p>
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             autoFocus value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search client name or code..." className="pl-8 text-sm"
@@ -79,18 +79,18 @@ function AssignDialog({ comm, onClose }: { comm: FeedComm; onClose: () => void }
           />
         </div>
         <div className="max-h-72 overflow-y-auto space-y-1">
-          {matches.length === 0 && <p className="text-xs text-[#94A3B8] py-4 text-center">No clients match "{search}".</p>}
+          {matches.length === 0 && <p className="text-xs text-muted-foreground py-4 text-center">No clients match "{search}".</p>}
           {matches.map(c => (
             <button
               key={c.id}
               onClick={() => assign.mutate(c.id)}
               disabled={assign.isPending}
-              className="w-full text-left px-3 py-2 rounded-md hover:bg-[#F0F4F8] flex items-center gap-2 disabled:opacity-50"
+              className="w-full text-left px-3 py-2 rounded-md hover:bg-surface-subtle flex items-center gap-2 disabled:opacity-50"
               data-testid={`button-feed-assign-${c.id}`}
             >
-              <Building2 className="w-3.5 h-3.5 text-[#94A3B8] flex-shrink-0" />
-              <span className="text-sm text-[#2C3E50] truncate">{c.clientName}</span>
-              <span className="text-[10px] text-[#94A3B8] ml-auto flex-shrink-0">{c.clientCode}</span>
+              <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              <span className="text-sm text-foreground truncate">{c.clientName}</span>
+              <span className="text-xs text-muted-foreground ml-auto flex-shrink-0">{c.clientCode}</span>
             </button>
           ))}
         </div>
@@ -117,41 +117,41 @@ function FeedRow({
     <div
       className={`border rounded-lg transition-all duration-500 ${
         fading ? "opacity-40" : "opacity-100"
-      } ${comm.isFollowUp ? "border-[#FECACA] bg-[#FEF2F2]" : "border-gray-100 bg-white hover:border-[#CBD5E1]"}`}
+      } ${comm.isFollowUp ? "border-danger-tint bg-danger-tint" : "border-border bg-card hover:border-border"}`}
       data-testid={`feed-row-${comm.id}`}
     >
       <div className="flex">
         {/* Red spine marks mail that is chasing us for something we owe. */}
-        <div className={`w-1 rounded-l-lg flex-shrink-0 ${comm.isFollowUp ? "bg-[#EF4444]" : "bg-transparent"}`} />
+        <div className={`w-1 rounded-l-lg flex-shrink-0 ${comm.isFollowUp ? "bg-danger" : "bg-transparent"}`} />
 
         <div className="flex-1 min-w-0 p-3">
           <div className="flex items-start justify-between gap-3">
             <button onClick={onOpen} className="min-w-0 text-left flex-1" data-testid={`button-open-comm-${comm.id}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 {unassigned ? (
-                  <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-[#F5A623] text-[#F5A623]">
+                  <Badge variant="outline" className="text-xs h-4 px-1.5 border-warning-strong text-warning-strong">
                     Unassigned
                   </Badge>
                 ) : (
-                  <span className="text-xs font-semibold text-[#1A5276] truncate" data-testid={`text-feed-client-${comm.id}`}>
+                  <span className="text-xs font-semibold text-brand truncate" data-testid={`text-feed-client-${comm.id}`}>
                     {comm.clientNames.join(", ")}
                   </span>
                 )}
                 {comm.isFollowUp && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#EF4444] uppercase tracking-wide">
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-danger uppercase tracking-wide">
                     <AlertTriangle className="w-3 h-3" /> Chasing us
                   </span>
                 )}
                 {comm.isInternal && (
-                  <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-[#1A5276] text-[#1A5276]">Internal</Badge>
+                  <Badge variant="outline" className="text-xs h-4 px-1.5 border-brand text-brand">Internal</Badge>
                 )}
               </div>
 
-              <p className="text-sm font-medium text-[#2C3E50] mt-1 truncate">
+              <p className="text-sm font-medium text-foreground mt-1 truncate">
                 {comm.subject || "(no subject)"}
               </p>
 
-              <p className="text-xs text-[#94A3B8] mt-0.5">
+              <p className="text-xs text-muted-foreground mt-0.5">
                 {sender}
                 <span className="mx-1.5">·</span>
                 <span title={format(new Date(comm.receivedAt), "PPpp")}>
@@ -160,7 +160,7 @@ function FeedRow({
                 {openTasks > 0 && (
                   <>
                     <span className="mx-1.5">·</span>
-                    <span className="inline-flex items-center gap-1 text-[#F5A623] font-medium">
+                    <span className="inline-flex items-center gap-1 text-warning-strong font-medium">
                       <CheckSquare className="w-3 h-3" />{openTasks} task{openTasks !== 1 ? "s" : ""}
                     </span>
                   </>
@@ -176,13 +176,13 @@ function FeedRow({
               </p>
 
               {comm.claudeSummary && (
-                <p className="text-xs text-[#2C3E50] mt-1.5 leading-relaxed line-clamp-2">
+                <p className="text-xs text-foreground mt-1.5 leading-relaxed line-clamp-2">
                   {comm.claudeSummary}
                 </p>
               )}
 
               {comm.isFollowUp && comm.followUpReason && (
-                <p className="text-[11px] text-[#EF4444] mt-1 leading-snug" data-testid={`text-followup-reason-${comm.id}`}>
+                <p className="text-xs text-danger mt-1 leading-snug" data-testid={`text-followup-reason-${comm.id}`}>
                   {comm.followUpReason}
                 </p>
               )}
@@ -193,7 +193,7 @@ function FeedRow({
             {fading ? (
               <Button
                 size="sm" variant="outline" onClick={onUndo}
-                className="h-7 text-xs gap-1.5 border-[#1A5276] text-[#1A5276]"
+                className="h-7 text-xs gap-1.5 border-brand text-brand"
                 data-testid={`button-undo-${comm.id}`}
               >
                 <Undo2 className="w-3 h-3" /> Undo
@@ -201,7 +201,7 @@ function FeedRow({
             ) : (
               <Button
                 size="sm" variant="outline" onClick={onRead} disabled={isBusy}
-                className="h-7 text-xs gap-1.5 text-[#22C55E] border-[#BBF7D0] hover:bg-[#F0FDF4]"
+                className="h-7 text-xs gap-1.5 text-success border-success-tint hover:bg-success-tint"
                 data-testid={`button-read-no-task-${comm.id}`}
               >
                 {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
@@ -210,7 +210,7 @@ function FeedRow({
             )}
             <Button
               size="sm" variant="ghost" onClick={onOpen}
-              className="h-7 text-xs gap-1.5 text-[#1A5276] hover:bg-[#F0F4F8]"
+              className="h-7 text-xs gap-1.5 text-brand hover:bg-surface-subtle"
               data-testid={`button-go-to-client-${comm.id}`}
             >
               {comm.clientIds.length === 0 ? "Assign to client" : "Go to client"}
@@ -305,14 +305,14 @@ export default function CommunicationFeed() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Inbox className="w-4 h-4 text-[#1A5276]" />
-            <h3 className="text-sm font-semibold text-[#1A5276]">Communications to triage</h3>
-            <span className="text-xs text-[#94A3B8]" data-testid="text-feed-count">
+            <Inbox className="w-4 h-4 text-brand" />
+            <h3 className="text-sm font-semibold text-brand">Communications to triage</h3>
+            <span className="text-xs text-muted-foreground" data-testid="text-feed-count">
               {isLoading ? "" : `${rows.length}`}
             </span>
           </div>
           {followUps > 0 && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#EF4444]" data-testid="text-followup-count">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-danger" data-testid="text-followup-count">
               <AlertTriangle className="w-3 h-3" />
               {followUps} chasing us
             </span>
@@ -324,9 +324,9 @@ export default function CommunicationFeed() {
           <div className="space-y-2">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
         ) : rows.length === 0 ? (
           <div className="py-10 text-center">
-            <Sparkles className="w-8 h-8 text-[#22C55E] mx-auto mb-2" />
-            <p className="text-sm font-medium text-[#2C3E50]">Nothing left to triage.</p>
-            <p className="text-xs text-[#94A3B8] mt-1">Every message has been read or resolved.</p>
+            <Sparkles className="w-8 h-8 text-success mx-auto mb-2" />
+            <p className="text-sm font-medium text-foreground">Nothing left to triage.</p>
+            <p className="text-xs text-muted-foreground mt-1">Every message has been read or resolved.</p>
           </div>
         ) : (
           <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1" data-testid="list-communication-feed">

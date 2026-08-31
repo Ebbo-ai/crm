@@ -61,3 +61,31 @@ plan year N left unfinished into N+1 is overdue against its own year-N anniversa
 
 **How to apply:** the next-occurrence projection is only for deciding *which* plan year
 to open. All warning math uses the renewal's own plan year.
+
+## The dashboard renewal boxes come from one selector, not per-box queries
+
+Upcoming / Current / Complete are computed by a single shared classifier that walks
+clients once and returns all three lists already sorted. The boxes are mutually
+exclusive by construction, and the classifier throws if a client is ever assigned twice.
+
+**Why:** three independent queries drift. The dashboard previously derived its own
+overdue logic from plan-level `effectiveDate` / `isRenewalComplete` while the client
+record read the `renewals` table, so the two screens disagreed about the same client.
+
+**How to apply:** anything renewal-shaped on the dashboard reads the `renewals` table
+plus `clients.anniversaryDate`. Never resurrect the plan-level derivation. New buckets
+go inside the existing classifier, not into a new query.
+
+## A renewal not yet started, inside the send deadline, is deliberately not marked late
+
+The written rule places LATE only in the Current box, but the Upcoming box is defined as
+"no pipeline work started and 0-30 days out". An unstarted renewal at, say, 10 days out
+therefore sits in Upcoming with no LATE badge, even though it has already missed the
+14-day send deadline.
+
+**Why:** this is what the spec says, literally. It is a real tension in the rules rather
+than an implementation slip, so it was left as written and raised rather than silently
+"fixed" by moving unstarted-but-overdue renewals into Current.
+
+**How to apply:** if asked to make late-but-unstarted renewals visible, the change is a
+bucket-membership decision for the user to make, not a bug fix. Confirm before moving it.

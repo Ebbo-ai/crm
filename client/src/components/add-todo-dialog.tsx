@@ -113,8 +113,8 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={() => !busy && onClose()}>
       <DialogContent className="max-w-lg" data-testid="dialog-add-todo-manual">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">Add a to-do</DialogTitle>
-          <DialogDescription className="text-xs text-[#94A3B8]">
+          <DialogTitle className="text-brand">Add a to-do</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
             {step === "write"
               ? "Write it the way you would say it. The client is worked out for you."
               : "Check who this belongs to before it is saved."}
@@ -132,10 +132,10 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
               className="text-sm"
               data-testid="textarea-todo-text"
             />
-            <p className="text-[10px] text-[#94A3B8] -mt-3">{text.length}/500</p>
+            <p className="text-xs text-muted-foreground -mt-3">{text.length}/500</p>
 
             <div>
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Priority</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Priority</p>
               <div className="grid grid-cols-3 gap-2">
                 {TASK_PRIORITIES.map(p => {
                   const style = PRIORITY_STYLE[p];
@@ -167,7 +167,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
               <Button
                 onClick={() => match.mutate()}
                 disabled={!text.trim() || busy}
-                className="bg-[#1A5276] text-white gap-1.5"
+                className="bg-brand text-brand-foreground gap-1.5"
                 data-testid="button-find-clients"
               >
                 {match.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -177,10 +177,10 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="p-2.5 rounded-md bg-[#F8FAFC] border border-gray-100">
-              <p className="text-sm text-[#2C3E50] leading-snug">{text.trim()}</p>
+            <div className="p-2.5 rounded-md bg-surface-subtle border border-border">
+              <p className="text-sm text-foreground leading-snug">{text.trim()}</p>
               <span
-                className="inline-block mt-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                className="inline-block mt-1.5 text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
                 style={{ color: PRIORITY_STYLE[priority].text, backgroundColor: PRIORITY_STYLE[priority].bg }}
               >
                 {PRIORITY_LABEL[priority]}
@@ -188,17 +188,17 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                 {attached.length === 0 ? "No client" : attached.length === 1 ? "Client" : "Clients"}
               </p>
 
               {attached.length === 0 ? (
-                <div className="p-2.5 rounded-md border border-dashed border-[#CBD5E1] bg-white" data-testid="text-todo-general">
-                  <p className="text-xs text-[#2C3E50] inline-flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-[#1A5276]" />
+                <div className="p-2.5 rounded-md border border-dashed border-border bg-card" data-testid="text-todo-general">
+                  <p className="text-xs text-foreground inline-flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-brand" />
                     This is a general to-do
                   </p>
-                  <p className="text-[10px] text-[#94A3B8] mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     It goes on the general list and on the main to-do list, not on a client record.
                   </p>
                 </div>
@@ -207,19 +207,19 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                   {attached.map(c => (
                     <div
                       key={c.clientId}
-                      className="flex items-center gap-2 p-2 rounded-md border border-gray-200 bg-white"
+                      className="flex items-center gap-2 p-2 rounded-md border border-border bg-card"
                       data-testid={`chip-todo-client-${c.clientId}`}
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-[#2C3E50] truncate">{c.clientName}</p>
-                        <p className="text-[10px] text-[#94A3B8]">
+                        <p className="text-xs font-medium text-foreground truncate">{c.clientName}</p>
+                        <p className="text-xs text-muted-foreground">
                           {c.clientCode} · {CONFIDENCE_LABEL[c.confidence] ?? c.confidence}
                         </p>
                       </div>
                       <Button
                         size="sm" variant="ghost"
                         onClick={() => setAttached(prev => prev.filter(x => x.clientId !== c.clientId))}
-                        className="h-6 w-6 p-0 text-[#94A3B8] hover:text-[#EF4444]"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-danger"
                         title="Remove"
                         data-testid={`button-remove-todo-client-${c.clientId}`}
                       >
@@ -241,7 +241,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                     data-testid="input-search-todo-client"
                   />
                   {searchResults.length > 0 && (
-                    <div className="mt-1 border rounded-md divide-y bg-white max-h-44 overflow-y-auto">
+                    <div className="mt-1 border rounded-md divide-y bg-card max-h-44 overflow-y-auto">
                       {searchResults.map(c => (
                         <button
                           key={c.id}
@@ -253,10 +253,10 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                             setSearch("");
                             setAdding(false);
                           }}
-                          className="w-full text-left px-2.5 py-1.5 text-xs text-[#2C3E50] hover:bg-[#F0F4F8]"
+                          className="w-full text-left px-2.5 py-1.5 text-xs text-foreground hover:bg-surface-subtle"
                           data-testid={`button-pick-todo-client-${c.id}`}
                         >
-                          {c.clientName} <span className="text-[#94A3B8]">{c.clientCode}</span>
+                          {c.clientName} <span className="text-muted-foreground">{c.clientCode}</span>
                         </button>
                       ))}
                     </div>
@@ -267,7 +267,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                   <Button
                     size="sm" variant="ghost"
                     onClick={() => setAdding(true)}
-                    className="h-7 px-2 text-[10px] gap-1 text-[#1A5276] hover:bg-[#F0F4F8]"
+                    className="h-7 px-2 text-xs gap-1 text-brand hover:bg-surface-subtle"
                     data-testid="button-add-todo-client"
                   >
                     <Plus className="w-3 h-3" /> Add a client
@@ -276,7 +276,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                     <Button
                       size="sm" variant="ghost"
                       onClick={() => setAttached([])}
-                      className="h-7 px-2 text-[10px] text-[#94A3B8] hover:text-[#1A5276]"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-brand"
                       data-testid="button-make-todo-general"
                     >
                       Make it general
@@ -289,7 +289,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
             <div className="flex justify-between gap-2">
               <Button
                 variant="ghost" onClick={() => setStep("write")} disabled={busy}
-                className="text-xs text-[#94A3B8]"
+                className="text-xs text-muted-foreground"
                 data-testid="button-back-new-todo"
               >
                 Back
@@ -301,7 +301,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
                 <Button
                   onClick={() => save.mutate()}
                   disabled={busy}
-                  className="bg-[#1A5276] text-white gap-1.5"
+                  className="bg-brand text-brand-foreground gap-1.5"
                   data-testid="button-save-new-todo"
                 >
                   {save.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

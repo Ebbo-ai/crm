@@ -72,14 +72,14 @@ function AddTaskForm({ commId, clientId, onDone }: { commId: number; clientId: n
   });
 
   return (
-    <div className="p-2.5 rounded-md border border-dashed border-[#CBD5E1] bg-[#F8FAFC] space-y-2">
+    <div className="p-2.5 rounded-md border border-dashed border-border bg-surface-subtle space-y-2">
       <Textarea
         autoFocus
         value={description}
         onChange={e => setDescription(e.target.value.slice(0, 500))}
         rows={2}
         placeholder="What needs doing?"
-        className="text-xs bg-white"
+        className="text-xs bg-card"
         data-testid={`textarea-new-task-${commId}`}
       />
       <div className="flex items-center gap-2">
@@ -98,7 +98,7 @@ function AddTaskForm({ commId, clientId, onDone }: { commId: number; clientId: n
             size="sm"
             onClick={() => create.mutate()}
             disabled={!description.trim() || create.isPending}
-            className="h-7 text-xs bg-[#1A5276] text-white gap-1.5"
+            className="h-7 text-xs bg-brand text-brand-foreground gap-1.5"
             data-testid={`button-save-task-${commId}`}
           >
             {create.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
@@ -152,79 +152,79 @@ function CommCard({
     <div ref={ref}>
       <Card
         className={`border shadow-none transition-all ${
-          focused ? "border-[#2E86C1] ring-2 ring-[#2E86C1]/30" :
-          comm.isFollowUp && !isResolved ? "border-[#FECACA] bg-[#FEF2F2]" : "border-gray-100"
+          focused ? "border-brand-accent ring-2 ring-brand-accent/30" :
+          comm.isFollowUp && !isResolved ? "border-danger-tint bg-danger-tint" : "border-border"
         }`}
         data-testid={`comm-card-${comm.id}`}
       >
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold ${comm.isInternal ? "bg-[#1A5276]" : "bg-[#2E86C1]"}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-brand-foreground text-xs font-bold ${comm.isInternal ? "bg-brand" : "bg-brand-accent"}`}>
                 {senderLabel.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-[#2C3E50]" data-testid={`text-sender-${comm.id}`}>{senderLabel}</span>
+                  <span className="text-sm font-semibold text-foreground" data-testid={`text-sender-${comm.id}`}>{senderLabel}</span>
                   {comm.isFollowUp && !isResolved && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#EF4444] uppercase tracking-wide">
+                    <span className="inline-flex items-center gap-1 text-xs font-bold text-danger uppercase tracking-wide">
                       <AlertTriangle className="w-3 h-3" /> Chasing us
                     </span>
                   )}
-                  {comm.isInternal && <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-[#1A5276] text-[#1A5276]">Internal</Badge>}
-                  {comm.source === "manual" && <Badge variant="outline" className="text-[10px] h-4 px-1.5 border-[#94A3B8] text-[#94A3B8]">Manual</Badge>}
+                  {comm.isInternal && <Badge variant="outline" className="text-xs h-4 px-1.5 border-brand text-brand">Internal</Badge>}
+                  {comm.source === "manual" && <Badge variant="outline" className="text-xs h-4 px-1.5 border-muted-foreground text-muted-foreground">Manual</Badge>}
                   {comm.senderDomain && !comm.isInternal && (
-                    <span className="text-[10px] text-[#94A3B8]">@{comm.senderDomain}</span>
+                    <span className="text-xs text-muted-foreground">@{comm.senderDomain}</span>
                   )}
                 </div>
-                <p className="text-sm text-[#2C3E50] font-medium mt-0.5 truncate">{comm.subject || "(no subject)"}</p>
-                <p className="text-xs text-[#94A3B8] mt-0.5" title={format(new Date(comm.receivedAt), "PPpp")}>{timeAgo}</p>
+                <p className="text-sm text-foreground font-medium mt-0.5 truncate">{comm.subject || "(no subject)"}</p>
+                <p className="text-xs text-muted-foreground mt-0.5" title={format(new Date(comm.receivedAt), "PPpp")}>{timeAgo}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               {comm.attachments.length > 0 && (
-                <span className="flex items-center gap-1 text-xs text-[#94A3B8]">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Paperclip className="w-3 h-3" />{comm.attachments.length}
                 </span>
               )}
               {openTasks > 0 && (
-                <span className="flex items-center gap-1 text-xs text-[#F5A623] font-medium">
+                <span className="flex items-center gap-1 text-xs text-warning-strong font-medium">
                   <CheckSquare className="w-3 h-3" />{openTasks}
                 </span>
               )}
-              <button onClick={() => setExpanded(v => !v)} className="text-[#94A3B8] hover:text-[#1A5276] p-1" data-testid={`button-expand-${comm.id}`}>
+              <button onClick={() => setExpanded(v => !v)} className="text-muted-foreground hover:text-brand p-1" data-testid={`button-expand-${comm.id}`}>
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
           {comm.isFollowUp && comm.followUpReason && !isResolved && (
-            <p className="text-[11px] text-[#EF4444] mt-2 leading-snug" data-testid={`text-followup-reason-${comm.id}`}>
+            <p className="text-xs text-danger mt-2 leading-snug" data-testid={`text-followup-reason-${comm.id}`}>
               {comm.followUpReason}
             </p>
           )}
 
           {comm.claudeSummary && (
-            <div className="mt-3 p-3 bg-[#F0F4F8] rounded-lg">
+            <div className="mt-3 p-3 bg-surface-subtle rounded-lg">
               <div className="flex items-center gap-1.5 mb-1">
-                <Sparkles className="w-3 h-3 text-[#F5A623]" />
-                <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wide">AI Summary</span>
+                <Sparkles className="w-3 h-3 text-warning-strong" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">AI Summary</span>
               </div>
-              <p className="text-sm text-[#2C3E50] leading-relaxed">{comm.claudeSummary}</p>
+              <p className="text-sm text-foreground leading-relaxed">{comm.claudeSummary}</p>
             </div>
           )}
 
           {/* How it was closed out, kept visible on the resolved list. */}
           {isResolved && (
-            <div className="mt-3 p-3 rounded-lg bg-[#F0FDF4] border border-[#BBF7D0]" data-testid={`text-resolution-${comm.id}`}>
+            <div className="mt-3 p-3 rounded-lg bg-success-tint border border-success-tint" data-testid={`text-resolution-${comm.id}`}>
               <div className="flex items-center gap-1.5 mb-1">
-                <CheckCircle2 className="w-3 h-3 text-[#22C55E]" />
-                <span className="text-[10px] font-semibold text-[#22C55E] uppercase tracking-wide">
+                <CheckCircle2 className="w-3 h-3 text-success" />
+                <span className="text-xs font-semibold text-success uppercase tracking-wide">
                   {comm.resolutionType === "READ_NO_TASK" ? "Read, no task needed" : "Resolved"}
                 </span>
               </div>
-              <p className="text-sm text-[#2C3E50] leading-relaxed">{comm.resolutionNote}</p>
-              <p className="text-[10px] text-[#94A3B8] mt-1 inline-flex items-center gap-1">
+              <p className="text-sm text-foreground leading-relaxed">{comm.resolutionNote}</p>
+              <p className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
                 {comm.resolvedAt && format(new Date(comm.resolvedAt), "MMMM d, yyyy 'at' h:mm a")}
                 {comm.resolvedBy && <><User className="w-2.5 h-2.5 ml-1" />{comm.resolvedBy}</>}
               </p>
@@ -234,20 +234,20 @@ function CommCard({
           {expanded && (
             <div className="mt-3 space-y-3">
               {comm.bodyText && (
-                <div className="border rounded-lg p-3 bg-white">
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Full Email</p>
-                  <pre className="text-xs text-[#2C3E50] whitespace-pre-wrap font-sans leading-relaxed max-h-64 overflow-y-auto">{comm.bodyText}</pre>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Full Email</p>
+                  <pre className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed max-h-64 overflow-y-auto">{comm.bodyText}</pre>
                 </div>
               )}
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide">Tasks</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tasks</p>
                   {!addingTask && (
                     <Button
                       size="sm" variant="ghost"
                       onClick={() => setAddingTask(true)}
-                      className="h-6 px-2 text-[10px] gap-1 text-[#1A5276] hover:bg-[#F0F4F8]"
+                      className="h-6 px-2 text-xs gap-1 text-brand hover:bg-surface-subtle"
                       data-testid={`button-add-task-${comm.id}`}
                     >
                       <Plus className="w-3 h-3" /> Add new
@@ -256,7 +256,7 @@ function CommCard({
                 </div>
                 <div className="space-y-1.5">
                   {comm.tasks.length === 0 && !addingTask && (
-                    <p className="text-xs text-[#94A3B8]">No tasks on this message.</p>
+                    <p className="text-xs text-muted-foreground">No tasks on this message.</p>
                   )}
                   {comm.tasks.map(task => (
                     <TaskRow
@@ -273,18 +273,18 @@ function CommCard({
 
               {comm.attachments.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide mb-2">Attachments</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Attachments</p>
                   <div className="flex flex-wrap gap-2">
                     {comm.attachments.map(att => (
                       <a
                         key={att.id}
                         href={`/api/communication-attachments/${att.id}/download`}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-xs text-[#2E86C1] hover:bg-[#F0F4F8] transition-colors"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 border rounded-md text-xs text-brand-accent hover:bg-surface-subtle transition-colors"
                         data-testid={`attachment-link-${att.id}`}
                       >
                         <Download className="w-3 h-3" />
                         {att.filename}
-                        {att.sizeBytes && <span className="text-[#94A3B8]">({Math.round(att.sizeBytes / 1024)}KB)</span>}
+                        {att.sizeBytes && <span className="text-muted-foreground">({Math.round(att.sizeBytes / 1024)}KB)</span>}
                       </a>
                     ))}
                   </div>
@@ -298,7 +298,7 @@ function CommCard({
               <Button
                 size="sm" variant="outline"
                 onClick={() => setResolving(true)}
-                className="h-7 text-xs gap-1.5 text-[#22C55E] border-[#BBF7D0] hover:bg-[#F0FDF4]"
+                className="h-7 text-xs gap-1.5 text-success border-success-tint hover:bg-success-tint"
                 data-testid={`button-resolve-comm-${comm.id}`}
               >
                 <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
@@ -378,7 +378,7 @@ function AddManualDialog({ clientId, onClose }: { clientId: number; onClose: () 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose} data-testid="button-cancel-comm">Cancel</Button>
             <Button onClick={() => mutation.mutate()} disabled={!form.senderEmail || !form.bodyText || mutation.isPending}
-              className="bg-[#1A5276] text-white gap-2" data-testid="button-submit-comm">
+              className="bg-brand text-brand-foreground gap-2" data-testid="button-submit-comm">
               {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
               {mutation.isPending ? "Processing with AI..." : "Save & Summarize"}
             </Button>
@@ -444,8 +444,8 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4">
           <div className="flex items-center gap-2 mb-3">
-            <Sparkles className="w-4 h-4 text-[#F5A623]" />
-            <span className="text-sm font-semibold text-[#1A5276]">Ask AI about communications</span>
+            <Sparkles className="w-4 h-4 text-warning-strong" />
+            <span className="text-sm font-semibold text-brand">Ask AI about communications</span>
           </div>
           <div className="flex gap-2">
             <Input
@@ -457,14 +457,14 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
               data-testid="input-ask-ai"
             />
             <Button onClick={handleAsk} disabled={!askQuestion.trim() || askLoading}
-              className="bg-[#F5A623] hover:bg-[#e6971f] text-white gap-2 flex-shrink-0" data-testid="button-ask-ai">
+              className="bg-gold hover:bg-gold-hover text-gold-foreground gap-2 flex-shrink-0" data-testid="button-ask-ai">
               {askLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               Ask
             </Button>
           </div>
           {aiAnswer && (
-            <div className="mt-3 p-3 bg-[#F0F4F8] rounded-lg border border-[#2E86C1]/20">
-              <p className="text-sm text-[#2C3E50] leading-relaxed whitespace-pre-wrap" data-testid="text-ai-answer">{aiAnswer}</p>
+            <div className="mt-3 p-3 bg-surface-subtle rounded-lg border border-brand-accent/20">
+              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap" data-testid="text-ai-answer">{aiAnswer}</p>
             </div>
           )}
         </CardContent>
@@ -472,11 +472,11 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
 
       {/* Active / Resolved split */}
       <div className="flex items-center justify-between">
-        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-white">
+        <div className="inline-flex rounded-lg border border-border p-0.5 bg-card">
           <button
             onClick={() => setView("active")}
             className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              view === "active" ? "bg-[#1A5276] text-white" : "text-[#94A3B8] hover:text-[#1A5276]"
+              view === "active" ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-brand"
             }`}
             data-testid="button-view-active"
           >
@@ -485,7 +485,7 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
           <button
             onClick={() => setView("resolved")}
             className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              view === "resolved" ? "bg-[#1A5276] text-white" : "text-[#94A3B8] hover:text-[#1A5276]"
+              view === "resolved" ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-brand"
             }`}
             data-testid="button-view-resolved"
           >
@@ -493,7 +493,7 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
           </button>
         </div>
         <Button onClick={() => setShowAdd(true)} variant="outline" size="sm"
-          className="gap-1.5 text-[#1A5276] border-[#1A5276]" data-testid="button-add-communication">
+          className="gap-1.5 text-brand border-brand" data-testid="button-add-communication">
           <Plus className="w-3.5 h-3.5" /> Add Communication
         </Button>
       </div>
@@ -505,10 +505,10 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
         <Card className="border-0 shadow-sm" data-testid="card-manual-todos">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2.5">
-              <ListTodo className="w-4 h-4 text-[#1A5276]" />
-              <span className="text-sm font-semibold text-[#1A5276]">Added by hand</span>
-              <span className="text-xs text-[#94A3B8]">{manualTodos.length}</span>
-              <span className="text-[10px] text-[#94A3B8] ml-1">no email behind these</span>
+              <ListTodo className="w-4 h-4 text-brand" />
+              <span className="text-sm font-semibold text-brand">Added by hand</span>
+              <span className="text-xs text-muted-foreground">{manualTodos.length}</span>
+              <span className="text-xs text-muted-foreground ml-1">no email behind these</span>
             </div>
             <div className="space-y-1.5">
               {manualTodos.map(t => (
@@ -529,20 +529,20 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
       {isLoading ? (
         <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : comms.length === 0 ? (
-        <Card className="border-dashed border-2 border-[#E2E8F0]">
+        <Card className="border-dashed border-2 border-border">
           <CardContent className="py-12 text-center">
-            <Mail className="w-10 h-10 text-[#94A3B8] mx-auto mb-3" />
-            <p className="text-sm font-medium text-[#94A3B8]">No communications yet</p>
-            <p className="text-xs text-[#94A3B8] mt-1">Forward emails to your Mailgun address or add them manually</p>
-            <Button onClick={() => setShowAdd(true)} className="mt-4 bg-[#1A5276] text-white gap-2" size="sm" data-testid="button-add-first-comm">
+            <Mail className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+            <p className="text-sm font-medium text-muted-foreground">No communications yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Forward emails to your Mailgun address or add them manually</p>
+            <Button onClick={() => setShowAdd(true)} className="mt-4 bg-brand text-brand-foreground gap-2" size="sm" data-testid="button-add-first-comm">
               <Plus className="w-3.5 h-3.5" /> Add Communication
             </Button>
           </CardContent>
         </Card>
       ) : shown.length === 0 ? (
-        <Card className="border-dashed border-2 border-[#E2E8F0]">
+        <Card className="border-dashed border-2 border-border">
           <CardContent className="py-10 text-center">
-            <p className="text-sm text-[#94A3B8]">
+            <p className="text-sm text-muted-foreground">
               {view === "active" ? "Nothing outstanding for this client." : "Nothing has been resolved yet."}
             </p>
           </CardContent>

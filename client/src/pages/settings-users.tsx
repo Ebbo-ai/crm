@@ -26,57 +26,57 @@ export default function SettingsUsersPage() {
     <div data-testid="settings-page">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-[#1A5276]">User Management</h1>
-          <p className="text-sm text-[#94A3B8] mt-1">Manage system users and permissions</p>
+          <h1 className="text-2xl font-bold text-brand">User Management</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage system users and permissions</p>
         </div>
-        <Button onClick={() => { setEditingUser(null); setShowForm(true); }} className="bg-[#1A5276] text-white gap-2" data-testid="button-add-user">
+        <Button onClick={() => { setEditingUser(null); setShowForm(true); }} className="bg-brand text-brand-foreground gap-2" data-testid="button-add-user">
           <Plus className="w-4 h-4" /> Add User
         </Button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+      <div className="bg-card rounded-lg shadow-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b bg-[#F0F4F8]">
-              <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">User</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase hidden md:table-cell">Email</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Role</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-[#94A3B8] uppercase">Status</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-[#94A3B8] uppercase">Actions</th>
+            <tr className="border-b bg-surface-subtle">
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">User</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase hidden md:table-cell">Email</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Role</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase">Actions</th>
             </tr>
           </thead>
           <tbody>
             {users.map((u: any, i: number) => (
-              <tr key={u.id} className={`border-b hover:bg-[#F0F4F8]/50 transition-colors ${!u.isActive ? "opacity-50" : ""}`} data-testid={`user-row-${u.id}`}>
+              <tr key={u.id} className={`border-b hover:bg-surface-subtle/50 transition-colors ${!u.isActive ? "opacity-50" : ""}`} data-testid={`user-row-${u.id}`}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                      u.role === "ADMIN" ? "bg-[#F5A623]/10 text-[#F5A623]" : "bg-[#2E86C1]/10 text-[#2E86C1]"
+                      u.role === "ADMIN" ? "bg-gold/10 text-warning-strong" : "bg-brand-accent/10 text-brand-accent"
                     }`}>
                       {u.fullName.charAt(0)}
                     </div>
-                    <span className="font-medium text-[#2C3E50]">{u.fullName}</span>
+                    <span className="font-medium text-foreground">{u.fullName}</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell text-[#94A3B8]">{u.email}</td>
+                <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{u.email}</td>
                 <td className="px-4 py-3">
-                  <span className={`text-[10px] px-2 py-1 rounded-full font-medium flex items-center gap-1 w-fit ${
-                    u.role === "ADMIN" ? "bg-[#F5A623]/10 text-[#F5A623]" : "bg-[#2E86C1]/10 text-[#2E86C1]"
+                  <span className={`text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 w-fit ${
+                    u.role === "ADMIN" ? "bg-gold/10 text-warning-strong" : "bg-brand-accent/10 text-brand-accent"
                   }`}>
                     {u.role === "ADMIN" ? <Shield className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
                     {u.role}
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${
-                    u.isActive ? "bg-[#22C55E]/10 text-[#22C55E]" : "bg-[#EF4444]/10 text-[#EF4444]"
+                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                    u.isActive ? "bg-success/10 text-success" : "bg-danger/10 text-danger"
                   }`}>
                     {u.isActive ? "Active" : "Inactive"}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Button size="icon" variant="ghost" onClick={() => { setEditingUser(u); setShowForm(true); }} data-testid={`button-edit-user-${u.id}`}>
-                    <Edit className="w-4 h-4 text-[#2E86C1]" />
+                    <Edit className="w-4 h-4 text-brand-accent" />
                   </Button>
                 </td>
               </tr>
@@ -155,23 +155,23 @@ function UserFormDialog({ open, onClose, user, currentUserId }: { open: boolean;
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-[#1A5276]">{isEdit ? "Edit User" : "Add New User"}</DialogTitle>
+          <DialogTitle className="text-brand">{isEdit ? "Edit User" : "Add New User"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label className="text-sm font-medium">Full Name <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Full Name <span className="text-danger">*</span></Label>
             <Input value={form.fullName} onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))} data-testid="input-user-name" />
-            {errors.fullName && <p className="text-xs text-[#EF4444] mt-1">{errors.fullName}</p>}
+            {errors.fullName && <p className="text-xs text-danger mt-1">{errors.fullName}</p>}
           </div>
           <div>
-            <Label className="text-sm font-medium">Email <span className="text-[#EF4444]">*</span></Label>
+            <Label className="text-sm font-medium">Email <span className="text-danger">*</span></Label>
             <Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} data-testid="input-user-email" />
-            {errors.email && <p className="text-xs text-[#EF4444] mt-1">{errors.email}</p>}
+            {errors.email && <p className="text-xs text-danger mt-1">{errors.email}</p>}
           </div>
           <div>
-            <Label className="text-sm font-medium">{isEdit ? "New Password" : "Password"} {!isEdit && <span className="text-[#EF4444]">*</span>}</Label>
+            <Label className="text-sm font-medium">{isEdit ? "New Password" : "Password"} {!isEdit && <span className="text-danger">*</span>}</Label>
             <Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder={isEdit ? "Leave blank to keep current" : ""} data-testid="input-user-password" />
-            {errors.password && <p className="text-xs text-[#EF4444] mt-1">{errors.password}</p>}
+            {errors.password && <p className="text-xs text-danger mt-1">{errors.password}</p>}
             {form.password && (
               <div className="mt-1.5 flex gap-1">
                 {[
@@ -181,7 +181,7 @@ function UserFormDialog({ open, onClose, user, currentUserId }: { open: boolean;
                   /\d/.test(form.password),
                   /[!@#$%^&*]/.test(form.password),
                 ].map((ok, i) => (
-                  <div key={i} className={`h-1 flex-1 rounded-full ${ok ? "bg-[#22C55E]" : "bg-gray-200"}`} />
+                  <div key={i} className={`h-1 flex-1 rounded-full ${ok ? "bg-success" : "bg-muted"}`} />
                 ))}
               </div>
             )}
@@ -190,7 +190,7 @@ function UserFormDialog({ open, onClose, user, currentUserId }: { open: boolean;
             <div>
               <Label className="text-sm font-medium">Confirm Password</Label>
               <Input type="password" value={form.confirmPassword} onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))} data-testid="input-user-confirm-password" />
-              {errors.confirmPassword && <p className="text-xs text-[#EF4444] mt-1">{errors.confirmPassword}</p>}
+              {errors.confirmPassword && <p className="text-xs text-danger mt-1">{errors.confirmPassword}</p>}
             </div>
           )}
           <div>
@@ -207,11 +207,11 @@ function UserFormDialog({ open, onClose, user, currentUserId }: { open: boolean;
             <div className="flex items-center gap-3">
               <Switch checked={form.isActive} onCheckedChange={v => setForm(f => ({ ...f, isActive: v }))} data-testid="switch-user-active" />
               <Label className="text-sm">{form.isActive ? "Active" : "Inactive"}</Label>
-              {errors.isActive && <p className="text-xs text-[#EF4444]">{errors.isActive}</p>}
+              {errors.isActive && <p className="text-xs text-danger">{errors.isActive}</p>}
             </div>
           )}
           <div className="flex gap-2 pt-2">
-            <Button type="submit" disabled={mutation.isPending} className="bg-[#1A5276] text-white" data-testid="button-save-user">
+            <Button type="submit" disabled={mutation.isPending} className="bg-brand text-brand-foreground" data-testid="button-save-user">
               {mutation.isPending ? "Saving..." : isEdit ? "Update User" : "Create User"}
             </Button>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
