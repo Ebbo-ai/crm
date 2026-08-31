@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Edit, Mail, Phone, Building2, Landmark, CreditCard, History, UserPlus, FileText, Loader2, AlertCircle, CheckCircle2, Circle, CalendarClock } from "lucide-react";
 import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/lib/constants";
 import { ClientStateBadge, clientStateSummary } from "@/components/client-state-badge";
+import { BrokerFirmSelect } from "@/components/broker-firm-select";
 import { getClientCompleteness } from "@/lib/client-completeness";
 import {
   getRenewalTimingWarning, getProposalDueDate,
@@ -848,15 +849,29 @@ function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
           <DialogHeader>
             <DialogTitle className="text-brand">Change Broker</DialogTitle>
           </DialogHeader>
+          <div
+            className="rounded-md border border-border bg-surface-subtle p-3 text-xs text-foreground space-y-1"
+            data-testid="note-broker-replacement"
+          >
+            <p className="font-medium">This replaces the broker with a new one.</p>
+            <p className="text-muted-foreground">
+              Use this when the client is moving to a different broker or a different brokerage
+              firm. The current broker is retired as of the effective date below and the change is
+              recorded in the broker history.
+            </p>
+            <p className="text-muted-foreground">
+              To correct the name, phone, address or contact of the broker they already have, use
+              Edit Client instead. That is not a replacement and does not belong here.
+            </p>
+          </div>
           <form onSubmit={handleSubmit} className="space-y-4 pt-1">
             <div className="space-y-1.5">
               <Label htmlFor="cb-firm">Broker Firm Name <span className="text-danger">*</span></Label>
-              <Input
+              <BrokerFirmSelect
                 id="cb-firm"
                 value={form.brokerFirmName}
-                onChange={e => setForm(f => ({ ...f, brokerFirmName: e.target.value }))}
-                placeholder="e.g. Acme Insurance Group"
-                data-testid="input-broker-firm"
+                onChange={v => setForm(f => ({ ...f, brokerFirmName: v }))}
+                testId="input-broker-firm"
               />
             </div>
             <div className="space-y-1.5">

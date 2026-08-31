@@ -164,6 +164,7 @@ export interface IStorage {
   getClientTasks(clientId: number): Promise<DecoratedTask[]>;
   getUnreadCommunicationsCount(): Promise<number>;
 
+  getBrokerFirms(): Promise<{ name: string; clientCount: number }[]>;
   getBrokerHistory(clientId: number): Promise<BrokerHistory[]>;
   addBrokerChange(clientId: number, newBroker: { brokerFirmName: string | null; brokerContactName: string | null; brokerPhone: string | null; brokerEmail: string | null; effectiveDate: Date }): Promise<void>;
 
@@ -1615,6 +1616,67 @@ export class DatabaseStorage implements IStorage {
         .orderBy(asc(plans.effectiveDate));
       return { ...c, plans: clientPlans };
     }));
+  }
+
+  /**
+   * The brokerage firms already on file, for the firm picker.
+   *
+   * There is no brokerage table: firm identity lives as text on the clients that
+   * carry it, so the list of firms is whatever is already in use. History is folded
+   * in as well, otherwise a firm a client has moved away from would vanish from the
+   * picker and get retyped as a fresh variant the next time it came up.
+   *
+   * "N/A" is excluded because it is not a firm, it is how a missing broker was
+   * spelled before the flag existed.
+   */
+  async getBrokerFirms(): Promise<{ name: string; clientCount: number }[]> {
+    const inUse = await db.select({
+      name: sql<string>`btrim(${clients.brokerFirmName})`,
+      clientCount: count(),
+    }).from(clients)
+      .where(sql`${clients.brokerFirmName} IS NOT NULL AND btrim(${clients.brokerFirmName}) <> ''`)
+      .groupBy(sql`btrim(${clients.brokerFirmName})`);
+
+    const historic = await db.selectDistinct({
+      name: sql<string>`btrim(${brokerHistory.brokerFirmName})`,
+    }).from(brokerHistory)
+      .where(sql`${brokerHistory.brokerFirmName} IS NOT NULL AND btrim(${brokerHistory.brokerFirmName}) <> ''`);
+
+    // Keyed case-insensitively so "Hub International" and "HUB International" do not
+    // both offer themselves as choices. The spelling carried by the most clients wins
+    // the display, because that is the house spelling in practice. Deciding that two
+    // similar names are the same firm is a human call and is never done here.
+    // clientCount is the total across every spelling; winnerCount is the count behind
+    // the spelling currently being displayed. They have to be tracked separately, or
+    // comparing the next variant against a running total makes the winner depend on
+    // the order the variants arrive in.
+    const byKey = new Map<string, { name: string; clientCount: number; winnerCount: number }>();
+    for (const row of inUse) {
+      const name = (row.name ?? "").trim();
+      if (!name || name.toUpperCase() === "N/A") continue;
+      const key = name.toLowerCase();
+      const clientCount = Number(row.clientCount ?? 0);
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, { name, clientCount, winnerCount: clientCount });
+        continue;
+      }
+      existing.clientCount += clientCount;
+      if (clientCount > existing.winnerCount) {
+        existing.name = name;
+        existing.winnerCount = clientCount;
+      }
+    }
+    for (const row of historic) {
+      const name = (row.name ?? "").trim();
+      if (!name || name.toUpperCase() === "N/A") continue;
+      const key = name.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, { name, clientCount: 0, winnerCount: 0 });
+    }
+
+    return Array.from(byKey.values())
+      .map(({ name, clientCount }) => ({ name, clientCount }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
   async getBrokerHistory(clientId: number): Promise<BrokerHistory[]> {

@@ -888,14 +888,64 @@ export async function registerRoutes(
     return d === lastDay ? null : "Termination date must be the last day of a calendar month";
   }
 
+  /** Every timestamp column a caller is allowed to write on a client. */
+  const CLIENT_DATE_FIELDS = ["anniversaryDate", "terminationDate", "accountBalanceAsOfDate"] as const;
+
+  /**
+   * Coerce the client date fields from whatever JSON carried them into real Dates.
+   *
+   * A date input hands back "YYYY-MM-DD", and JSON has no date type, so every date
+   * on the wire arrives as a string. The timestamp columns call .toISOString() on
+   * whatever they are handed, so a string that reaches the column throws
+   * "value.toISOString is not a function" from deep inside the write, with nothing
+   * in the message naming the field. Converting per field at the call site is what
+   * failed before: two of the three were converted and the third was forgotten,
+   * which silently broke saving any client carrying an anniversary date. Doing it
+   * once here means a new date field cannot be half-wired.
+   *
+   * Returns an error string for a value that is not a date at all, so a typo is a
+   * 400 naming the field rather than a 500 naming a missing method.
+   */
+  function coerceClientDates(body: any): string | undefined {
+    for (const field of CLIENT_DATE_FIELDS) {
+      const value = body[field];
+      if (value === undefined) continue;
+      if (value === null || value === "") { body[field] = null; continue; }
+      if (value instanceof Date) {
+        if (isNaN(value.getTime())) return `"${field}" is not a valid date.`;
+        continue;
+      }
+      if (typeof value !== "string" && typeof value !== "number") {
+        return `"${field}" is not a valid date.`;
+      }
+      // A bare "YYYY-MM-DD" is a calendar day, not an instant. Pinning it to UTC
+      // midnight stores exactly that day whatever timezone the server runs in, and
+      // round-trips cleanly: every stored date comes back as "...T00:00:00.000Z" and
+      // the form reads the day straight off the front of that string. Local midnight
+      // would shift the stored hour with the server's zone and, west of Greenwich,
+      // could land the whole thing on the previous day.
+      const text = String(value);
+      const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+      const parsed = dateOnly
+        ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])))
+        : new Date(text);
+      if (isNaN(parsed.getTime())) return `"${text}" is not a valid ${field}.`;
+      body[field] = parsed;
+    }
+    // Identity and audit stamps are the row's own business, never the caller's.
+    delete body.id;
+    delete body.createdAt;
+    delete body.updatedAt;
+    return undefined;
+  }
+
   app.post("/api/clients", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
       const termError = terminationDateError(req.body.terminationDate);
       if (termError) return res.status(400).json({ message: termError });
-      if (body.terminationDate && typeof body.terminationDate === "string") {
-        body.terminationDate = new Date(body.terminationDate);
-      }
+      const dateError = coerceClientDates(body);
+      if (dateError) return res.status(400).json({ message: dateError });
       // Contacts travel with the client so both land in one transaction — see
       // parseBrokerContacts for why an absent key differs from an empty list.
       const { contacts, error } = parseBrokerContacts(body);
@@ -1206,9 +1256,8 @@ export async function registerRoutes(
       const body = { ...req.body };
       const termError = terminationDateError(req.body.terminationDate);
       if (termError) return res.status(400).json({ message: termError });
-      if (body.terminationDate && typeof body.terminationDate === "string") {
-        body.terminationDate = new Date(body.terminationDate);
-      }
+      const dateError = coerceClientDates(body);
+      if (dateError) return res.status(400).json({ message: dateError });
       const { contacts, error } = parseBrokerContacts(body);
       if (error) return res.status(400).json({ message: error });
       delete body.brokerContacts;
@@ -1261,6 +1310,16 @@ export async function registerRoutes(
         details: `Updated broker contacts (${saved.length} on file)`,
       });
       res.json(saved);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // The brokerage firms already in use, for the firm picker. Not client-scoped:
+  // firm identity is shared, which is the whole point of picking from a list.
+  app.get("/api/broker-firms", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getBrokerFirms());
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

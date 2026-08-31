@@ -36,6 +36,38 @@ and it sat empty for the life of the project.
 install the new lead, in the same transaction, or the two tables start telling different
 stories about who the broker is.
 
+## Two entry points, two different writes
+
+Replacing the broker and correcting the broker are separate operations with separate
+screens, and both now say so on the screen itself.
+
+A replacement is a succession event: it writes a history row with an effective date,
+retires the serving contacts and installs the new lead. A correction mutates the
+existing row in place with no history and no effective date. Feeding a correction
+through the replacement path invents a succession that never happened; feeding a
+replacement through the correction path loses the date the account actually moved.
+
+**How to apply:** if a change alters who the broker is, it is a replacement. If it
+alters how the same broker is spelled or reached, it is a correction. Never merge the
+two paths into one "save broker" action.
+
+## Firm identity comes from usage, not from a table
+
+There is no brokerage table. A firm is text on the clients that carry it, so the list of
+firms offered by the picker is simply what is already in use, folded together with the
+firms in history so a firm a client has moved away from does not vanish and get retyped.
+
+**Why:** free text is what produced three spellings of one firm. The picker makes reuse
+the easy path and makes creating a firm take a deliberate choice, a typed name and a
+confirmation past a near-match warning.
+
+**How to apply:** the picker never merges anything. It collapses pure case variants in
+the list it displays, because offering both spellings as separate choices is nonsense,
+but a stored value only changes when an operator clicks a different one. Anything beyond
+case is surfaced as a warning and left for a human. Bulk import is deliberately outside
+this: forcing canonical names during import would be exactly the silent merging the
+picker exists to avoid.
+
 ## Firm names drift, so never key on them
 
 The same brokerage is stored several ways: "HUB International" vs "Alexander & Company,

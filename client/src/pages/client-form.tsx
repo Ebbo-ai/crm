@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { US_STATES, formatPhone } from "@/lib/constants";
 import { deriveClientState, runOutEndDate } from "@shared/client-state";
+import { BrokerFirmSelect } from "@/components/broker-firm-select";
 import { Save, Plus, Trash2 } from "lucide-react";
 
 const planTypeOptions = [
@@ -667,10 +668,33 @@ export default function ClientFormPage() {
             </div>
             {form.hasBroker && (
               <div className="space-y-4">
+                {isEdit && (
+                  <div
+                    className="rounded-md border border-border bg-surface-subtle p-3 text-xs text-foreground space-y-1"
+                    data-testid="note-broker-edit-only"
+                  >
+                    <p className="font-medium">These are edits to the broker already on this client.</p>
+                    <p className="text-muted-foreground">
+                      Use this for a corrected rep name, a new phone number or address, or a
+                      different contact at the same brokerage firm. Changes here take effect
+                      immediately and are not recorded as a broker change.
+                    </p>
+                    <p className="text-muted-foreground">
+                      If the client is actually moving to a new broker, this is not the place. Go
+                      back to the client screen and use Change Broker, which captures the effective
+                      date and keeps the history.
+                    </p>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <OptionalLabel htmlFor="brokerFirmName">Broker Firm Name</OptionalLabel>
-                    <Input id="brokerFirmName" value={form.brokerFirmName} onChange={e => updateField("brokerFirmName", e.target.value)} data-testid="input-broker-firm" />
+                    <BrokerFirmSelect
+                      id="brokerFirmName"
+                      value={form.brokerFirmName}
+                      onChange={v => updateField("brokerFirmName", v)}
+                      testId="input-broker-firm"
+                    />
                   </div>
                 </div>
 
