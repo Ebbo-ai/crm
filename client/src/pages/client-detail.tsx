@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -684,6 +684,15 @@ export default function ClientDetailPage() {
 function BrokerCard({ client, clientId }: { client: any; clientId: number }) {
   const { toast } = useToast();
   const [changeOpen, setChangeOpen] = useState(false);
+
+  // Edit Client sends the operator here when they try to change the firm, so open the
+  // dialog they were actually after instead of dropping them on the page to hunt for it.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("broker") === "change") {
+      setChangeOpen(true);
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+  }, []);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const now = new Date();

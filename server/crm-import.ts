@@ -33,7 +33,7 @@
 import * as XLSX from "xlsx";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { clients, plans, planTiers, rateCards, brokerContacts } from "@shared/schema";
+import { clients, plans, planTiers, rateCards, brokerContacts, brokerHistory } from "@shared/schema";
 
 // ─── Result shapes ──────────────────────────────────────────────────────────
 
@@ -1150,7 +1150,12 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
       // Both checks below therefore run up front, on the whole workbook, and abort
       // before a single row is written.
       const existingClients = await tx
-        .select({ id: clients.id, clientCode: clients.clientCode, clientName: clients.clientName })
+        .select({
+          id: clients.id,
+          clientCode: clients.clientCode,
+          clientName: clients.clientName,
+          brokerFirmName: clients.brokerFirmName,
+        })
         .from(clients);
       const byExactCode = new Map(existingClients.map((c) => [c.clientCode, c]));
       const byNormCode = new Map<string, typeof existingClients>();
@@ -1160,7 +1165,7 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
       }
 
       const preflight: ImportIssue[] = [];
-      type ExistingClient = { id: number; clientCode: string; clientName: string };
+      type ExistingClient = { id: number; clientCode: string; clientName: string; brokerFirmName: string | null };
       const resolved = new Map<string, ExistingClient | null>();
 
       for (const c of parsed.clients) {
@@ -1216,6 +1221,87 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
             message:
               `The name "${c.values.clientName}" already belongs to stored client ${holder.clientCode}. ` +
               "Client names must be unique, so this row cannot be imported under a different code.",
+          });
+        }
+      }
+
+      // ── Brokerage firms ──
+      //
+      // Typing a firm name into the sheet is how the variants got into the book in the
+      // first place. Every firm is checked against the ones already on file and anything
+      // unrecognised is held, on the same rule as an unrecognised coverage type on the
+      // monthly feed: report it and stop, rather than create a firm or snap the value to
+      // the nearest existing spelling. Deciding that two spellings are one firm, or that
+      // a name is a genuinely new brokerage, is a decision for a person.
+      const knownFirms = new Set<string>();
+      const noteFirm = (v: string | null) => {
+        const t = (v ?? "").trim();
+        if (t && t.toUpperCase() !== "N/A") knownFirms.add(t);
+      };
+      for (const row of await tx.select({ name: clients.brokerFirmName }).from(clients)) noteFirm(row.name);
+      for (const row of await tx.select({ name: brokerHistory.brokerFirmName }).from(brokerHistory)) noteFirm(row.name);
+
+      const firmKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const blankFirm = (s: string) => !s || s.toUpperCase() === "N/A";
+      for (const c of parsed.clients) {
+        if (!("brokerFirmName" in c.values)) continue;
+        const raw = c.values.brokerFirmName;
+        const name = raw == null ? "" : String(raw).trim();
+        const target = resolved.get(c.clientCode) ?? null;
+        const stored = (target?.brokerFirmName ?? "").trim();
+
+        // Unrecognised spelling: hold it rather than mint another variant.
+        if (!blankFirm(name) && !knownFirms.has(name)) {
+          const key = firmKey(name);
+          const near = Array.from(knownFirms).filter((f) => {
+            const k = firmKey(f);
+            return k === key || (k.length >= 4 && key.length >= 4 && (k.includes(key) || key.includes(k)));
+          });
+          preflight.push({
+            severity: "error",
+            sheet: "Clients",
+            row: c.row,
+            ref: c.clientCode,
+            message:
+              `Brokerage firm "${name}" is not on file. ` +
+              (near.length
+                ? `Close matches already on file: ${near.slice(0, 4).map((n) => `"${n}"`).join(", ")}. `
+                : "No similar firm is on file. ") +
+              "Import will not create a firm or match it to a similar one. Either correct the sheet to the exact " +
+              "spelling of a firm on file, or add the firm deliberately on a client first, then re-run.",
+          });
+          continue;
+        }
+
+        // Recognising the spelling is not the same as accepting the move. A client that
+        // already has a broker of record cannot be moved to another firm, or stripped of
+        // one, by a spreadsheet cell: the sheet carries no effective date, so the write
+        // would replace the current broker and leave no trace of when it happened.
+        // Naming a firm on a client that has none is allowed, since it supersedes nothing.
+        if (!target || blankFirm(stored)) continue;
+        if (blankFirm(name)) {
+          preflight.push({
+            severity: "error",
+            sheet: "Clients",
+            row: c.row,
+            ref: c.clientCode,
+            message:
+              `This client's broker is recorded as ${stored}, and the sheet leaves the firm blank, which would ` +
+              "remove the broker of record with no date. Ending a broker relationship is a broker change. " +
+              "Either fill the cell with the firm on file, or remove the broker_firm_name column so the sheet " +
+              "leaves the firm alone.",
+          });
+        } else if (stored !== name) {
+          preflight.push({
+            severity: "error",
+            sheet: "Clients",
+            row: c.row,
+            ref: c.clientCode,
+            message:
+              `This client's broker is recorded as ${stored}, and the sheet says "${name}". Moving a client between ` +
+              "firms is a broker change and has to be done through Change Broker, which records the effective date " +
+              "and keeps the history. Import will not overwrite the firm. Either correct the sheet to " +
+              `"${stored}", or make the move in the application first and re-run.`,
           });
         }
       }

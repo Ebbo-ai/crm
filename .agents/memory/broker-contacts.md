@@ -51,6 +51,42 @@ replacement through the correction path loses the date the account actually move
 alters how the same broker is spelled or reached, it is a correction. Never merge the
 two paths into one "save broker" action.
 
+## Every door onto the broker of record, and which ones may write it
+
+The firm is reachable from four places, and three of them had no business writing it.
+Only the broker-change path may change a firm on a client that already has one, because
+only it takes an effective date and writes the succession.
+
+**Why:** helper text asking the operator to choose the right screen is not a control. The
+office runs on one person; picking the wrong screen silently replaced the broker of
+record with no trace of when the account moved.
+
+**How to apply:** the client-update path refuses any change to the firm, including
+clearing it, and the form renders the field read-only; the importer refuses a firm that
+differs from the stored one, and refuses a blank cell that would clear one; the
+broker-change path refuses a same-firm change and points back at the correction screen.
+Two carve-outs, both because they supersede nothing: naming a firm on a client that has
+none *and* no history, and setting the firm at creation.
+
+**Also:** validate the field on read and drop it before the write rather than trusting the
+comparison. A firm read for comparison and then written back from a stale form body can
+revert a succession that committed in between, leaving the flat column and the history
+disagreeing.
+
+## A seeded outgoing row needs a floor, not a guess
+
+When a firm change is recorded on a client with no history, the outgoing row has to be
+invented from the flat columns, and nothing records when that relationship began. The
+record's creation month is the only available proxy and it is often wrong: a book
+imported all at once carries creation dates long after the brokers actually started.
+
+**Why:** used unclamped, the proxy produces a row that terminates before it begins
+whenever the change is backdated, which is the normal case for catching history up.
+
+**How to apply:** floor the seeded start to the month the relationship ended, so the row
+is at worst a single-month placeholder. Report such a start date as a floor on an unknown
+start, never as the date the relationship began.
+
 ## Firm identity comes from usage, not from a table
 
 There is no brokerage table. A firm is text on the clients that carry it, so the list of

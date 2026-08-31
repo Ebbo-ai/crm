@@ -1709,8 +1709,16 @@ export class DatabaseStorage implements IStorage {
 
       if (!currentRecord) {
         if (client.hasBroker && (client.brokerFirmName || client.brokerContactName)) {
+          // The outgoing broker predates the history table, so its start date is not
+          // recorded anywhere. The month the CRM record was created is the usual proxy,
+          // but for a book imported after the fact that month is often LATER than the
+          // date the broker was retired, which would write a row that ends before it
+          // begins. Fall back to the month the relationship ended so the row is a floor
+          // on an unknown start rather than a backwards range.
           const d = new Date(client.createdAt);
-          const seedDate = new Date(d.getFullYear(), d.getMonth(), 1);
+          const createdMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+          const termMonth = new Date(termDate.getFullYear(), termDate.getMonth(), 1);
+          const seedDate = createdMonth <= termDate ? createdMonth : termMonth;
           await tx.insert(brokerHistory).values({
             clientId,
             brokerFirmName: client.brokerFirmName,

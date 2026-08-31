@@ -663,8 +663,21 @@ export default function ClientFormPage() {
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
             <div className="flex items-center gap-3">
-              <Switch checked={form.hasBroker} onCheckedChange={v => updateField("hasBroker", v)} data-testid="switch-broker" />
+              {/* Switching this off on an existing client would blank the firm, which is
+                  the same silent loss of history as editing it. Removing a broker is a
+                  succession event, so it belongs in Change Broker. */}
+              <Switch
+                checked={form.hasBroker}
+                onCheckedChange={v => updateField("hasBroker", v)}
+                disabled={isEdit && !!existingClient?.brokerFirmName}
+                data-testid="switch-broker"
+              />
               <Label className="text-sm text-foreground">Has Broker</Label>
+              {isEdit && !!existingClient?.brokerFirmName && (
+                <span className="text-xs text-muted-foreground">
+                  Locked while a broker is recorded. Use Change Broker.
+                </span>
+              )}
             </div>
             {form.hasBroker && (
               <div className="space-y-4">
@@ -680,21 +693,49 @@ export default function ClientFormPage() {
                       immediately and are not recorded as a broker change.
                     </p>
                     <p className="text-muted-foreground">
-                      If the client is actually moving to a new broker, this is not the place. Go
-                      back to the client screen and use Change Broker, which captures the effective
-                      date and keeps the history.
+                      The brokerage firm itself is not editable here, because moving a client to a
+                      different firm has to record an effective date and keep the history.
                     </p>
                   </div>
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <OptionalLabel htmlFor="brokerFirmName">Broker Firm Name</OptionalLabel>
-                    <BrokerFirmSelect
-                      id="brokerFirmName"
-                      value={form.brokerFirmName}
-                      onChange={v => updateField("brokerFirmName", v)}
-                      testId="input-broker-firm"
-                    />
+                    {/* Only lock the field once a firm is actually recorded. Naming a
+                        broker for the first time supersedes nothing and loses no date, and
+                        Change Broker is not reachable on a client with no broker card. */}
+                    {isEdit && !!existingClient?.brokerFirmName ? (
+                      <div className="space-y-1.5">
+                        <div
+                          className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-subtle px-3 py-2"
+                          data-testid="text-broker-firm-readonly"
+                        >
+                          <span className="text-sm font-medium text-foreground truncate">
+                            {form.brokerFirmName || "No firm recorded"}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5 text-xs shrink-0"
+                            onClick={() => navigate(`/clients/${params.id}?broker=change`)}
+                            data-testid="button-goto-change-broker"
+                          >
+                            Change Broker
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Read-only. Use Change Broker to move this client to a different firm.
+                        </p>
+                      </div>
+                    ) : (
+                      <BrokerFirmSelect
+                        id="brokerFirmName"
+                        value={form.brokerFirmName}
+                        onChange={v => updateField("brokerFirmName", v)}
+                        testId="input-broker-firm"
+                      />
+                    )}
                   </div>
                 </div>
 

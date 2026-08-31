@@ -1261,9 +1261,42 @@ export async function registerRoutes(
       const { contacts, error } = parseBrokerContacts(body);
       if (error) return res.status(400).json({ message: error });
       delete body.brokerContacts;
+
+      // The brokerage firm is not editable from this endpoint. Changing it here would
+      // move the client to a new broker with no effective date and no history row,
+      // which reads afterwards as if the client had always been with the new firm.
+      // The only way to change a firm is the broker-change endpoint, which records the
+      // succession. This is a backstop: the form renders the field read-only.
+      const clientId = parseInt(req.params.id);
+      const existingClient = await storage.getClient(clientId);
+      if (!existingClient) return res.status(404).json({ message: "Client not found" });
+      if ("brokerFirmName" in body) {
+        const norm = (v: unknown) => (v == null ? "" : String(v).trim());
+        const current = norm(existingClient.brokerFirmName);
+        const incoming = norm(body.brokerFirmName);
+        if (current === incoming) {
+          // Nothing to write. Dropping the field also stops a stale form body from
+          // reverting a broker change that committed between the read above and the
+          // write below, which would leave the flat column and the history disagreeing.
+          delete body.brokerFirmName;
+        } else {
+          // Naming a broker for the first time is not a succession: there is nothing to
+          // supersede and no effective date to lose. Everything else is, including
+          // clearing the firm, so it has to go through the path that records history.
+          const priorHistory = current === "" ? await storage.getBrokerHistory(clientId) : [];
+          if (current !== "" || priorHistory.length > 0) {
+            return res.status(400).json({
+              message: current
+                ? `The brokerage firm cannot be changed from here. ${existingClient.brokerFirmName} is recorded as this client's broker, and moving to another firm has to go through Change Broker so the effective date and the history are kept.`
+                : "This client has a broker history, so naming a firm here would leave a gap. Use Change Broker so the effective date is recorded.",
+            });
+          }
+        }
+      }
+
       // Renewal lifecycle fields are no longer on the client record — they are
       // edited through PUT /api/renewals/:id against a specific plan year.
-      const updated = await storage.updateClient(parseInt(req.params.id), body, contacts);
+      const updated = await storage.updateClient(clientId, body, contacts);
       if (!updated) return res.status(404).json({ message: "Client not found" });
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -1341,6 +1374,21 @@ export async function registerRoutes(
       if (!effectiveYear || !effectiveMonth) {
         return res.status(400).json({ message: "Effective date is required" });
       }
+
+      // Change Broker records a move to a DIFFERENT firm. Run it against the firm the
+      // client is already on and it retires that firm and reinstates it in the same
+      // breath, leaving a succession from a firm to itself. Nothing downstream can tell
+      // that apart from a real move, so refuse it here rather than record it.
+      const existingClient = await storage.getClient(clientId);
+      if (!existingClient) return res.status(404).json({ message: "Client not found" });
+      const sameFirm = (a?: string | null, b?: string | null) =>
+        (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+      if (existingClient.brokerFirmName && sameFirm(existingClient.brokerFirmName, brokerFirmName)) {
+        return res.status(400).json({
+          message: `This client is already with ${existingClient.brokerFirmName}. Change Broker is for moving to a different brokerage firm. To correct the rep, email or phone at the same firm, use Edit Client.`,
+        });
+      }
+
       const effectiveDate = new Date(parseInt(effectiveYear), parseInt(effectiveMonth) - 1, 1);
       await storage.addBrokerChange(clientId, {
         brokerFirmName: brokerFirmName || null,
