@@ -1,4 +1,10 @@
+/**
+ * The send deadline, and the boundary between Upcoming and Current. Exclusive on
+ * both sides: an unstarted renewal at exactly this many days out is already in
+ * Current, but is not yet LATE, because this is the deadline rather than past it.
+ */
 export const RENEWAL_SEND_DEADLINE_DAYS_BEFORE_ANNIVERSARY = 14;
+export const UPCOMING_RENEWAL_HORIZON_DAYS = 30;
 export const COMPLETE_RENEWAL_VISIBLE_DAYS_AFTER_ANNIVERSARY = 45;
 
 const FINAL_STEP = "EMAILED_TO_90D";
@@ -111,10 +117,15 @@ export function computeRenewalBuckets(
       if (daysOut >= -COMPLETE_RENEWAL_VISIBLE_DAYS_AFTER_ANNIVERSARY) {
         add(complete, item);
       }
-    } else if (step !== null || daysOut < 0) {
+    } else if (step !== null || daysOut <= RENEWAL_SEND_DEADLINE_DAYS_BEFORE_ANNIVERSARY) {
+      // Current is everything actionable: work already started at any distance,
+      // plus anything unstarted that has reached the send deadline, plus
+      // anything overdue (which is unstarted-and-past-deadline by definition).
       item.late = lateCandidate;
       add(current, item);
-    } else if (daysOut <= 30) {
+    } else if (daysOut <= UPCOMING_RENEWAL_HORIZON_DAYS) {
+      // Pure heads-up queue: unstarted and still comfortably ahead of the
+      // deadline, so nothing in here is ever badged.
       add(upcoming, item);
     }
   }

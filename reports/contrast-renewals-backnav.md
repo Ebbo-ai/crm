@@ -118,79 +118,89 @@ client record now agree about the same client.
 All three boxes come from a single shared classifier that walks clients once, so they
 are mutually exclusive by construction.
 
-- **Upcoming**: not complete, no pipeline work started, `0 <= days_out <= 30`. Sorted
-  ascending by anniversary.
-- **Current**: any pipeline step set and not complete, or `days_out < 0` and not
-  complete. Sorted ascending by anniversary.
+The send deadline is the boundary between Upcoming and Current, and it is exclusive on
+both sides. One named constant drives both bucket membership and the badge, so the two
+can never drift apart. A second constant caps the Upcoming window at 30 days.
+
+- **Upcoming**: not complete, no pipeline step set, and
+  `14 < days_out <= 30`. Sorted ascending by anniversary. A pure heads-up queue:
+  nothing in here is actionable-overdue, so nothing in here is ever badged.
+- **Current**: not complete, and any of: a pipeline step is set at any distance, or no
+  step is set and `days_out <= 14`, or `days_out < 0`. Sorted ascending by anniversary.
 - **Complete**: complete, and `today <= anniversary + 45`. Sorted descending by
   completion date.
 
 LATE appears in the Current box only: not yet reached Sent, and `days_out < 14`. The
-threshold is one named constant, and the badge is a text badge, not colour alone. The
-late count shows in the Current box header.
+badge is a text badge, not colour alone, and the late count shows in the Current header.
+
+At exactly 14 days out an unstarted renewal is already in Current but is not LATE,
+because 14 is the deadline rather than past it. At 15 days out it is still in Upcoming.
 
 ### Live counts right now
 
 | Box | Count |
 |---|---|
-| Upcoming | 3 |
-| Current | 0 |
+| Upcoming | 0 |
+| Current | 3 |
 | Complete | 0 |
-| Late (within Current) | 0 |
+| Late (within Current) | 3 |
 
-The three in Upcoming: S-27 Florida Oral and Facial, S-459 Grand County Schools,
-S-174 Red Lake Public School. All at anniversary 1 September 2026, one day out, no
-pipeline work started.
+| Client | Anniversary | Days | Step | |
+|---|---|---|---|---|
+| S-27 Florida Oral and Facial | 1 Sep 2026 | 1 out | none | LATE |
+| S-459 Grand County Schools | 1 Sep 2026 | 1 out | none | LATE |
+| S-174 Red Lake Public School | 1 Sep 2026 | 1 out | none | LATE |
 
-Current and Complete are empty because the database holds 7 renewal rows and not one has
-a pipeline step set. Nothing has been started, so nothing can be in progress and nothing
-can be complete. That is the data, not the logic.
+All three are late for the same reason: nobody has started them, and they are one day
+from anniversary, well inside the 14 day send deadline.
+
+Upcoming and Complete are empty because of the data, not the logic. The database holds 7
+renewal rows and not one has a pipeline step set, so nothing can be in progress or
+complete, and the only renewals inside the 30 day window are these three, all of which
+are past the deadline and therefore in Current.
+
+3 rows across the three boxes, 3 distinct clients, 0 duplicates.
 
 ### Boundary proof
 
-Because live data cannot exercise the rules, the classifier was run directly against
-synthetic cases. Every rule holds:
+Because live data cannot exercise the rules, the classifier was run directly against 23
+synthetic cases. All 23 pass.
 
-| Case | Expected | Result |
-|---|---|---|
-| unstarted, 30 days out | Upcoming | Upcoming |
-| unstarted, 0 days out | Upcoming | Upcoming |
-| unstarted, 31 days out | nowhere | nowhere |
-| unstarted, 45 days out | nowhere | nowhere |
-| `REQUESTED`, 13 days out | Current, LATE | Current, LATE |
-| `PROCESSED`, 13 days out | Current, LATE | Current, LATE |
-| unstarted, 5 days overdue | Current, LATE | Current, LATE |
-| `SENT`, 13 days out | Current, not late | Current, not late |
-| `ACCEPTED`, 13 days out | Current, not late | Current, not late |
-| `REQUESTED`, exactly 14 days | Current, not late | Current, not late |
-| complete, 45 days past | Complete | Complete |
-| complete, 46 days past | nowhere | nowhere |
+| Step | Days out | Bucket | Late |
+|---|---|---|---|
+| none | 30 | Upcoming | |
+| none | 16 | Upcoming | |
+| none | 15 | Upcoming | |
+| none | 14 | Current | not late |
+| none | 13 | Current | LATE |
+| none | 1 | Current | LATE |
+| none | 0 | Current | LATE |
+| none | -5 | Current | LATE |
+| none | -60 | Current | LATE |
+| none | 31 | nowhere | |
+| none | 45 | nowhere | |
+| `REQUESTED` | 60 | Current | not late |
+| `REQUESTED` | 30 | Current | not late |
+| `REQUESTED` | 14 | Current | not late |
+| `REQUESTED` | 13 | Current | LATE |
+| `PROCESSED` | 13 | Current | LATE |
+| `SENT` | 13 | Current | not late |
+| `REVISED` | 13 | Current | not late |
+| `ACCEPTED` | 13 | Current | not late |
+| `SIGNED_FORM_ATTACHED` | 1 | Current | not late |
+| `EMAILED_TO_90D` | -45 | Complete | |
+| `EMAILED_TO_90D` | -46 | nowhere | |
+| `EMAILED_TO_90D` | 5 | Complete | |
 
-Late count across that set: 3. No client landed in two boxes. The classifier throws if
+The two boundary rows that matter for the revised rules: unstarted at 15 days stays in
+Upcoming, unstarted at 14 days moves to Current and is not badged.
+
+Late count across that set: 7. No client landed in two boxes. The classifier throws if
 one ever does, so a double assignment cannot pass silently.
 
-### One thing needs your ruling
-
-There is a genuine conflict between two of the rules as written.
-
-Box 1 is defined as unstarted and 0 to 30 days out. LATE is defined as reaching 14 days
-out without having sent, and is explicitly scoped to Box 2 only.
-
-So a renewal that nobody has started, sitting at 10 days out, satisfies the late
-condition but sits in Upcoming with no LATE badge, because Box 1 does not carry the
-badge. It is exactly the case you would most want flagged, and right now it is the
-quietest row on the screen.
-
-It is built as written rather than quietly changed, because moving unstarted overdue
-renewals into Current is a decision about what the boxes mean, not a bug fix.
-
-Three ways to resolve it, whichever you prefer:
-
-1. Leave it. Unstarted work is Upcoming until someone touches it, and the 30 day window
-   is itself the warning.
-2. Show the LATE badge in Upcoming too, keeping bucket membership exactly as it is.
-3. Move unstarted renewals inside 14 days into Current, so Current means "needs action
-   now" regardless of whether anyone has started.
+Note the three `REQUESTED` rows at 60, 30 and 14 days out. Work that has been started is
+Current at any distance, so a renewal someone picked up early does not sit in the
+heads-up queue pretending to be untouched.
 
 ---
 

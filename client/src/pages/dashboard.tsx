@@ -580,13 +580,13 @@ export default function DashboardPage() {
               title="Upcoming Renewals"
               items={upcomingRenewals}
               loading={renewalsLoading}
-              emptyMessage="No renewals due in the next 30 days"
+              emptyMessage="No renewals coming up in the next 30 days"
             />
             <RenewalBucketCard
               title="Current Renewals"
               items={currentRenewals}
               loading={renewalsLoading}
-              emptyMessage="No renewals currently in progress"
+              emptyMessage="No renewals need action right now"
               lateCount={renewalBuckets?.lateCount ?? 0}
             />
             <RenewalBucketCard

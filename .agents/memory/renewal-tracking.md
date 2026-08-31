@@ -76,16 +76,18 @@ record read the `renewals` table, so the two screens disagreed about the same cl
 plus `clients.anniversaryDate`. Never resurrect the plan-level derivation. New buckets
 go inside the existing classifier, not into a new query.
 
-## A renewal not yet started, inside the send deadline, is deliberately not marked late
+## The send deadline is the Upcoming/Current boundary, and late lives in exactly one box
 
-The written rule places LATE only in the Current box, but the Upcoming box is defined as
-"no pipeline work started and 0-30 days out". An unstarted renewal at, say, 10 days out
-therefore sits in Upcoming with no LATE badge, even though it has already missed the
-14-day send deadline.
+Upcoming is the pure heads-up queue: unstarted and still further out than the send
+deadline. The moment an unstarted renewal reaches the deadline it moves to Current, so
+Upcoming never carries a LATE badge and never needs one.
 
-**Why:** this is what the spec says, literally. It is a real tension in the rules rather
-than an implementation slip, so it was left as written and raised rather than silently
-"fixed" by moving unstarted-but-overdue renewals into Current.
+**Why:** a badge shown in two boxes splits the late count, and the reader loses the one
+place to look. Keeping late confined to Current means the header count is the whole
+story.
 
-**How to apply:** if asked to make late-but-unstarted renewals visible, the change is a
-bucket-membership decision for the user to make, not a bug fix. Confirm before moving it.
+**How to apply:** the boundary is exclusive on both sides. At exactly the deadline an
+unstarted renewal is already in Current but is NOT late, because the deadline is the due
+date rather than a missed one; one day closer, it is late. Never let the two thresholds
+drift apart into separate constants: bucket membership and the badge both key off the
+same send-deadline constant, and a horizon constant caps the Upcoming window.
