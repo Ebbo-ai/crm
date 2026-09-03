@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Printer, Search, ArrowUp, ArrowDown } from "lucide-react";
 import { parseLocalDate } from "@/lib/constants";
+import { formatEmployeeCount } from "@/lib/employee-count";
 import { clientStateLabel } from "@shared/client-state";
 import type { ClientRosterResponse, RosterRow } from "@shared/roster";
 
@@ -286,7 +287,7 @@ function RosterTableRow({ row }: { row: RosterRow }) {
       {/* Blank, never zero: no client has a recorded headcount yet, and a zero
           would read as a real number rather than a gap in the record. */}
       <td className="px-3 py-2 text-right tabular-nums">
-        {row.numberOfEmployees != null ? row.numberOfEmployees.toLocaleString() : ""}
+        {formatEmployeeCount(row.numberOfEmployees)}
       </td>
       <td className="px-3 py-2 whitespace-nowrap">{row.planType ?? ""}</td>
       <td className="px-3 py-2 whitespace-nowrap">{formatAnniversary(row.anniversaryDate)}</td>

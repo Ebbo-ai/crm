@@ -17,3 +17,4 @@
 - [Theme tokens](theme-tokens.md) — a full token set meant nothing while ~971 hardcoded hex classes bypassed it; gold is a fill never text; fills need -foreground, never text-white.
 - [Back navigation](page-back-navigation.md) — in-app depth rides on history.state, not a module counter, because Back and Forward both fire popstate; rendered once in the app layout.
 - [Client termination and run-out](client-termination.md) — a termination date stops renewals only; state is derived from the date alone and PPRs/claims continue through a fixed three-month run-out.
+- [Blank vs zero in reports](report-blank-vs-zero.md) — a missing number renders blank; totals skip nulls and mark partial; preview and print are separate code paths.

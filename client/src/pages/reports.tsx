@@ -10,6 +10,10 @@ import { PLAN_TYPE_LABELS, PLAN_BASIS_LABELS, TIER_LABELS, parseLocalDate, forma
 import { clientStateLabel, deriveClientState } from "@shared/client-state";
 import { CLIENT_STATE_HEX } from "@/components/client-state-badge";
 import { ClientRosterReport } from "@/components/reports/client-roster-report";
+import {
+  formatEmployeeCount, sumEmployeeCounts, formatEmployeeTotal,
+  employeeTotalSummary, employeeTotalRowLabel,
+} from "@/lib/employee-count";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -228,7 +232,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
       </div>
       <div style="padding:16px 22px;border-right:1px solid #E2E8F0;text-align:center;">
         <div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-weight:700;">Employees</div>
-        <div style="font-size:26px;font-weight:800;color:#1A5276;">${(client.numberOfEmployees ?? 0).toLocaleString()}</div>
+        <div style="font-size:26px;font-weight:800;color:#1A5276;">${formatEmployeeCount(client.numberOfEmployees) || "&nbsp;"}</div>
       </div>
       <div style="padding:16px 22px;border-right:1px solid #E2E8F0;text-align:center;">
         <div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-weight:700;">Plan Type</div>
@@ -278,14 +282,14 @@ function buildBrokerReportHtml(firm: string, clients: any[]): string {
         <td style="padding:10px 14px;color:#2C3E50;">${PLAN_TYPE_LABELS[c.planType] ?? c.planType}</td>
         <td style="padding:10px 14px;color:#64748B;">${planNames}</td>
         <td style="padding:10px 14px;text-align:center;color:#2C3E50;">${anniversary}</td>
-        <td style="padding:10px 14px;text-align:center;font-weight:700;color:#1A5276;font-size:15px;">${(c.numberOfEmployees ?? 0).toLocaleString()}</td>
+        <td style="padding:10px 14px;text-align:center;font-weight:700;color:#1A5276;font-size:15px;">${formatEmployeeCount(c.numberOfEmployees)}</td>
         <td style="padding:10px 14px;text-align:center;">
           <span style="background:${CLIENT_STATE_HEX[deriveClientState(c)].bg};color:${CLIENT_STATE_HEX[deriveClientState(c)].fg};padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;">${clientStateLabel(deriveClientState(c))}</span>
         </td>
       </tr>`;
   }).join("");
 
-  const totalEmployees = clients.reduce((s: number, c: any) => s + (c.numberOfEmployees ?? 0), 0);
+  const employeeTotal = sumEmployeeCounts(clients.map((c: any) => c.numberOfEmployees));
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Broker Report — ${firm}</title>
   <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#2C3E50;}@page{margin:.45in;}</style>
@@ -299,7 +303,7 @@ function buildBrokerReportHtml(firm: string, clients: any[]): string {
         </div>
         <div style="text-align:right;">
           <div style="color:rgba(255,255,255,.6);font-size:10px;">Generated ${today}</div>
-          <div style="color:white;font-size:11px;margin-top:4px;">${clients.length} Client${clients.length !== 1 ? "s" : ""} &nbsp;·&nbsp; ${totalEmployees.toLocaleString()} Total Employees</div>
+          <div style="color:white;font-size:11px;margin-top:4px;">${clients.length} Client${clients.length !== 1 ? "s" : ""} &nbsp;·&nbsp; ${employeeTotalSummary(employeeTotal)}</div>
         </div>
       </div>
     </div>
@@ -322,8 +326,8 @@ function buildBrokerReportHtml(firm: string, clients: any[]): string {
       <tbody>${rows}</tbody>
       <tfoot>
         <tr style="background:#F0F4F8;border-top:2px solid #E2E8F0;">
-          <td colspan="4" style="padding:10px 14px;font-weight:700;color:#1A5276;font-size:12px;">TOTALS</td>
-          <td style="padding:10px 14px;text-align:center;font-weight:800;color:#1A5276;font-size:16px;">${totalEmployees.toLocaleString()}</td>
+          <td colspan="4" style="padding:10px 14px;font-weight:700;color:#1A5276;font-size:12px;">${employeeTotalRowLabel(employeeTotal)}</td>
+          <td style="padding:10px 14px;text-align:center;font-weight:800;color:#1A5276;font-size:16px;">${formatEmployeeTotal(employeeTotal)}</td>
           <td></td>
         </tr>
       </tfoot>
@@ -397,7 +401,7 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
         </div>
         <div className="p-4 border-r border-border text-center">
           <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Employees</p>
-          <p className="text-2xl font-extrabold text-brand">{(client.numberOfEmployees ?? 0).toLocaleString()}</p>
+          <p className="text-2xl font-extrabold text-brand min-h-[2rem]">{formatEmployeeCount(client.numberOfEmployees)}</p>
         </div>
         <div className="p-4 border-r border-border text-center">
           <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Plan Type</p>
@@ -541,7 +545,7 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
 
 function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }) {
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  const totalEmployees = clients.reduce((s: number, c: any) => s + (c.numberOfEmployees ?? 0), 0);
+  const employeeTotal = sumEmployeeCounts(clients.map((c: any) => c.numberOfEmployees));
   return (
     <div className="bg-card rounded-xl shadow-md overflow-hidden border border-border">
       <div className="bg-gradient-to-r from-brand to-brand-accent px-7 py-6">
@@ -552,7 +556,7 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
           </div>
           <div className="text-right">
             <p className="text-white/60 text-xs">Generated {today}</p>
-            <p className="text-brand-foreground text-xs mt-1">{clients.length} Client{clients.length !== 1 ? "s" : ""} · {totalEmployees.toLocaleString()} Total Employees</p>
+            <p className="text-brand-foreground text-xs mt-1">{clients.length} Client{clients.length !== 1 ? "s" : ""} · {employeeTotalSummary(employeeTotal)}</p>
           </div>
         </div>
       </div>
@@ -587,7 +591,7 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
                   <td className="px-4 py-3 text-muted-foreground text-xs">{PLAN_TYPE_LABELS[c.planType] ?? c.planType}</td>
                   <td className="px-4 py-3 text-muted-foreground text-xs max-w-[200px] truncate">{planNames}</td>
                   <td className="px-4 py-3 text-center text-foreground text-xs">{anniversary}</td>
-                  <td className="px-4 py-3 text-center font-bold text-brand">{(c.numberOfEmployees ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-center font-bold text-brand">{formatEmployeeCount(c.numberOfEmployees)}</td>
                   <td className="px-4 py-3 text-center">
                     <span
                       className="text-xs px-2 py-0.5 rounded-full font-bold"
@@ -605,8 +609,8 @@ function BrokerReportPreview({ firm, clients }: { firm: string; clients: any[] }
           </tbody>
           <tfoot>
             <tr className="bg-surface-subtle border-t-2 border-border">
-              <td colSpan={4} className="px-4 py-3 font-bold text-brand text-xs uppercase tracking-wide">Totals</td>
-              <td className="px-4 py-3 text-center font-extrabold text-brand text-base">{totalEmployees.toLocaleString()}</td>
+              <td colSpan={4} className="px-4 py-3 font-bold text-brand text-xs uppercase tracking-wide">{employeeTotalRowLabel(employeeTotal)}</td>
+              <td className="px-4 py-3 text-center font-extrabold text-brand text-base">{formatEmployeeTotal(employeeTotal)}</td>
               <td />
             </tr>
           </tfoot>
