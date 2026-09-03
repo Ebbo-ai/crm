@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage, StaleOrderError, type BrokerContactInput } from "./storage";
 import { db } from "./db";
-import { renewals, renewalPlanOptions } from "@shared/schema";
+import { renewals, renewalPlanOptions, clients, plans, brokerContacts } from "@shared/schema";
 import {
   RUN_OUT_MONTHS,
   countsAsActive,
@@ -12,6 +12,13 @@ import {
   suppressesRenewals,
   toYearMonth,
 } from "@shared/client-state";
+import {
+  ROSTER_PLAN_TYPES,
+  derivePlanType,
+  type ClientRosterResponse,
+  type RosterExclusion,
+  type RosterRow,
+} from "@shared/roster";
 import {
   checkResolutionNote, isResolutionType, isTaskPriority, READ_NO_TASK_NOTE,
 } from "@shared/communication-state";
@@ -2410,6 +2417,118 @@ export async function registerRoutes(
       if (firm.length < 2) return res.json([]);
       const results = await storage.getClientsByBrokerFirm(firm);
       res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * Client roster: one row per in-scope client.
+   *
+   * Scope is derived, never stored — `countsAsActive` keeps ACTIVE, TERMINATING
+   * and RUN_OUT clients on the report so a departing group stays visible while
+   * it is still being serviced. Anyone left off appears in `excluded` with the
+   * reason, so a client can never quietly vanish from the roster.
+   *
+   * Every value is passed through as stored. Missing data stays null and is
+   * rendered blank by the client; nothing is defaulted, zeroed or guessed.
+   */
+  app.get("/api/reports/client-roster", requireAuth, async (_req, res) => {
+    try {
+      const [allClients, allPlans, allContacts] = await Promise.all([
+        db.select().from(clients),
+        db.select().from(plans),
+        db.select().from(brokerContacts),
+      ]);
+
+      // Archived plans are historical and say nothing about current coverage.
+      // A terminated-but-not-archived plan is deliberately kept: under the
+      // run-out model a termination date is not an off switch, and the client
+      // still carries that coverage through the run-out window.
+      const plansByClient = new Map<number, typeof allPlans>();
+      for (const p of allPlans) {
+        if (p.isArchived) continue;
+        const list = plansByClient.get(p.clientId) ?? [];
+        list.push(p);
+        plansByClient.set(p.clientId, list);
+      }
+
+      // One contact per client: the serving primary. Roles are free text and
+      // inconsistently spelled, so `isPrimary` is the only dependable key.
+      const primaryByClient = new Map<number, typeof allContacts[number]>();
+      for (const c of allContacts) {
+        if (!c.isPrimary || c.terminationDate) continue;
+        if (!primaryByClient.has(c.clientId)) primaryByClient.set(c.clientId, c);
+      }
+
+      const rows: RosterRow[] = [];
+      const excluded: RosterExclusion[] = [];
+
+      for (const c of allClients) {
+        const state = deriveClientState(c);
+        if (!countsAsActive(state)) {
+          excluded.push({
+            clientId: c.id,
+            groupNumber: c.clientCode ?? null,
+            clientName: c.clientName,
+            reason: state === "PROSPECT" ? "Prospect, not yet an active client" : "Closed client",
+          });
+          continue;
+        }
+
+        // Fall back to the flat mirror columns only when there is no contact
+        // row at all. They mirror the serving primary, so this adds no new
+        // information — it just avoids blanking a client whose contact was
+        // recorded before broker_contacts existed.
+        const contact = primaryByClient.get(c.id);
+        const brokerName = contact?.contactName ?? c.brokerContactName ?? null;
+        const brokerEmail = contact?.email ?? c.brokerEmail ?? null;
+        const brokerPhone = contact?.phone ?? c.brokerPhone ?? null;
+
+        rows.push({
+          clientId: c.id,
+          clientName: c.clientName,
+          groupNumber: c.clientCode ?? null,
+          city: c.city ?? null,
+          state: c.state ?? null,
+          numberOfEmployees: c.numberOfEmployees ?? null,
+          planType: derivePlanType((plansByClient.get(c.id) ?? []).map(p => p.coverageType)),
+          anniversaryDate: c.anniversaryDate ? c.anniversaryDate.toISOString() : null,
+          brokerFirmName: c.brokerFirmName || null,
+          brokerName: brokerName || null,
+          brokerEmail: brokerEmail || null,
+          brokerPhone: brokerPhone || null,
+          clientState: state,
+        });
+      }
+
+      rows.sort((a, b) => a.clientName.localeCompare(b.clientName));
+
+      const hasBroker = (r: RosterRow) => !!(r.brokerFirmName || r.brokerName);
+      const planTypeCounts: Record<string, number> = {};
+      for (const t of ROSTER_PLAN_TYPES) planTypeCounts[t] = 0;
+      for (const r of rows) if (r.planType) planTypeCounts[r.planType]++;
+
+      const payload: ClientRosterResponse = {
+        generatedAt: new Date().toISOString(),
+        rows,
+        excluded,
+        summary: {
+          totalRows: rows.length,
+          blankCity: rows.filter(r => !r.city).length,
+          blankState: rows.filter(r => !r.state).length,
+          noBrokerOnFile: rows.filter(r => !hasBroker(r)).length,
+          brokerMissingEmail: rows.filter(r => hasBroker(r) && !r.brokerEmail).length,
+          brokerMissingPhone: rows.filter(r => hasBroker(r) && !r.brokerPhone).length,
+          missingEmployeeCount: rows.filter(r => r.numberOfEmployees == null).length,
+          planTypeCounts,
+          planTypeUnresolved: rows
+            .filter(r => !r.planType)
+            .map(r => r.groupNumber ?? `client ${r.clientId}`),
+        },
+      };
+
+      res.json(payload);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

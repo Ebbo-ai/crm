@@ -1,14 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ComponentType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, Download, Search, FileText, Building2, Users } from "lucide-react";
+import { Printer, Download, Search, FileText, Building2, Users, ClipboardList, type LucideIcon } from "lucide-react";
 import { PLAN_TYPE_LABELS, PLAN_BASIS_LABELS, TIER_LABELS, parseLocalDate, formatCurrency } from "@/lib/constants";
 import { clientStateLabel, deriveClientState } from "@shared/client-state";
 import { CLIENT_STATE_HEX } from "@/components/client-state-badge";
+import { ClientRosterReport } from "@/components/reports/client-roster-report";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -792,31 +793,46 @@ function BrokerReportTab() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/**
+ * The reports available in this section.
+ *
+ * A registry rather than hand-written tabs: adding a report is one entry here
+ * plus its component, so the tab strip, the routing and the test ids can never
+ * drift out of step with each other.
+ */
+const REPORTS: { value: string; label: string; icon: LucideIcon; component: ComponentType }[] = [
+  { value: "client-summary", label: "Client Summary", icon: FileText, component: ClientSummaryTab },
+  { value: "broker", label: "Broker Report", icon: Building2, component: BrokerReportTab },
+  { value: "client-roster", label: "Client Roster", icon: ClipboardList, component: ClientRosterReport },
+];
+
 export default function ReportsPage() {
   return (
     <div>
-      <div className="mb-6">
+      <div className="mb-6 roster-no-print">
         <h1 className="text-2xl font-bold text-brand">Reports</h1>
         <p className="text-sm text-muted-foreground mt-1">Generate, view, print, and download formatted reports</p>
       </div>
 
-      <Tabs defaultValue="client-summary">
-        <TabsList className="bg-card border mb-6">
-          <TabsTrigger value="client-summary" data-testid="tab-report-client-summary" className="gap-2 data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
-            <FileText className="w-3.5 h-3.5" /> Client Summary
-          </TabsTrigger>
-          <TabsTrigger value="broker" data-testid="tab-report-broker" className="gap-2 data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">
-            <Building2 className="w-3.5 h-3.5" /> Broker Report
-          </TabsTrigger>
+      <Tabs defaultValue={REPORTS[0].value}>
+        <TabsList className="bg-card border mb-6 roster-no-print">
+          {REPORTS.map(({ value, label, icon: Icon }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              data-testid={`tab-report-${value}`}
+              className="gap-2 data-[state=active]:bg-brand data-[state=active]:text-brand-foreground"
+            >
+              <Icon className="w-3.5 h-3.5" /> {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <TabsContent value="client-summary">
-          <ClientSummaryTab />
-        </TabsContent>
-
-        <TabsContent value="broker">
-          <BrokerReportTab />
-        </TabsContent>
+        {REPORTS.map(({ value, component: Component }) => (
+          <TabsContent key={value} value={value}>
+            <Component />
+          </TabsContent>
+        ))}
       </Tabs>
     </div>
   );
