@@ -3,6 +3,11 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
+import {
+  startRatingEngine,
+  waitForRatingEngine,
+  stopRatingEngine,
+} from "./rating-engine";
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,6 +66,11 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Bring the report service up first so it boots in parallel with the startup
+  // migrations below. This call cannot throw: if the engine will not start, the
+  // CRM still comes up and only PDF/report generation is affected.
+  startRatingEngine();
+
   // Startup migrations: add missing columns, tables, and enums.
   // The plans uniqueness constraint is declared in the Drizzle schema and applied
   // to production by the publish flow. Phase 12 below additionally migrates an
@@ -1078,13 +1088,22 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Report-service readiness is polled only after the listener is open,
+      // never before it. A renderer that is slow or dead must not delay the CRM
+      // from accepting traffic or answering a deployment health check. Endpoints
+      // that need the renderer return a clear 503 until it recovers.
+      void waitForRatingEngine();
     },
   );
 
   // Graceful shutdown: finish in-flight requests before exiting
   const shutdown = () => {
     log("Shutting down gracefully…", "server");
-    httpServer.close(() => {
+    httpServer.close(async () => {
+      // Wait for the report service to actually exit before this process does.
+      // A child is not reaped automatically, so exiting first can leave an
+      // orphaned Python holding port 5001 against the next instance.
+      await stopRatingEngine();
       log("All connections closed — exiting", "server");
       process.exit(0);
     });

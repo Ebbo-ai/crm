@@ -40,6 +40,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
+import { callRatingEngine, sendRatingEngineError } from "./rating-engine";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 
@@ -727,17 +728,11 @@ async function buildRenewalReportPayload(renewalId: number) {
 
 /** Render the payload through the rating engine service. */
 async function renderRenewalReport(payload: any, format: "html" | "pdf") {
-  const res = await fetch("http://127.0.0.1:5001/generate-renewal-report", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ payload, output_format: format }),
-    signal: AbortSignal.timeout(60_000),
-  });
-  const result: any = await res.json();
-  if (!res.ok) {
-    throw Object.assign(new Error(result.error || "Renewal report generation failed"), { status: 500 });
-  }
-  return result;
+  return await callRatingEngine<any>(
+    "/generate-renewal-report",
+    { payload, output_format: format },
+    { failureMessage: "Renewal report generation failed" },
+  );
 }
 
 /**
@@ -1206,6 +1201,7 @@ export async function registerRoutes(
         `attachment; filename="${client.clientCode || client.id}-renewal-report-${renewal.planYear}.pdf"`);
       return res.send(pdfBytes);
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       res.status(err.status || 500).json({ message: err.message });
     }
   });
@@ -1254,6 +1250,7 @@ export async function registerRoutes(
 
       res.json({ document: doc, generatorVersion });
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       res.status(err.status || 500).json({ message: err.message });
     }
   });
@@ -1686,25 +1683,15 @@ export async function registerRoutes(
 
       // Call internal Python service with the client's identity so the PDF
       // cover page shows the real group name, not "Westside School District".
-      const engineRes = await fetch("http://127.0.0.1:5001/generate-renewal-sample", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { pdf_b64, scenarios, total_pages, advisories } = await callRatingEngine<any>(
+        "/generate-renewal-sample",
+        {
           group_name:        client.clientName,
           group_id:          client.clientCode || String(client.id),
           prepared_for:      client.clientName,
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!engineRes.ok) {
-        let msg = "Rating engine error";
-        try { msg = ((await engineRes.json()) as any).error || msg; } catch {}
-        return res.status(502).json({ message: msg });
-      }
-
-      const { pdf_b64, scenarios, total_pages, advisories } =
-        (await engineRes.json()) as any;
+        },
+        { failureMessage: "Rating engine error" },
+      );
 
       // Decode and persist the PDF
       const pdfBuffer = Buffer.from(pdf_b64, "base64");
@@ -1745,6 +1732,7 @@ export async function registerRoutes(
 
       res.status(201).json({ document: doc, scenarios, total_pages });
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       res.status(500).json({ message: err.message });
     }
   });
@@ -3507,17 +3495,11 @@ export async function registerRoutes(
         })),
       };
 
-      const flaskRes = await fetch("http://127.0.0.1:5001/parse-ppr-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_b64: fileB64, file_ext: fileExt, context }),
-        signal: AbortSignal.timeout(120_000),
-      });
-
-      const parsed = await flaskRes.json() as any;
-      if (!flaskRes.ok) {
-        return res.status(500).json({ message: parsed.error || "Parser failed" });
-      }
+      const parsed = await callRatingEngine<any>(
+        "/parse-ppr-import",
+        { file_b64: fileB64, file_ext: fileExt, context },
+        { timeoutMs: 120_000, failureMessage: "Parser failed" },
+      );
 
       const accepted: any[] = parsed.accepted || [];
       const unchanged: any[] = parsed.unchanged || [];
@@ -3639,6 +3621,7 @@ export async function registerRoutes(
         held,
       });
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       res.status(500).json({ message: err.message });
     }
   });
@@ -3920,15 +3903,11 @@ export async function registerRoutes(
       const { _meta, ...payload } = await buildPprReportPayload(clientId, planYear);
       const { client } = _meta as any;
 
-      const flaskRes = await fetch("http://127.0.0.1:5001/generate-ppr-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payload, output_format: format }),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      const result: any = await flaskRes.json();
-      if (!flaskRes.ok) return res.status(500).json({ message: result.error || "Report generation failed" });
+      const result: any = await callRatingEngine<any>(
+        "/generate-ppr-report",
+        { payload, output_format: format },
+        { failureMessage: "Report generation failed" },
+      );
 
       if (format === "html") {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -3943,6 +3922,7 @@ export async function registerRoutes(
         return res.send(pdfBytes);
       }
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       // Honour whatever status the thrown error carries, not just 404. The
       // archive-only refusal for a client past run-out is a 409, and reporting it
       // as a 500 would read as a broken server rather than a deliberate rule.
@@ -3962,15 +3942,11 @@ export async function registerRoutes(
       const { _meta, ...payload } = await buildPprReportPayload(clientId, planYear);
       const { reportPlanYear, client } = _meta as any;
 
-      const flaskRes = await fetch("http://127.0.0.1:5001/generate-ppr-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payload, output_format: "pdf" }),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      const result: any = await flaskRes.json();
-      if (!flaskRes.ok) return res.status(500).json({ message: result.error || "Report generation failed" });
+      const result: any = await callRatingEngine<any>(
+        "/generate-ppr-report",
+        { payload, output_format: "pdf" },
+        { failureMessage: "Report generation failed" },
+      );
 
       const pdfBytes = Buffer.from(result.pdf_b64, "base64");
       const generatorVersion: string = result.generator_version || "unknown";
@@ -4005,6 +3981,7 @@ export async function registerRoutes(
 
       res.json({ document: doc, generatorVersion, reportPlanYear });
     } catch (err: any) {
+      if (sendRatingEngineError(res, err)) return;
       // Honour whatever status the thrown error carries, not just 404. The
       // archive-only refusal for a client past run-out is a 409, and reporting it
       // as a 500 would read as a broken server rather than a deliberate rule.
