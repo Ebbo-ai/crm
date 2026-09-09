@@ -72,7 +72,9 @@ const emptyForm = {
   state: "",
   zipCode: "",
   industryType: "",
+  groupNumber: "",
   numberOfEmployees: "" as string | number,
+  coveredEmployees: "" as string | number,
   anniversaryDate: "",
   renewalLeadMonths: 3,
   clientStatus: "ACTIVE" as "PROSPECT" | "ACTIVE" | "TERMINATED",
@@ -134,7 +136,9 @@ export default function ClientFormPage() {
         state: existingClient.state || "",
         zipCode: existingClient.zipCode || "",
         industryType: existingClient.industryType || "",
+        groupNumber: existingClient.groupNumber || "",
         numberOfEmployees: existingClient.numberOfEmployees ?? "",
+        coveredEmployees: existingClient.coveredEmployees ?? "",
         anniversaryDate: existingClient.anniversaryDate
           ? existingClient.anniversaryDate.split("T")[0]
           : "",
@@ -320,7 +324,9 @@ export default function ClientFormPage() {
     const data: any = {
       ...form,
       clientCode: fullCode,
+      groupNumber: form.groupNumber.trim() || null,
       numberOfEmployees: form.numberOfEmployees !== "" ? Number(form.numberOfEmployees) : null,
+      coveredEmployees: form.coveredEmployees !== "" ? Number(form.coveredEmployees) : null,
     };
     data.isActive = data.clientStatus === "ACTIVE";
     // A termination date is now recorded on a client that is still active: that
@@ -500,6 +506,16 @@ export default function ClientFormPage() {
               <Input id="industryType" value={form.industryType} onChange={e => updateField("industryType", e.target.value)} data-testid="input-industry" />
             </div>
             <div>
+              <OptionalLabel htmlFor="groupNumber">Group Number</OptionalLabel>
+              <Input
+                id="groupNumber"
+                value={form.groupNumber}
+                onChange={e => updateField("groupNumber", e.target.value)}
+                placeholder="e.g. GRP-4471"
+                data-testid="input-group-number"
+              />
+            </div>
+            <div>
               <OptionalLabel htmlFor="numberOfEmployees">Number of Employees</OptionalLabel>
               <Input
                 id="numberOfEmployees"
@@ -509,6 +525,18 @@ export default function ClientFormPage() {
                 onChange={e => updateField("numberOfEmployees", e.target.value)}
                 placeholder="e.g. 250"
                 data-testid="input-employees"
+              />
+            </div>
+            <div>
+              <OptionalLabel htmlFor="coveredEmployees">Covered Employees</OptionalLabel>
+              <Input
+                id="coveredEmployees"
+                type="number"
+                min={0}
+                value={form.coveredEmployees}
+                onChange={e => updateField("coveredEmployees", e.target.value)}
+                placeholder="e.g. 180"
+                data-testid="input-covered-employees"
               />
             </div>
             <div>

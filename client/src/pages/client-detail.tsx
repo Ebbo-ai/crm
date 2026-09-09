@@ -257,7 +257,9 @@ export default function ClientDetailPage() {
                   ].filter(Boolean).join(" ")} />
                 )}
                 {client.industryType && <InfoRow label="Industry" value={client.industryType} />}
+                {client.groupNumber && <InfoRow label="Group Number" value={client.groupNumber} />}
                 {client.numberOfEmployees != null && <InfoRow label="Employees" value={client.numberOfEmployees} />}
+                {client.coveredEmployees != null && <InfoRow label="Covered Employees" value={client.coveredEmployees} />}
                 {client.anniversaryDate && (
                   <InfoRow label="Anniversary Date" value={new Date(client.anniversaryDate).toLocaleDateString()} />
                 )}

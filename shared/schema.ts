@@ -63,6 +63,12 @@ export const clients = pgTable("clients", {
   zipCode: text("zip_code"),
   industryType: text("industry_type"),
   numberOfEmployees: integer("number_of_employees"),
+  // Carrier/administrator-assigned group number — distinct from clientCode,
+  // which is 90 Degree's own internal identifier (e.g. S-20).
+  groupNumber: text("group_number"),
+  // Employees actually enrolled in the plan, as distinct from the employer's
+  // total headcount tracked in numberOfEmployees.
+  coveredEmployees: integer("covered_employees"),
   isActive: boolean("is_active").notNull().default(true),
   terminationDate: timestamp("termination_date"),
   clientStatus: clientStatusEnum("client_status").notNull().default("ACTIVE"),
