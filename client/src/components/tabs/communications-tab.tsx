@@ -137,6 +137,7 @@ function CommCard({
       queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "communications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/communications/feed"] });
       queryClient.invalidateQueries({ queryKey: ["/api/todos"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/todos/mine"] });
       setResolving(false);
       toast({ title: "Resolved", description: "Your note is saved on the record." });
     },

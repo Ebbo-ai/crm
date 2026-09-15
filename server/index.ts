@@ -8,6 +8,7 @@ import {
   waitForRatingEngine,
   stopRatingEngine,
 } from "./rating-engine";
+import { scheduleDailyDigest } from "./digest";
 
 const app = express();
 const httpServer = createServer(app);
@@ -899,6 +900,76 @@ app.use((req, res, next) => {
       END $$;
     `);
 
+    // ── Phase 19: Task ownership and dedup grouping ───────────────────────────
+    // Every task now belongs to a person (defaults to Kim, the service rep)
+    // instead of sitting in one shared unowned list, and tasks that are really
+    // the same job extracted more than once can be grouped under one id.
+    await pool.query(`
+      ALTER TABLE communication_tasks ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT 'Kim Anderson';
+      ALTER TABLE communication_tasks ADD COLUMN IF NOT EXISTS group_id TEXT;
+    `);
+
+    // ── Phase 20: Backfill dedup groups on existing open tasks ────────────────
+    // Going forward, new tasks get checked against a client's open tasks by
+    // Claude at creation time (see dedupAgainstOpenTasks in routes.ts). That
+    // does nothing for the backlog that already existed before this shipped,
+    // so this backfills the same-client/same-due-date clusters that already
+    // exist today (the Ware County / City of St. Peter / Burkhart repeats).
+    // Only touches rows with group_id IS NULL, so it is safe to re-run and
+    // never overwrites a grouping decision made since.
+    await pool.query(`
+      WITH grp AS (
+        SELECT tc.client_id, ct.due_date, array_agg(DISTINCT ct.id ORDER BY ct.id) AS ids
+          FROM communication_tasks ct
+          JOIN task_clients tc ON tc.task_id = ct.id
+         WHERE ct.status IN ('OPEN', 'TODO')
+           AND ct.group_id IS NULL
+           AND ct.due_date IS NOT NULL
+         GROUP BY tc.client_id, ct.due_date
+        HAVING count(DISTINCT ct.id) > 1
+      )
+      UPDATE communication_tasks ct
+         SET group_id = 'bf-' || g.client_id || '-' || to_char(g.due_date, 'YYYY-MM-DD')
+        FROM grp g
+       WHERE ct.id = ANY(g.ids);
+    `);
+
+    // ── Phase 21: Shared 90 Degree Benefits vendor contacts ───────────────────
+    // One list, not a per-client copy — every client shows the same six
+    // people. Seeded with names/roles only; email and phone start blank and
+    // stay editable since that information isn't in the system anywhere yet.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vendor_contacts (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    const { rows: vendorCount } = await pool.query(`SELECT count(*)::int AS n FROM vendor_contacts`);
+    if (vendorCount[0]?.n === 0) {
+      await pool.query(`
+        INSERT INTO vendor_contacts (name, role, sort_order) VALUES
+          ('Allison', 'Client Service Manager', 1),
+          ('Ruby', 'Accounting Manager', 2),
+          ('Crystal', 'Reporting Manager', 3),
+          ('Jenn', 'Marketing and New Client Setup', 4),
+          ('Datha', 'General Client Service Rep', 5),
+          ('Holly', 'Web/Tech', 6);
+      `);
+      log("Startup migration: seeded 90 Degree Benefits vendor contacts");
+    }
+
+    // ── Phase 22: Auto-filed document attachments ─────────────────────────────
+    // Marks which communication_attachments rows have already been promoted
+    // to a client document, so the auto-file step (server/routes.ts) never
+    // creates a duplicate for the same attachment on reprocessing.
+    await pool.query(`
+      ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS filed_as_document_id INTEGER;
+    `);
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at
@@ -1051,6 +1122,11 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
   await seedDatabase().catch((err) => console.error("Seed error:", err));
+
+  // Daily 7:30 AM America/New_York task digest — each owner gets their own
+  // open/overdue items by email instead of the list only being visible if
+  // someone opens the app.
+  scheduleDailyDigest();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

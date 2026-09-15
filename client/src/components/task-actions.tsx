@@ -40,6 +40,7 @@ function dueStatus(dueDate: string | null) {
 const SHARED_KEYS = [
   ["/api/communication-tasks"],
   ["/api/todos"],
+  ["/api/todos/mine"],
   ["/api/communications/feed"],
 ];
 

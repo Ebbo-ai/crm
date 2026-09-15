@@ -314,6 +314,53 @@ Return ONLY the JSON object, no other text.`;
   }
 }
 
+/**
+ * Checks a freshly-created task's description against the client's other
+ * still-open tasks to see whether it is really the same job surfacing again —
+ * either the same thread producing a near-duplicate action item, or a
+ * different thread raising the same underlying ask (e.g. two people both
+ * asking to schedule the same kickoff call).
+ *
+ * Returns the id of the existing task to group with, or null when this is
+ * genuinely new work. Conservative on purpose: grouping two unrelated tasks
+ * together would hide one of them from the person who owns it.
+ */
+export async function findDuplicateTask(
+  newDescription: string,
+  candidates: { id: number; description: string }[],
+): Promise<number | null> {
+  if (!process.env.ANTHROPIC_API_KEY || candidates.length === 0) return null;
+
+  const list = candidates.map(c => `${c.id}: ${c.description}`).join("\n");
+  const prompt = `A new to-do was just created for a client:
+"${newDescription}"
+
+Here are that same client's other still-open to-dos, each on its own line as "id: description":
+${list}
+
+Is the new to-do the SAME underlying piece of work as one of these — the same job, meeting, document, or ask, just phrased differently or extracted from a different email? Not merely "related to the same client" — it must be the same specific action.
+
+Return ONLY valid JSON: {"duplicateOf": <id> or null}`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 100,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const id = parsed.duplicateOf;
+    if (typeof id === "number" && candidates.some(c => c.id === id)) return id;
+    return null;
+  } catch (err: any) {
+    console.error("[claude] findDuplicateTask error:", err?.message || String(err));
+    return null; // fail open — never block task creation on a dedup check
+  }
+}
+
 export async function queryClientCommunications(
   question: string,
   communications: { subject: string | null; claudeSummary: string | null; receivedAt: Date; senderName: string | null; senderEmail: string }[]

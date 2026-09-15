@@ -80,7 +80,7 @@ export function AddTodoDialog({ onClose }: { onClose: () => void }) {
         clients: attached.map(c => ({ clientId: c.clientId, confidence: c.confidence })),
       }),
     onSuccess: () => {
-      for (const key of [["/api/todos"], ["/api/general/todos"], ["/api/communication-tasks"]]) {
+      for (const key of [["/api/todos"], ["/api/todos/mine"], ["/api/general/todos"], ["/api/communication-tasks"]]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
       toast({

@@ -17,10 +17,15 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ResolveDialog } from "@/components/resolution-dialogs";
 import { formatDistanceToNow } from "date-fns";
 import { AddTodoDialog } from "@/components/add-todo-dialog";
-import { GripVertical, CheckCircle2, ListTodo, ArrowRight, Clock, Plus, Building2 } from "lucide-react";
+import { GripVertical, CheckCircle2, ListTodo, ArrowRight, Clock, Plus, Building2, User } from "lucide-react";
 import {
   TASK_PRIORITIES, PRIORITY_LABEL, PRIORITY_STYLE, type TaskPriority,
 } from "@shared/communication-state";
+import { useAuth } from "@/lib/auth";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+/** The two people work can belong to. Kept in sync with server/routes.ts TASK_OWNERS. */
+export const TASK_OWNERS = ["Kim Anderson", "Steve Schultz"] as const;
 
 export interface Todo {
   id: number;
@@ -38,17 +43,21 @@ export interface Todo {
   createdAt: string;
   sortOrder: number;
   origin: string;
+  owner: string;
   communicationSubject: string | null;
   communicationSender: string | null;
+  /** Other tasks judged to be the same underlying job, folded under this one. */
+  relatedTasks: { id: number; description: string; communicationSubject: string | null }[];
 }
 
 function SortableTodoRow({
-  todo, onResolve, onOpen, onOpenClient,
+  todo, onResolve, onOpen, onOpenClient, onReassign,
 }: {
   todo: Todo;
   onResolve: () => void;
   onOpen: () => void;
   onOpenClient: (clientId: number) => void;
+  onReassign: (owner: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id });
   const style = {
@@ -111,9 +120,36 @@ function SortableTodoRow({
           waiting {formatDistanceToNow(new Date(waitingSince))}
           {todo.origin === "MANUAL" && <span className="ml-1.5 text-brand">· added by hand</span>}
         </p>
+
+        {todo.relatedTasks.length > 0 && (
+          <div className="mt-1.5 pl-2 border-l-2 border-border space-y-0.5">
+            <p className="text-[11px] text-muted-foreground font-medium">
+              +{todo.relatedTasks.length} related item{todo.relatedTasks.length === 1 ? "" : "s"} — same job, raised again:
+            </p>
+            {todo.relatedTasks.map(r => (
+              <p key={r.id} className="text-[11px] text-muted-foreground truncate" data-testid={`text-related-task-${r.id}`}>
+                · {r.description}{r.communicationSubject ? ` (${r.communicationSubject})` : ""}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-1 flex-shrink-0">
+        <Select value={todo.owner} onValueChange={onReassign}>
+          <SelectTrigger
+            className="h-7 w-[84px] text-xs px-2 gap-1 border-0 bg-surface-subtle"
+            data-testid={`select-todo-owner-${todo.id}`}
+          >
+            <User className="w-3 h-3 flex-shrink-0" />
+            <SelectValue>{todo.owner.split(" ")[0]}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {TASK_OWNERS.map(o => (
+              <SelectItem key={o} value={o}>{o}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           size="sm" variant="ghost" onClick={onOpen}
           className="h-7 w-7 p-0 text-muted-foreground hover:text-brand"
@@ -136,13 +172,14 @@ function SortableTodoRow({
 }
 
 function PrioritySection({
-  priority, todos, onResolve, onOpen, onOpenClient,
+  priority, todos, onResolve, onOpen, onOpenClient, onReassign,
 }: {
   priority: TaskPriority;
   todos: Todo[];
   onResolve: (t: Todo) => void;
   onOpen: (t: Todo) => void;
   onOpenClient: (clientId: number) => void;
+  onReassign: (t: Todo, owner: string) => void;
 }) {
   const { toast } = useToast();
   const style = PRIORITY_STYLE[priority];
@@ -204,6 +241,7 @@ function PrioritySection({
                 onResolve={() => onResolve(t)}
                 onOpen={() => onOpen(t)}
                 onOpenClient={onOpenClient}
+                onReassign={owner => onReassign(t, owner)}
               />
             ))}
           </div>
@@ -221,10 +259,24 @@ function PrioritySection({
 export default function TodoList() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [resolving, setResolving] = useState<Todo | null>(null);
   const [adding, setAdding] = useState(false);
+  // Everyone lands on their own list first; "All tasks" is the admin overview.
+  const [view, setView] = useState<"mine" | "all">("mine");
 
-  const { data: todos = [], isLoading } = useQuery<Todo[]>({ queryKey: ["/api/todos"] });
+  const queryKey = view === "mine" ? ["/api/todos/mine"] : ["/api/todos"];
+  const { data: todos = [], isLoading } = useQuery<Todo[]>({ queryKey });
+
+  const reassignMutation = useMutation({
+    mutationFn: ({ id, owner }: { id: number; owner: string }) =>
+      apiRequest("PATCH", `/api/tasks/${id}/owner`, { owner }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/todos"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/todos/mine"] });
+    },
+    onError: (e: any) => toast({ title: "Could not reassign", description: e.message, variant: "destructive" }),
+  });
 
   const bySection = useMemo(() => {
     const map: Record<TaskPriority, Todo[]> = { URGENT: [], NORMAL: [], CASUAL: [] };
@@ -289,6 +341,26 @@ export default function TodoList() {
             <Plus className="w-3.5 h-3.5" /> Add new
           </Button>
         </div>
+        <div className="flex items-center gap-1 mt-2">
+          <Button
+            size="sm"
+            variant={view === "mine" ? "secondary" : "ghost"}
+            onClick={() => setView("mine")}
+            className="h-7 px-2.5 text-xs"
+            data-testid="button-todo-view-mine"
+          >
+            {user?.fullName ? `${user.fullName.split(" ")[0]}'s tasks` : "My tasks"}
+          </Button>
+          <Button
+            size="sm"
+            variant={view === "all" ? "secondary" : "ghost"}
+            onClick={() => setView("all")}
+            className="h-7 px-2.5 text-xs"
+            data-testid="button-todo-view-all"
+          >
+            All tasks
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="pt-0">
         {isLoading ? (
@@ -311,6 +383,7 @@ export default function TodoList() {
                 onResolve={setResolving}
                 onOpen={open}
                 onOpenClient={openClient}
+                onReassign={(t, owner) => reassignMutation.mutate({ id: t.id, owner })}
               />
             ))}
           </div>

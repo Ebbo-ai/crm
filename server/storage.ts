@@ -1,7 +1,7 @@
 import { db } from "./db";
-import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte } from "drizzle-orm";
+import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte, ne } from "drizzle-orm";
 import {
-  users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs,
+  users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs, vendorContacts,
   communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   type RenewalProgress,
@@ -611,6 +611,27 @@ export class DatabaseStorage implements IStorage {
   async getDocument(id: number): Promise<Document | undefined> {
     const [doc] = await db.select().from(documents).where(eq(documents.id, id));
     return doc;
+  }
+
+  /** The shared 90 Degree Benefits contact list, same rows on every client. */
+  async getVendorContacts() {
+    return db.select().from(vendorContacts).orderBy(asc(vendorContacts.sortOrder));
+  }
+
+  /** Only email/phone are ever edited here — name and role are the fixed roster. */
+  async updateVendorContact(id: number, fields: { email?: string | null; phone?: string | null }) {
+    const [updated] = await db.update(vendorContacts).set(fields).where(eq(vendorContacts.id, id)).returning();
+    return updated;
+  }
+
+  /** Attachments on this communication that have not yet been filed onto a client's documents tab. */
+  async getUnfiledAttachments(communicationId: number) {
+    return db.select().from(communicationAttachments)
+      .where(and(eq(communicationAttachments.communicationId, communicationId), isNull(communicationAttachments.filedAsDocumentId)));
+  }
+
+  async markAttachmentFiled(attachmentId: number, documentId: number) {
+    await db.update(communicationAttachments).set({ filedAsDocumentId: documentId }).where(eq(communicationAttachments.id, attachmentId));
   }
 
   async createDocument(doc: InsertDocument): Promise<Document> {
@@ -1418,7 +1439,93 @@ export class DatabaseStorage implements IStorage {
     const tasks = await db.select().from(communicationTasks)
       .where(eq(communicationTasks.status, "TODO"));
     const decorated = await this.decorateTasks(tasks);
-    return decorated.sort(compareTodos);
+    return this.collapseGroups(decorated.sort(compareTodos));
+  }
+
+  /** Same list, filtered to one person's own items — the "My Tasks" view. */
+  async getTodosForOwner(owner: string) {
+    const tasks = await db.select().from(communicationTasks)
+      .where(and(eq(communicationTasks.status, "TODO"), eq(communicationTasks.owner, owner)));
+    const decorated = await this.decorateTasks(tasks);
+    return this.collapseGroups(decorated.sort(compareTodos));
+  }
+
+  /**
+   * Folds tasks that share a groupId (the same underlying job, extracted more
+   * than once) into one row. The earliest-created task in the group is kept
+   * in place — its position in the priority order does not change — and
+   * carries the others as `relatedTasks` for the UI to list underneath it.
+   */
+  private collapseGroups<T extends { id: number; groupId: string | null; createdAt: any; description: string; communicationSubject?: string | null }>(
+    tasks: T[],
+  ): (T & { relatedTasks: { id: number; description: string; communicationSubject: string | null }[] })[] {
+    const byGroup = new Map<string, T[]>();
+    for (const t of tasks) {
+      if (!t.groupId) continue;
+      const list = byGroup.get(t.groupId) ?? [];
+      list.push(t);
+      byGroup.set(t.groupId, list);
+    }
+    const suppressed = new Set<number>();
+    const relatedByPrimary = new Map<number, { id: number; description: string; communicationSubject: string | null }[]>();
+    for (const group of Array.from(byGroup.values())) {
+      if (group.length < 2) continue;
+      const sorted = [...group].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      const [primary, ...rest] = sorted;
+      relatedByPrimary.set(primary.id, rest.map(r => ({ id: r.id, description: r.description, communicationSubject: r.communicationSubject ?? null })));
+      for (const r of rest) suppressed.add(r.id);
+    }
+    return tasks
+      .filter(t => !suppressed.has(t.id))
+      .map(t => ({ ...t, relatedTasks: relatedByPrimary.get(t.id) ?? [] }));
+  }
+
+  /** Every open (OPEN or TODO) item owned by one person — used by the daily digest. */
+  async getOpenTasksForOwner(owner: string) {
+    const tasks = await db.select().from(communicationTasks)
+      .where(and(inArray(communicationTasks.status, ["OPEN", "TODO"]), eq(communicationTasks.owner, owner)))
+      .orderBy(asc(communicationTasks.dueDate));
+    return this.decorateTasks(tasks);
+  }
+
+  /** Other still-open tasks for a client, for the dedup check against a freshly-created task. */
+  async getOpenTasksForClientExcept(clientId: number, excludeTaskId: number) {
+    const rows = await db.select({ id: communicationTasks.id, description: communicationTasks.description })
+      .from(communicationTasks)
+      .innerJoin(taskClients, eq(taskClients.taskId, communicationTasks.id))
+      .where(and(
+        eq(taskClients.clientId, clientId),
+        inArray(communicationTasks.status, ["OPEN", "TODO"]),
+        ne(communicationTasks.id, excludeTaskId),
+      ));
+    // A client can appear twice if a task touches it via more than one link path; ids are unique so dedupe defensively.
+    const seen = new Map<number, { id: number; description: string }>();
+    for (const r of rows) seen.set(r.id, r);
+    return Array.from(seen.values());
+  }
+
+  /**
+   * Groups `taskId` with `matchTaskId` as the same underlying job. Reuses the
+   * match's existing groupId if it already has one (so a third repeat joins
+   * the same group instead of starting a new pair), otherwise mints one from
+   * the match's own id.
+   */
+  async groupTaskWith(taskId: number, matchTaskId: number) {
+    const [match] = await db.select({ groupId: communicationTasks.groupId })
+      .from(communicationTasks).where(eq(communicationTasks.id, matchTaskId));
+    const groupId = match?.groupId ?? `job-${matchTaskId}`;
+    await db.update(communicationTasks).set({ groupId })
+      .where(inArray(communicationTasks.id, [taskId, matchTaskId]));
+    return groupId;
+  }
+
+  /** Reassigns a task to another person. Either owner can hand work to the other. */
+  async setTaskOwner(id: number, owner: string) {
+    const [updated] = await db.update(communicationTasks)
+      .set({ owner })
+      .where(eq(communicationTasks.id, id))
+      .returning();
+    return updated;
   }
 
   /**

@@ -28,6 +28,7 @@ import IssuesTab from "@/components/tabs/issues-tab";
 import PprTab from "@/components/tabs/ppr-tab";
 import CommunicationsTab from "@/components/tabs/communications-tab";
 import PipelineTab from "@/components/tabs/pipeline-tab";
+import VendorContactsCard from "@/components/vendor-contacts-card";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -552,6 +553,8 @@ export default function ClientDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            <VendorContactsCard />
           </div>
         </TabsContent>
 

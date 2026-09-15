@@ -32,7 +32,7 @@ import {
   reattachCommunicationLinks,
   ResetNotConfirmedError,
 } from "./data-reset";
-import { matchEmailToClients, matchTextToClients, processEmail, queryClientCommunications } from "./claude";
+import { matchEmailToClients, matchTextToClients, processEmail, queryClientCommunications, findDuplicateTask } from "./claude";
 import { buildClientRefs } from "./client-context";
 import bcrypt from "bcryptjs";
 import multer from "multer";
@@ -747,6 +747,53 @@ async function renderRenewalReport(payload: any, format: "html" | "pdf") {
  * check below; the UNIQUE (client_id, plan_year) index plus onConflictDoNothing
  * make the duplicate impossible rather than merely unlikely.
  */
+/**
+ * Checks a freshly-created task against the client's other open tasks and
+ * groups it with an existing one when Claude judges it the same underlying
+ * job — whether that's the same thread producing a near-duplicate, or a
+ * different thread raising the same ask. Never blocks or fails task creation:
+ * a dedup miss just leaves two rows instead of one.
+ */
+/**
+ * Files a matched communication's attachments onto the client's documents
+ * tab automatically. Every attachment is marked filed the moment it is
+ * promoted, so reprocessing the same communication (or a retrying webhook)
+ * never creates a second document row for the same file.
+ */
+async function autoFileAttachments(communicationId: number, clientId: number, uploadedBy: string) {
+  try {
+    const unfiled = await storage.getUnfiledAttachments(communicationId);
+    for (const att of unfiled) {
+      const doc = await storage.createDocument({
+        clientId,
+        renewalId: null,
+        planId: null,
+        documentName: att.filename,
+        category: "OTHER",
+        filePath: att.storagePath,
+        fileName: att.filename,
+        notes: "Auto-filed from an email attachment.",
+        uploadedBy,
+      });
+      await storage.markAttachmentFiled(att.id, doc.id);
+    }
+  } catch (err: any) {
+    console.error("[auto-file] attachment filing failed:", err?.message || err);
+  }
+}
+
+async function dedupAgainstOpenTasks(taskId: number, clientId: number | null | undefined, description: string) {
+  if (!clientId) return;
+  try {
+    const candidates = await storage.getOpenTasksForClientExcept(clientId, taskId);
+    if (!candidates.length) return;
+    const matchId = await findDuplicateTask(description, candidates);
+    if (matchId) await storage.groupTaskWith(taskId, matchId);
+  } catch (err: any) {
+    console.error("[dedup] task grouping check failed:", err?.message || err);
+  }
+}
+
 async function ensureOpenRenewal(client: any, today = new Date()) {
   if (!client?.anniversaryDate) return null;
 
@@ -1601,6 +1648,29 @@ export async function registerRoutes(
     }
   });
 
+  // ── Shared 90 Degree Benefits vendor contacts ──────────────────────────────
+  app.get("/api/vendor-contacts", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getVendorContacts());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/vendor-contacts/:id", requireAuth, async (req, res) => {
+    try {
+      const { email, phone } = req.body;
+      const updated = await storage.updateVendorContact(parseInt(req.params.id), {
+        email: email ?? null,
+        phone: phone ?? null,
+      });
+      if (!updated) return res.status(404).json({ message: "Vendor contact not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/plans/:planId/documents", requireAuth, (req, res, next) => {
     (req as any).uploadSubDir = "documents";
     next();
@@ -1638,24 +1708,42 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * Bulk-friendly: accepts one file or many in the same request (field name
+   * "files"), all filed under the same client/category/notes. Lets Kim drop a
+   * folder's worth of existing renewal/proposal documents on a client at once
+   * instead of one request per file.
+   */
   app.post("/api/clients/:id/documents", requireAuth, (req, res, next) => {
     (req as any).uploadSubDir = "documents";
     next();
-  }, upload.single("file"), async (req, res) => {
+  }, upload.array("file", 25), async (req, res) => {
     try {
-      if (!req.file) return res.status(400).json({ message: "File is required" });
-      const doc = await storage.createDocument({
-        clientId: parseInt(req.params.id),
-        // Optional — signed acceptance forms and 90 Degree notifications belong
-        // to a particular renewal year
-        renewalId: req.body.renewalId ? parseInt(req.body.renewalId) : null,
-        documentName: req.body.documentName,
-        category: req.body.category,
-        filePath: req.file.path,
-        fileName: req.file.originalname,
-        notes: req.body.notes || null,
-        uploadedBy: (req.user as any).fullName,
-      });
+      // Same field name ("file") as the existing single-upload form; appending
+      // it more than once in the FormData is what makes this a bulk upload.
+      const files = (req.files as Express.Multer.File[]) || [];
+      if (!files.length) return res.status(400).json({ message: "At least one file is required" });
+
+      const created = [];
+      for (const file of files) {
+        const doc = await storage.createDocument({
+          clientId: parseInt(req.params.id),
+          // Optional — signed acceptance forms and 90 Degree notifications belong
+          // to a particular renewal year
+          renewalId: req.body.renewalId ? parseInt(req.body.renewalId) : null,
+          documentName: files.length > 1 ? file.originalname : (req.body.documentName || file.originalname),
+          category: req.body.category,
+          filePath: file.path,
+          fileName: file.originalname,
+          notes: req.body.notes || null,
+          uploadedBy: (req.user as any).fullName,
+        });
+        created.push(doc);
+      }
+      if (created.length > 1) {
+        return res.status(201).json({ documents: created });
+      }
+      const doc = created[0];
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
@@ -2828,16 +2916,21 @@ export async function registerRoutes(
       // ── STEP 5: Assign to clients and create tasks ─────────────────────────
       if (matches.length > 0) {
         await storage.assignCommunicationToClients(comm.id, matches);
+        // Most incoming documents arrive as email attachments, so file them
+        // onto the client's record automatically instead of waiting for
+        // someone to notice and re-upload them by hand.
+        await autoFileAttachments(comm.id, matches[0].clientId, "System (auto-filed)");
         // One action item is one task, however many clients it touches. It used
         // to be written once per matched client, which meant the same job had
         // to be resolved twice and the same note typed twice.
         for (const item of processed.actionItems) {
           const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          await storage.createTaskWithClients({
+          const created = await storage.createTaskWithClients({
             communicationId: comm.id, clientId: matches[0].clientId,
             description: item.description,
             dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
           }, matches);
+          await dedupAgainstOpenTasks(created.id, matches[0].clientId, item.description);
         }
       } else {
         for (const item of processed.actionItems) {
@@ -2907,10 +3000,11 @@ export async function registerRoutes(
         // client it concerns, resolved once.
         for (const item of processed.actionItems) {
           const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          await storage.createTaskWithClients({
+          const created = await storage.createTaskWithClients({
             communicationId: comm.id, clientId: parsedClientIds[0], description: item.description,
             dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
           }, parsedClientIds.map(clientId => ({ clientId, confidence: "manual" })));
+          await dedupAgainstOpenTasks(created.id, parsedClientIds[0], item.description);
         }
       }
 
@@ -3183,6 +3277,34 @@ export async function registerRoutes(
   app.get("/api/todos", requireAuth, async (_req, res) => {
     try {
       res.json(await storage.getTodos());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** The logged-in user's own to-do list — filters the shared list to their owner name. */
+  app.get("/api/todos/mine", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getTodosForOwner((req.user as Express.User).fullName));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  const TASK_OWNERS = ["Kim Anderson", "Steve Schultz"] as const;
+
+  /** Hands a task to the other person. Either owner can reassign. */
+  app.patch("/api/tasks/:id/owner", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const owner = req.body?.owner;
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid task id" });
+      if (!TASK_OWNERS.includes(owner)) {
+        return res.status(400).json({ message: `owner must be one of: ${TASK_OWNERS.join(", ")}` });
+      }
+      const updated = await storage.setTaskOwner(id, owner);
+      if (!updated) return res.status(404).json({ message: "Task not found" });
+      res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -306,6 +306,21 @@ export const documents = pgTable("documents", {
   uploadedBy: text("uploaded_by").notNull(),
 });
 
+/**
+ * The 90 Degree Benefits people every client shares — one Client Service
+ * Manager, one Accounting Manager, and so on, the same six names for every
+ * group. Deliberately one shared list, not a copy per client: these are
+ * vendor routing contacts, not anything client-specific.
+ */
+export const vendorContacts = pgTable("vendor_contacts", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  role: text("role").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
 export const issues = pgTable("issues", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull(),
@@ -397,6 +412,8 @@ export const communicationAttachments = pgTable("communication_attachments", {
   storagePath: text("storage_path").notNull(),
   claudeAnalysis: text("claude_analysis"),
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+  /** Set once this attachment has been auto-filed onto the client's documents tab, so it is never filed twice. */
+  filedAsDocumentId: integer("filed_as_document_id"),
 });
 
 export const communicationTasks = pgTable("communication_tasks", {
@@ -436,6 +453,20 @@ export const communicationTasks = pgTable("communication_tasks", {
   origin: text("origin").notNull().default("AI"),
   /** Manual drag ordering within a priority section. Lower sorts first. */
   sortOrder: integer("sort_order").notNull().default(0),
+  /**
+   * Full name of the person this task belongs to (Kim Anderson | Steve Schultz).
+   * Everything defaults to Kim, the service rep; she reassigns to Steve when needed.
+   * Text, not a user FK, to match the existing resolvedBy convention.
+   */
+  owner: text("owner").notNull().default("Kim Anderson"),
+  /**
+   * Groups this task with others that are the same underlying job (same
+   * client, same ask) extracted more than once, whether from repeat mentions
+   * in one thread or from several different threads. Null means the task
+   * stands alone. All tasks sharing a groupId render as one item with the
+   * others listed underneath instead of as separate rows.
+   */
+  groupId: text("group_id"),
 });
 
 /**
@@ -494,6 +525,7 @@ export const insertPlanTierSchema = createInsertSchema(planTiers).omit({ id: tru
 export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
+export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
 export const insertPprUploadSchema = createInsertSchema(pprUploads).omit({ id: true, uploadedAt: true });
 export const insertPprMetricsSchema = createInsertSchema(pprMetrics).omit({ id: true, importedAt: true });
@@ -511,6 +543,8 @@ export type RateCard = typeof rateCards.$inferSelect;
 export type InsertRateCard = z.infer<typeof insertRateCardSchema>;
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type VendorContact = typeof vendorContacts.$inferSelect;
+export type InsertVendorContact = z.infer<typeof insertVendorContactSchema>;
 export type Issue = typeof issues.$inferSelect;
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 export type PprUpload = typeof pprUploads.$inferSelect;
