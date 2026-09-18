@@ -22,6 +22,7 @@ import CrmImportPage from "@/pages/crm-import";
 import DataResetPage from "@/pages/data-reset";
 import GmailImportPage from "@/pages/gmail-import";
 import FieldReviewPage from "@/pages/field-review";
+import MailPage from "@/pages/mail";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
@@ -77,6 +78,7 @@ function Router() {
       <Route path="/settings/data-reset">{() => <ProtectedRoute component={DataResetPage} adminOnly />}</Route>
       <Route path="/settings/gmail-import">{() => <ProtectedRoute component={GmailImportPage} adminOnly />}</Route>
       <Route path="/field-review">{() => <ProtectedRoute component={FieldReviewPage} />}</Route>
+      <Route path="/mail">{() => <ProtectedRoute component={MailPage} />}</Route>
       <Route>{() => <ProtectedRoute component={NotFound} />}</Route>
     </Switch>
   );

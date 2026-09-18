@@ -19,3 +19,4 @@
 - [Client termination and run-out](client-termination.md) — a termination date stops renewals only; state is derived from the date alone and PPRs/claims continue through a fixed three-month run-out.
 - [Blank vs zero in reports](report-blank-vs-zero.md) — a missing number renders blank; totals skip nulls and mark partial; preview and print are separate code paths.
 - [pdf-parse v2 API break](pdf-parse-v2-api.md) — v2 dropped the function export for a PDFParse class; the old call pattern fails at runtime, not just types.
+- [Gmail full-mail sync](gmail-full-mail-sync.md) — separate state key from the old has:attachment importer; must finish a full page before checking the run cap or a big backlog stalls sync forever.

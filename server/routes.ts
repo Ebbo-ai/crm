@@ -1912,6 +1912,127 @@ export async function registerRoutes(
     }
   });
 
+  // ─── Gmail inbox (full mail, read/search/summarize only — no send/reply) ───
+  app.post("/api/gmail-inbox/sync", requireAdmin, async (req, res) => {
+    try {
+      const { runGmailFullSync } = await import("./gmailFullSync");
+      const summary = await runGmailFullSync();
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "ran",
+        entity: "gmail_inbox_sync",
+        entityId: 0,
+        details: `Gmail full sync for ${summary.mailbox}: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.attachmentsFiled} document(s) filed.`,
+      });
+      res.json(summary);
+    } catch (err: any) {
+      console.error("[gmail-inbox] sync failed:", err?.message || err);
+      res.status(502).json({ message: err.message || "Gmail sync failed" });
+    }
+  });
+
+  app.get("/api/gmail-inbox/counts", requireAuth, async (req, res) => {
+    try {
+      const isAdmin = (req.user as any).role === "ADMIN";
+      const counts = await storage.getGmailInboxCounts(isAdmin);
+      res.json(counts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/gmail-inbox/domains", requireAuth, async (req, res) => {
+    try {
+      const domains = await storage.getDistinctGmailDomains();
+      res.json(domains);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/gmail-inbox/threads", requireAuth, async (req, res) => {
+    try {
+      const isAdmin = (req.user as any).role === "ADMIN";
+      const q = req.query;
+      const { threads, total } = await storage.searchGmailThreads({
+        viewerIsAdmin: isAdmin,
+        view: (q.view as any) || undefined,
+        clientId: q.clientId ? parseInt(q.clientId as string) : undefined,
+        personEmail: (q.personEmail as string) || undefined,
+        domain: (q.domain as string) || undefined,
+        text: (q.text as string) || undefined,
+        includeQuoted: q.includeQuoted === "true" ? true : undefined,
+        dateFrom: q.dateFrom ? new Date(q.dateFrom as string) : undefined,
+        dateTo: q.dateTo ? new Date(q.dateTo as string) : undefined,
+        direction: (q.direction as any) || undefined,
+        hasAttachment: q.hasAttachment === "true" ? true : undefined,
+        limit: q.limit ? parseInt(q.limit as string) : 50,
+        offset: q.offset ? parseInt(q.offset as string) : 0,
+      });
+      const threadIds = threads.map((t) => t.id);
+      const clientLinks = threadIds.length > 0
+        ? await Promise.all(threadIds.map(async (id) => ({ id, clientIds: await storage.getGmailThreadClientIds(id) })))
+        : [];
+      const linkMap = new Map(clientLinks.map((c) => [c.id, c.clientIds]));
+      res.json({
+        total,
+        threads: threads.map((t) => ({ ...t, clientIds: linkMap.get(t.id) || [] })),
+      });
+    } catch (err: any) {
+      console.error("[gmail-inbox] search failed:", err?.message || err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/gmail-inbox/threads/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const thread = await storage.getGmailThread(id);
+      if (!thread) return res.status(404).json({ message: "Thread not found" });
+      const isAdmin = (req.user as any).role === "ADMIN";
+      if (thread.isPrivate && !isAdmin) return res.status(403).json({ message: "Private thread" });
+
+      const messages = await storage.getGmailMessagesForThread(id);
+      const attachments = await storage.getGmailAttachmentsForMessages(messages.map((m) => m.id));
+      const clientIds = await storage.getGmailThreadClientIds(id);
+      const clientsList = clientIds.length > 0 ? await storage.getClientsByIds(clientIds) : [];
+      res.json({
+        thread,
+        clients: clientsList,
+        messages: messages.map((m) => ({
+          ...m,
+          attachments: attachments.filter((a) => a.messageId === m.id && !a.isEmbeddedImage),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/gmail-inbox/threads/:id/assign", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { clientId } = req.body;
+      if (!clientId) return res.status(400).json({ message: "clientId required" });
+      await storage.assignGmailThreadToClient(id, parseInt(clientId), (req.user as any).fullName);
+      res.json({ message: "Assigned" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/gmail-inbox/threads/:id/private", requireAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { isPrivate } = req.body;
+      await storage.setGmailThreadPrivate(id, !!isPrivate);
+      res.json({ message: "Updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ─── Document field proposal review queue ──────────────────────────────────
   app.get("/api/field-proposals", requireAuth, async (req, res) => {
     try {

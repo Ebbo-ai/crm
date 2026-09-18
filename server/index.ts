@@ -1248,6 +1248,94 @@ app.use((req, res, next) => {
     if (dateBackfill.total > 0) {
       log(`Startup migration: document effective-date backfill — ${dateBackfill.dated} dated, ${dateBackfill.undated} left undated of ${dateBackfill.total}`);
     }
+
+    // ── Phase 18: Gmail inbox inside the CRM ───────────────────────────────────
+    // Full mail (not just has:attachment), full body storage, thread grouping,
+    // client match / unassigned / not-business classification, AI summaries,
+    // and a private-visibility flag. Tables only — the sync itself is kicked
+    // off below, after routes are registered, and then re-run on a timer.
+    await pool.query(`
+      DO $$ BEGIN
+        CREATE TYPE gmail_thread_business AS ENUM ('MATCHED', 'UNASSIGNED', 'NOT_BUSINESS');
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE TYPE gmail_message_direction AS ENUM ('SENT', 'RECEIVED');
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gmail_threads (
+        id SERIAL PRIMARY KEY,
+        gmail_thread_id TEXT NOT NULL UNIQUE,
+        mailbox TEXT NOT NULL,
+        subject TEXT,
+        latest_message_at TIMESTAMP NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        business_status gmail_thread_business NOT NULL DEFAULT 'UNASSIGNED',
+        summary TEXT,
+        summary_one_line TEXT,
+        summary_generated_at TIMESTAMP,
+        summary_for_message_count INTEGER,
+        is_private BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS gmail_threads_latest_idx ON gmail_threads (latest_message_at DESC);
+      CREATE TABLE IF NOT EXISTS gmail_thread_clients (
+        id SERIAL PRIMARY KEY,
+        thread_id INTEGER NOT NULL REFERENCES gmail_threads(id) ON DELETE CASCADE,
+        client_id INTEGER NOT NULL,
+        match_confidence TEXT NOT NULL DEFAULT 'medium'
+      );
+      CREATE INDEX IF NOT EXISTS gmail_thread_clients_client_idx ON gmail_thread_clients (client_id);
+      CREATE TABLE IF NOT EXISTS gmail_messages (
+        id SERIAL PRIMARY KEY,
+        gmail_message_id TEXT NOT NULL UNIQUE,
+        thread_id INTEGER NOT NULL REFERENCES gmail_threads(id) ON DELETE CASCADE,
+        mailbox TEXT NOT NULL,
+        from_email TEXT NOT NULL,
+        from_name TEXT,
+        to_emails JSONB NOT NULL DEFAULT '[]',
+        cc_emails JSONB NOT NULL DEFAULT '[]',
+        subject TEXT,
+        body_text TEXT,
+        body_html_safe TEXT,
+        snippet TEXT,
+        sent_at TIMESTAMP NOT NULL,
+        direction gmail_message_direction NOT NULL,
+        has_attachments BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS gmail_messages_thread_idx ON gmail_messages (thread_id);
+      CREATE INDEX IF NOT EXISTS gmail_messages_from_idx ON gmail_messages (from_email);
+      CREATE TABLE IF NOT EXISTS gmail_attachments (
+        id SERIAL PRIMARY KEY,
+        message_id INTEGER NOT NULL REFERENCES gmail_messages(id) ON DELETE CASCADE,
+        gmail_attachment_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        is_embedded_image BOOLEAN NOT NULL DEFAULT false,
+        storage_path TEXT,
+        filed_as_document_id INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS gmail_attachments_message_idx ON gmail_attachments (message_id);
+    `);
+    log("Startup migration: Gmail inbox tables ready");
+
+    const imageCleanup = await storage.cleanupEmbeddedImageDocuments();
+    if (imageCleanup.deleted > 0) {
+      log(`Startup migration: removed ${imageCleanup.deleted} signature-logo/icon document(s) mistakenly filed by the original attachment backfill`);
+    }
+
+    // ── Phase 19: quoted-history trimming on Gmail messages ─────────────────
+    await pool.query(`
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS body_text_new TEXT;
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS has_quoted_text BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS is_forward BOOLEAN NOT NULL DEFAULT false;
+    `);
+    const quoteBackfill = await storage.backfillGmailQuoteSplits();
+    if (quoteBackfill > 0) {
+      log(`Startup migration: computed quoted-text splits for ${quoteBackfill} previously-imported Gmail message(s)`);
+    }
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }
@@ -1259,6 +1347,27 @@ app.use((req, res, next) => {
   // open/overdue items by email instead of the list only being visible if
   // someone opens the app.
   scheduleDailyDigest();
+
+  // Gmail inbox: kick off an initial sync shortly after boot (never blocks
+  // startup — a year of mail is many pages), then keep polling every 5
+  // minutes so new mail shows up without a manual "sync now" click. True
+  // Gmail push (Cloud Pub/Sub) needs a verified Google Cloud project and
+  // domain ownership outside what the Replit connector grants, so polling is
+  // the practical continuous-sync path here.
+  const GMAIL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+  async function runGmailSyncSafely() {
+    try {
+      const { runGmailFullSync } = await import("./gmailFullSync");
+      const summary = await runGmailFullSync();
+      if (summary.messagesNew > 0 || summary.errors.length > 0) {
+        log(`Gmail inbox sync: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.errors.length} error(s)`);
+      }
+    } catch (err: any) {
+      console.error("Gmail inbox sync error:", err?.message || err);
+    }
+  }
+  setTimeout(runGmailSyncSafely, 10_000);
+  setInterval(runGmailSyncSafely, GMAIL_SYNC_INTERVAL_MS);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

@@ -112,6 +112,64 @@ export function getHeader(payload: MimePart | undefined, name: string): string |
   return header?.value || null;
 }
 
+/** "Alexis Stein <alexis.stein@hubinternational.com>, foo@bar.com" -> [{name, email}]. */
+export function parseAddressList(headerValue: string | null): { name: string | null; email: string }[] {
+  if (!headerValue) return [];
+  // Split on commas that are not inside a quoted display name.
+  const parts = headerValue.match(/"[^"]*"\s*<[^>]+>|[^,]+/g) || [];
+  return parts
+    .map((raw) => {
+      const s = raw.trim();
+      const m = s.match(/^"?([^"<]*)"?\s*<([^>]+)>$/) || s.match(/^([^<]*)<([^>]+)>$/);
+      if (m) {
+        const name = m[1].trim();
+        return { name: name || null, email: m[2].trim().toLowerCase() };
+      }
+      if (s.includes("@")) return { name: null, email: s.toLowerCase() };
+      return null;
+    })
+    .filter((x): x is { name: string | null; email: string } => !!x);
+}
+
+function decodeBase64Url(data: string): string {
+  return Buffer.from(data, "base64url").toString("utf-8");
+}
+
+/** Walks the MIME tree and returns the best plain-text and HTML bodies found (multipart/alternative prefers the last one seen at each level, matching Gmail's own convention of listing plain text before HTML). */
+export function extractMessageBody(payload: MimePart | undefined): { text: string | null; html: string | null } {
+  let text: string | null = null;
+  let html: string | null = null;
+  function walk(part?: MimePart) {
+    if (!part) return;
+    const mime = (part.mimeType || "").toLowerCase();
+    if (mime === "text/plain" && part.body?.data && !part.filename) {
+      text = decodeBase64Url(part.body.data);
+    } else if (mime === "text/html" && part.body?.data && !part.filename) {
+      html = decodeBase64Url(part.body.data);
+    }
+    for (const child of part.parts || []) walk(child);
+  }
+  walk(payload);
+  return { text, html };
+}
+
+export interface GmailMessageListResult {
+  messages?: { id: string; threadId: string }[];
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
+}
+
+/** Plain message listing across the whole mailbox — no has:attachment restriction, sent and received both, newest first. */
+export async function searchMessageIds(
+  query: string,
+  pageToken?: string,
+  pageSize = 100,
+): Promise<GmailMessageListResult> {
+  const params = new URLSearchParams({ q: query, maxResults: String(pageSize) });
+  if (pageToken) params.set("pageToken", pageToken);
+  return gmailGet<GmailMessageListResult>(`/gmail/v1/users/me/messages?${params.toString()}`);
+}
+
 interface GmailAttachmentBody {
   size: number;
   data: string; // base64url

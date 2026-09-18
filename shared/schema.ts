@@ -636,6 +636,115 @@ export const brokerHistory = pgTable("broker_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/**
+ * One row per Gmail thread read from the connected mailbox. Full mail, not
+ * just the has:attachment subset gmailImportState/communications cover — this
+ * is the "Gmail inside the CRM" view, so a thread is the unit of navigation,
+ * classification, privacy, and AI summary the same way it is in Gmail itself.
+ */
+export const gmailThreadBusinessEnum = pgEnum("gmail_thread_business", ["MATCHED", "UNASSIGNED", "NOT_BUSINESS"]);
+
+export const gmailThreads = pgTable("gmail_threads", {
+  id: serial("id").primaryKey(),
+  gmailThreadId: text("gmail_thread_id").notNull().unique(),
+  mailbox: text("mailbox").notNull(),
+  subject: text("subject"),
+  /** Denormalized for fast list sorting; kept in step with the newest message's date. */
+  latestMessageAt: timestamp("latest_message_at").notNull(),
+  messageCount: integer("message_count").notNull().default(0),
+  /** MATCHED (has a client), UNASSIGNED (business but no client match), NOT_BUSINESS (newsletter/marketing/receipt/personal). */
+  businessStatus: gmailThreadBusinessEnum("business_status").notNull().default("UNASSIGNED"),
+  /** AI-written structured summary: who wants what, questions, dates, amounts, action needed. Null for short threads. */
+  summary: text("summary"),
+  /** One line for the list view, derived from the same summary pass. */
+  summaryOneLine: text("summary_one_line"),
+  summaryGeneratedAt: timestamp("summary_generated_at"),
+  /** messageCount at the time the summary was generated, so a new message on the thread is detected and triggers a regenerate. */
+  summaryForMessageCount: integer("summary_for_message_count"),
+  /**
+   * Admin-only visibility. Excluded from search, counts, and summaries for
+   * everyone else. Nothing sets this yet — it exists so the flag is ready
+   * before any workflow depends on it.
+   */
+  isPrivate: boolean("is_private").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const gmailThreadClients = pgTable("gmail_thread_clients", {
+  id: serial("id").primaryKey(),
+  threadId: integer("thread_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  matchConfidence: text("match_confidence").notNull().default("medium"),
+});
+
+export const gmailMessageDirectionEnum = pgEnum("gmail_message_direction", ["SENT", "RECEIVED"]);
+
+export const gmailMessages = pgTable("gmail_messages", {
+  id: serial("id").primaryKey(),
+  gmailMessageId: text("gmail_message_id").notNull().unique(),
+  threadId: integer("thread_id").notNull(),
+  mailbox: text("mailbox").notNull(),
+  fromEmail: text("from_email").notNull(),
+  fromName: text("from_name"),
+  /** Every To/Cc address as a plain lowercase email, for participant search. */
+  toEmails: jsonb("to_emails").notNull().default([]),
+  ccEmails: jsonb("cc_emails").notNull().default([]),
+  subject: text("subject"),
+  /** Full original body exactly as received — quoted history is never discarded here. */
+  bodyText: text("body_text"),
+  /** Sanitized for display: scripts/iframes/forms stripped, event handlers removed, remote images and tracking pixels blocked. */
+  bodyHtmlSafe: text("body_html_safe"),
+  /**
+   * The sender's own new text only — quoted history, "On ... wrote:" / Outlook
+   * From:/Sent:/To: reply headers, and a trailing "-- " signature block
+   * stripped. Equal to bodyText when the message is a forward (forwarded
+   * content is the point, so it's kept) or when trimming wasn't confident
+   * (falls back to the full body rather than risk hiding real content).
+   * This is what AI summaries and default search run against.
+   */
+  bodyTextNew: text("body_text_new"),
+  /** True when bodyTextNew is a strict subset of bodyText — drives the "show quoted text" toggle. */
+  hasQuotedText: boolean("has_quoted_text").notNull().default(false),
+  /** True when this message is itself a forward — quoted/forwarded content is deliberately not trimmed. */
+  isForward: boolean("is_forward").notNull().default(false),
+  snippet: text("snippet"),
+  sentAt: timestamp("sent_at").notNull(),
+  direction: gmailMessageDirectionEnum("direction").notNull(),
+  hasAttachments: boolean("has_attachments").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const gmailAttachments = pgTable("gmail_attachments", {
+  id: serial("id").primaryKey(),
+  messageId: integer("message_id").notNull(),
+  gmailAttachmentId: text("gmail_attachment_id").notNull(),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  /**
+   * True for small inline images (signature logos, tracking icons) — never
+   * downloaded or filed as a document, only listed for completeness.
+   */
+  isEmbeddedImage: boolean("is_embedded_image").notNull().default(false),
+  storagePath: text("storage_path"),
+  /** Set once this attachment is filed onto the client's Documents tab. */
+  filedAsDocumentId: integer("filed_as_document_id"),
+});
+
+export const insertGmailThreadSchema = createInsertSchema(gmailThreads).omit({ id: true, createdAt: true });
+export const insertGmailThreadClientSchema = createInsertSchema(gmailThreadClients).omit({ id: true });
+export const insertGmailMessageSchema = createInsertSchema(gmailMessages).omit({ id: true, createdAt: true });
+export const insertGmailAttachmentSchema = createInsertSchema(gmailAttachments).omit({ id: true });
+
+export type GmailThread = typeof gmailThreads.$inferSelect;
+export type InsertGmailThread = z.infer<typeof insertGmailThreadSchema>;
+export type GmailThreadClient = typeof gmailThreadClients.$inferSelect;
+export type InsertGmailThreadClient = z.infer<typeof insertGmailThreadClientSchema>;
+export type GmailMessage = typeof gmailMessages.$inferSelect;
+export type InsertGmailMessage = z.infer<typeof insertGmailMessageSchema>;
+export type GmailAttachment = typeof gmailAttachments.$inferSelect;
+export type InsertGmailAttachment = z.infer<typeof insertGmailAttachmentSchema>;
+
 export const insertCommunicationSchema = createInsertSchema(communications).omit({ id: true, receivedAt: true });
 export const insertCommunicationClientSchema = createInsertSchema(communicationClients).omit({ id: true });
 export const insertCommunicationAttachmentSchema = createInsertSchema(communicationAttachments).omit({ id: true, uploadedAt: true });

@@ -315,6 +315,108 @@ Return ONLY the JSON object, no other text.`;
 }
 
 /**
+ * Judges whether a mailbox message is genuine work correspondence at all,
+ * for threads that matched no client. Without this, every newsletter,
+ * calendar invite, marketing blast, and receipt in the mailbox would sit in
+ * the "Unassigned" queue forever waiting for a human to dismiss it by hand.
+ *
+ * Conservative in the other direction from matchEmailToClients: when in
+ * doubt this returns true (business), since the cost of a stray marketing
+ * email in Unassigned is a click to dismiss, but the cost of burying a real
+ * client message under "Not business" is a dropped request.
+ */
+export async function classifyMailRelevance(
+  fromEmail: string,
+  subject: string,
+  bodyExcerpt: string,
+): Promise<{ isBusiness: boolean }> {
+  if (!process.env.ANTHROPIC_API_KEY) return { isBusiness: true };
+
+  const prompt = `You triage mail for a benefits TPA's shared work mailbox. Decide whether this message is genuine business correspondence (about a client, a renewal, a broker, an internal work matter) or not (a newsletter, marketing email, automated receipt/confirmation, calendar notification spam, or personal mail unrelated to the business).
+
+From: ${fromEmail}
+Subject: ${subject}
+
+Body excerpt:
+---
+${bodyExcerpt.slice(0, 1500)}
+---
+
+Return ONLY JSON: {"isBusiness": true or false}
+When genuinely unsure, return true.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 64,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "{}";
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+    return { isBusiness: parsed.isBusiness !== false };
+  } catch (err: any) {
+    console.error("[claude] classifyMailRelevance error:", err?.message || String(err));
+    return { isBusiness: true };
+  }
+}
+
+export interface ThreadSummaryResult {
+  summary: string;
+  oneLine: string;
+}
+
+/**
+ * One structured summary per thread, regenerated whenever a new message
+ * lands on it. Read for the side panel while scanning a long email, so it
+ * has to answer the questions a reader actually has: who wants what, what
+ * was asked, what's due when, what dollar figures are on the table, and
+ * whether we owe a reply.
+ */
+export async function generateThreadSummary(
+  subject: string,
+  messages: { fromName: string | null; fromEmail: string; sentAt: string; bodyText: string }[],
+): Promise<ThreadSummaryResult | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+
+  const thread = messages
+    .map((m, i) => `[${i + 1}] ${m.fromName || m.fromEmail} (${m.sentAt}):\n${m.bodyText.slice(0, 2000)}`)
+    .join("\n\n");
+
+  const prompt = `Summarize this email thread for a benefits account manager who needs to scan it quickly rather than reread it.
+
+Subject: ${subject}
+
+${thread.slice(0, 12000)}
+
+Write a short structured summary covering, only where present:
+- Who wants what
+- Any questions asked that need an answer
+- Any deadlines or dates mentioned
+- Any dollar amounts, rates, or figures mentioned
+- What action (if any) is needed from us, and by whom
+
+Keep it tight — a few bullet points, not a re-narration of the thread. Omit any section with nothing to say.
+
+Return ONLY JSON:
+{"summary": "...", "oneLine": "one short sentence for a list view, the single most important thing about this thread"}`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 512,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+    if (!parsed.summary) return null;
+    return { summary: String(parsed.summary), oneLine: String(parsed.oneLine || parsed.summary).slice(0, 200) };
+  } catch (err: any) {
+    console.error("[claude] generateThreadSummary error:", err?.message || String(err));
+    return null;
+  }
+}
+
+/**
  * Checks a freshly-created task's description against the client's other
  * still-open tasks to see whether it is really the same job surfacing again —
  * either the same thread producing a near-duplicate action item, or a

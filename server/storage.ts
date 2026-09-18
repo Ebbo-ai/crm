@@ -5,9 +5,14 @@ import {
   communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
+  gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
   type GmailImportState, type InsertGmailImportState,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
+  type GmailThread, type InsertGmailThread,
+  type GmailThreadClient, type InsertGmailThreadClient,
+  type GmailMessage, type InsertGmailMessage,
+  type GmailAttachment, type InsertGmailAttachment,
   type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
@@ -2639,6 +2644,231 @@ export class DatabaseStorage implements IStorage {
   async updatePprHeldRow(id: number, data: Partial<PprHeldRow>): Promise<PprHeldRow | undefined> {
     const [row] = await db.update(pprHeldRows).set(data as any).where(eq(pprHeldRows.id, id)).returning();
     return row;
+  }
+
+  // ── Gmail inbox (full mail, not just attachment backfill) ───────────────────
+
+  async getGmailThreadByGmailId(gmailThreadId: string): Promise<GmailThread | undefined> {
+    const [row] = await db.select().from(gmailThreads).where(eq(gmailThreads.gmailThreadId, gmailThreadId));
+    return row;
+  }
+
+  async createGmailThread(data: InsertGmailThread): Promise<GmailThread> {
+    const [row] = await db.insert(gmailThreads).values(data).returning();
+    return row;
+  }
+
+  async updateGmailThread(id: number, data: Partial<InsertGmailThread>): Promise<GmailThread | undefined> {
+    const [row] = await db.update(gmailThreads).set(data as any).where(eq(gmailThreads.id, id)).returning();
+    return row;
+  }
+
+  async getGmailMessageByGmailId(gmailMessageId: string): Promise<GmailMessage | undefined> {
+    const [row] = await db.select().from(gmailMessages).where(eq(gmailMessages.gmailMessageId, gmailMessageId));
+    return row;
+  }
+
+  async createGmailMessage(data: InsertGmailMessage): Promise<GmailMessage> {
+    const [row] = await db.insert(gmailMessages).values(data).returning();
+    return row;
+  }
+
+  async getGmailMessagesForThread(threadId: number): Promise<GmailMessage[]> {
+    return db.select().from(gmailMessages).where(eq(gmailMessages.threadId, threadId)).orderBy(asc(gmailMessages.sentAt));
+  }
+
+  async setGmailThreadClients(threadId: number, matches: { clientId: number; confidence: string }[]): Promise<void> {
+    await db.delete(gmailThreadClients).where(eq(gmailThreadClients.threadId, threadId));
+    if (matches.length === 0) return;
+    await db.insert(gmailThreadClients).values(
+      matches.map((m) => ({ threadId, clientId: m.clientId, matchConfidence: m.confidence })),
+    );
+  }
+
+  async getGmailThreadClientIds(threadId: number): Promise<number[]> {
+    const rows = await db.select({ clientId: gmailThreadClients.clientId }).from(gmailThreadClients).where(eq(gmailThreadClients.threadId, threadId));
+    return rows.map((r) => r.clientId);
+  }
+
+  async createGmailAttachment(data: InsertGmailAttachment): Promise<GmailAttachment> {
+    const [row] = await db.insert(gmailAttachments).values(data).returning();
+    return row;
+  }
+
+  async getGmailAttachmentsForMessages(messageIds: number[]): Promise<GmailAttachment[]> {
+    if (messageIds.length === 0) return [];
+    return db.select().from(gmailAttachments).where(inArray(gmailAttachments.messageId, messageIds));
+  }
+
+  async getGmailAttachmentByGmailIds(gmailMessageId: string, gmailAttachmentId: string): Promise<GmailAttachment | undefined> {
+    const [msg] = await db.select().from(gmailMessages).where(eq(gmailMessages.gmailMessageId, gmailMessageId));
+    if (!msg) return undefined;
+    const [row] = await db.select().from(gmailAttachments)
+      .where(and(eq(gmailAttachments.messageId, msg.id), eq(gmailAttachments.gmailAttachmentId, gmailAttachmentId)));
+    return row;
+  }
+
+  /**
+   * Filters/searches threads. `viewerIsAdmin` gates private-thread visibility —
+   * every non-admin caller (search, counts, list, summaries) goes through this
+   * one predicate so a private thread cannot leak through a code path that
+   * forgot to check.
+   */
+  async searchGmailThreads(params: {
+    viewerIsAdmin: boolean;
+    view?: "matched" | "unassigned" | "not_business" | "all";
+    clientId?: number;
+    personEmail?: string;
+    domain?: string;
+    text?: string;
+    /** When true, `text` also matches quoted history, not just each message's new part. */
+    includeQuoted?: boolean;
+    dateFrom?: Date;
+    dateTo?: Date;
+    direction?: "sent" | "received";
+    hasAttachment?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ threads: GmailThread[]; total: number }> {
+    const conditions: any[] = [];
+    if (!params.viewerIsAdmin) conditions.push(eq(gmailThreads.isPrivate, false));
+    if (params.view === "matched") conditions.push(eq(gmailThreads.businessStatus, "MATCHED"));
+    else if (params.view === "unassigned") conditions.push(eq(gmailThreads.businessStatus, "UNASSIGNED"));
+    else if (params.view === "not_business") conditions.push(eq(gmailThreads.businessStatus, "NOT_BUSINESS"));
+    if (params.dateFrom) conditions.push(gte(gmailThreads.latestMessageAt, params.dateFrom));
+    if (params.dateTo) conditions.push(lte(gmailThreads.latestMessageAt, params.dateTo));
+
+    if (params.clientId !== undefined) {
+      const threadIds = await db.select({ threadId: gmailThreadClients.threadId }).from(gmailThreadClients)
+        .where(eq(gmailThreadClients.clientId, params.clientId));
+      const ids = threadIds.map((t) => t.threadId);
+      if (ids.length === 0) return { threads: [], total: 0 };
+      conditions.push(inArray(gmailThreads.id, ids));
+    }
+
+    if (params.personEmail || params.domain || params.direction || params.hasAttachment !== undefined || params.text) {
+      const msgConditions: any[] = [];
+      if (params.personEmail) {
+        const p = params.personEmail.toLowerCase();
+        msgConditions.push(or(
+          eq(gmailMessages.fromEmail, p),
+          sql`${gmailMessages.toEmails}::text ILIKE ${"%" + p + "%"}`,
+          sql`${gmailMessages.ccEmails}::text ILIKE ${"%" + p + "%"}`,
+        ));
+      }
+      if (params.domain) {
+        const d = params.domain.toLowerCase();
+        msgConditions.push(or(
+          sql`${gmailMessages.fromEmail} ILIKE ${"%@" + d}`,
+          sql`${gmailMessages.toEmails}::text ILIKE ${"%@" + d + "%"}`,
+          sql`${gmailMessages.ccEmails}::text ILIKE ${"%@" + d + "%"}`,
+        ));
+      }
+      if (params.direction === "sent") msgConditions.push(eq(gmailMessages.direction, "SENT"));
+      if (params.direction === "received") msgConditions.push(eq(gmailMessages.direction, "RECEIVED"));
+      if (params.hasAttachment) msgConditions.push(eq(gmailMessages.hasAttachments, true));
+      if (params.text) {
+        const term = `%${params.text}%`;
+        // Default: search each message's new text only (forwards already
+        // carry their full content in bodyTextNew), so one old quoted
+        // sentence doesn't surface every reply in a long thread. Opt into
+        // matching quoted history too via includeQuoted.
+        msgConditions.push(or(
+          ilike(gmailMessages.subject, term),
+          ilike(gmailMessages.bodyTextNew, term),
+          ...(params.includeQuoted ? [ilike(gmailMessages.bodyText, term)] : []),
+        ));
+      }
+      const matchingThreadIds = await db.selectDistinct({ threadId: gmailMessages.threadId }).from(gmailMessages)
+        .where(and(...msgConditions));
+      const ids = matchingThreadIds.map((t) => t.threadId);
+      if (ids.length === 0) return { threads: [], total: 0 };
+      conditions.push(inArray(gmailThreads.id, ids));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const [{ value: total }] = await db.select({ value: count() }).from(gmailThreads).where(whereClause as any);
+    const threads = await db.select().from(gmailThreads)
+      .where(whereClause as any)
+      .orderBy(desc(gmailThreads.latestMessageAt))
+      .limit(params.limit ?? 50)
+      .offset(params.offset ?? 0);
+    return { threads, total: Number(total) };
+  }
+
+  async getGmailInboxCounts(viewerIsAdmin: boolean): Promise<{ matched: number; unassigned: number; notBusiness: number; total: number }> {
+    const base = viewerIsAdmin ? undefined : eq(gmailThreads.isPrivate, false);
+    const rows = await db.select({ status: gmailThreads.businessStatus, value: count() }).from(gmailThreads)
+      .where(base as any)
+      .groupBy(gmailThreads.businessStatus);
+    const result = { matched: 0, unassigned: 0, notBusiness: 0, total: 0 };
+    for (const r of rows) {
+      const n = Number(r.value);
+      result.total += n;
+      if (r.status === "MATCHED") result.matched = n;
+      else if (r.status === "UNASSIGNED") result.unassigned = n;
+      else if (r.status === "NOT_BUSINESS") result.notBusiness = n;
+    }
+    return result;
+  }
+
+  async getDistinctGmailDomains(): Promise<string[]> {
+    const rows = await db.execute<{ domain: string }>(sql`
+      SELECT DISTINCT lower(split_part(from_email, '@', 2)) AS domain FROM gmail_messages
+      WHERE from_email LIKE '%@%' ORDER BY 1
+    `);
+    return (rows.rows as any[]).map((r) => r.domain).filter(Boolean);
+  }
+
+  async getGmailThread(id: number): Promise<GmailThread | undefined> {
+    const [row] = await db.select().from(gmailThreads).where(eq(gmailThreads.id, id));
+    return row;
+  }
+
+  async assignGmailThreadToClient(threadId: number, clientId: number, byUser: string): Promise<void> {
+    await db.insert(gmailThreadClients).values({ threadId, clientId, matchConfidence: "manual" });
+    await db.update(gmailThreads).set({ businessStatus: "MATCHED" }).where(eq(gmailThreads.id, threadId));
+  }
+
+  async setGmailThreadPrivate(threadId: number, isPrivate: boolean): Promise<void> {
+    await db.update(gmailThreads).set({ isPrivate }).where(eq(gmailThreads.id, threadId));
+  }
+
+  /** Computes the new-text/quoted-history split for any Gmail message imported before that split existed. Idempotent — only touches rows where body_text_new is still null. */
+  async backfillGmailQuoteSplits(): Promise<number> {
+    const { splitQuotedText } = await import("./gmailQuoteStrip");
+    const rows = await db.select({ id: gmailMessages.id, bodyText: gmailMessages.bodyText, subject: gmailMessages.subject })
+      .from(gmailMessages)
+      .where(sql`${gmailMessages.bodyTextNew} IS NULL`);
+    for (const row of rows) {
+      const split = splitQuotedText(row.bodyText, row.subject);
+      await db.update(gmailMessages).set({
+        bodyTextNew: split.newText,
+        hasQuotedText: split.hasQuotedText,
+        isForward: split.isForward,
+      }).where(eq(gmailMessages.id, row.id));
+    }
+    return rows.length;
+  }
+
+  /** Deletes the signature-logo/icon documents the first attachment-only backfill filed as real documents, and their filing records. Idempotent — matches by name pattern, safe to re-run. */
+  async cleanupEmbeddedImageDocuments(): Promise<{ deleted: number; documentIds: number[] }> {
+    const pattern = sql`(
+      document_name ~* '^image[0-9]*\.(png|jpe?g|gif)$'
+      OR document_name ~* '^icon[0-9]*\.(png|jpe?g)$'
+      OR document_name ~* '^warning_triangle'
+      OR document_name ~* '^~wrd[0-9]*\.'
+      OR document_name ~* '^cc-district_'
+    )`;
+    const rows = await db.execute<{ id: number }>(sql`
+      SELECT id FROM documents WHERE source_gmail_message_id IS NOT NULL AND ${pattern}
+    `);
+    const ids: number[] = (rows.rows as any[]).map((r) => r.id);
+    if (ids.length === 0) return { deleted: 0, documentIds: [] };
+    await db.update(communicationAttachments).set({ filedAsDocumentId: null }).where(inArray(communicationAttachments.filedAsDocumentId, ids));
+    await db.delete(documentFieldProposals).where(inArray(documentFieldProposals.documentId, ids));
+    await db.delete(documents).where(inArray(documents.id, ids));
+    return { deleted: ids.length, documentIds: ids };
   }
 }
 

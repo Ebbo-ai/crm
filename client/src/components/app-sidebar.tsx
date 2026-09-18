@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database, Trash2, Building2, FileSearch } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database, Trash2, Building2, FileSearch, Mail } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -156,6 +156,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
           { title: "Monthly Import", path: "/ppr-import", icon: Upload, badge: null },
           { title: "PPR Batch Upload", path: "/ppr-batch", icon: FileSpreadsheet, badge: null },
           { title: "Inbox", path: "/inbox", icon: Inbox, badge: unmatchedCount > 0 ? unmatchedCount : null, badgeAlert: unmatchedCount > 0 },
+          { title: "Mail", path: "/mail", icon: Mail, badge: null },
           { title: "Field Review", path: "/field-review", icon: FileSearch, badge: fieldProposalCount > 0 ? fieldProposalCount : null, badgeAlert: false },
           // Work that belongs to the business rather than to any one account.
           { title: "General", path: "/general", icon: Building2, badge: null },
