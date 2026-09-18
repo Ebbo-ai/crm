@@ -361,6 +361,97 @@ Return ONLY valid JSON: {"duplicateOf": <id> or null}`;
   }
 }
 
+/**
+ * Transcribes a scanned/image-only page using Claude's vision. Only called
+ * when a PDF's native text layer comes back empty or near-empty — this is
+ * the fallback path, not the default, so it should stay rare and cheap.
+ */
+export async function ocrPageImage(pngBuffer: Buffer, pageLabel: string): Promise<string> {
+  if (!process.env.ANTHROPIC_API_KEY) return "";
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4096,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: pngBuffer.toString("base64") },
+            },
+            {
+              type: "text",
+              text: `Transcribe every piece of text visible on this scanned document page (${pageLabel}) exactly as written, including table contents, labels, and numbers. Preserve table structure using plain-text rows. Output only the transcription, no commentary.`,
+            },
+          ],
+        },
+      ],
+    });
+    return response.content[0].type === "text" ? response.content[0].text : "";
+  } catch (err: any) {
+    console.error("[claude] ocrPageImage error:", err?.message || String(err));
+    return "";
+  }
+}
+
+export interface FieldProposal {
+  fieldKey: string;
+  fieldLabel: string;
+  proposedValue: string;
+  sourceLocation: string;
+}
+
+/**
+ * Reads a filed document's extracted text (a PPR, renewal letter, or rate
+ * sheet from 90 Degree Benefits) and proposes structured field values.
+ * Returns proposals only — nothing here writes to the client/plan/renewal
+ * record. Every proposal must cite where in the document it came from so the
+ * reviewer can verify it without reopening the source file.
+ */
+export async function extractDocumentFields(
+  documentText: string,
+  documentCategory: string,
+  clientName: string,
+): Promise<FieldProposal[]> {
+  if (!process.env.ANTHROPIC_API_KEY || !documentText.trim()) return [];
+
+  const prompt = `You are reading a "${documentCategory}" document from 90 Degree Benefits for client "${clientName}".
+
+Document text:
+---
+${documentText.slice(0, 30000)}
+---
+
+Extract every concrete data field this document reports that would matter to a benefits account manager: things like renewal effective date, admin fee, funding basis, rate changes per tier, loss ratio, claims totals, broker compensation, plan year dates. Only extract values actually present in the text — never infer or guess a value that isn't written down.
+
+For each field, report:
+- fieldKey: a short camelCase identifier (e.g. "renewalEffectiveDate", "adminFee", "lossRatio")
+- fieldLabel: a human-readable label (e.g. "Renewal effective date", "Admin fee (all-in)")
+- proposedValue: the value as written in the document (keep original formatting, e.g. "$12.50 PEPM" or "October 1, 2026")
+- sourceLocation: exactly where this appears (e.g. "Page 2, Renewal Summary table" or "Row labeled 'Total Admin Fee'")
+
+Return ONLY valid JSON: {"fields": [{"fieldKey": "...", "fieldLabel": "...", "proposedValue": "...", "sourceLocation": "..."}]}
+If nothing extractable is present, return {"fields": []}.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return [];
+    const parsed = JSON.parse(match[0]);
+    if (!Array.isArray(parsed.fields)) return [];
+    return parsed.fields.filter((f: any) => f?.fieldKey && f?.proposedValue);
+  } catch (err: any) {
+    console.error("[claude] extractDocumentFields error:", err?.message || String(err));
+    return [];
+  }
+}
+
 export async function queryClientCommunications(
   question: string,
   communications: { subject: string | null; claudeSummary: string | null; receivedAt: Date; senderName: string | null; senderEmail: string }[]

@@ -970,6 +970,77 @@ app.use((req, res, next) => {
       ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS filed_as_document_id INTEGER;
     `);
 
+    // ── Phase 23: Gmail attachment ingestion + reviewed field extraction ──────
+    // storageBackend distinguishes attachments already on local disk (pre-
+    // migration) from anything filed through Object Storage (everything new,
+    // including Gmail imports). gmailMessageId/gmailAttachmentId/gmailMailbox
+    // let a re-run recognize an attachment it already pulled instead of
+    // re-downloading and re-billing Claude for it.
+    await pool.query(`
+      ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS storage_backend TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS gmail_message_id TEXT;
+      ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS gmail_attachment_id TEXT;
+      ALTER TABLE communication_attachments ADD COLUMN IF NOT EXISTS gmail_mailbox TEXT;
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS communication_attachments_gmail_unique
+        ON communication_attachments (gmail_message_id, gmail_attachment_id)
+        WHERE gmail_message_id IS NOT NULL;
+    `);
+
+    // extractedText/ocrUsed on documents keep the raw source text so Claude
+    // field-extraction can be re-run (after a prompt fix, or on failure)
+    // without re-fetching the file from Gmail or re-running OCR.
+    await pool.query(`
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS extracted_text TEXT;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_used BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_gmail_message_id TEXT;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT;
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS documents_content_hash_idx ON documents (client_id, content_hash) WHERE content_hash IS NOT NULL;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gmail_import_state (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL UNIQUE,
+        backfill_start_date TIMESTAMP,
+        last_processed_internal_date TEXT,
+        last_run_at TIMESTAMP,
+        last_run_summary TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Every extracted field sits here pending Kim/Steve's review — nothing
+    // in document_field_proposals is ever applied to a client/plan/renewal
+    // record automatically. See documentFieldProposals in shared/schema.ts.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS document_field_proposals (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        client_id INTEGER NOT NULL,
+        field_key TEXT NOT NULL,
+        field_label TEXT NOT NULL,
+        proposed_value TEXT NOT NULL,
+        source_location TEXT,
+        target_table TEXT NOT NULL,
+        target_id INTEGER,
+        target_field TEXT NOT NULL,
+        current_value TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        reviewed_by TEXT,
+        reviewed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS document_field_proposals_client_idx ON document_field_proposals (client_id);
+      CREATE INDEX IF NOT EXISTS document_field_proposals_status_idx ON document_field_proposals (status);
+    `);
+    log("Startup migration: Gmail attachment ingestion + field-proposal review tables ready");
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at

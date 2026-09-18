@@ -1829,6 +1829,15 @@ export async function registerRoutes(
     try {
       const doc = await storage.getDocument(parseInt(req.params.docId));
       if (!doc) return res.status(404).json({ message: "Document not found" });
+      // Gmail-sourced documents live in Object Storage under filePath as the bucket
+      // key, not a local filesystem path — everything filed before that migration,
+      // and everything uploaded by hand, stays on local disk.
+      if (doc.sourceGmailMessageId) {
+        const { downloadAttachmentBytes } = await import("./objectStorage");
+        const bytes = await downloadAttachmentBytes(doc.filePath);
+        res.setHeader("Content-Disposition", `attachment; filename="${doc.fileName}"`);
+        return res.send(bytes);
+      }
       res.download(doc.filePath, doc.fileName);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1839,7 +1848,12 @@ export async function registerRoutes(
     try {
       const doc = await storage.getDocument(parseInt(req.params.docId));
       if (!doc) return res.status(404).json({ message: "Document not found" });
-      try { fs.unlinkSync(doc.filePath); } catch {}
+      if (doc.sourceGmailMessageId) {
+        const { deleteAttachmentBytes } = await import("./objectStorage");
+        try { await deleteAttachmentBytes(doc.filePath); } catch {}
+      } else {
+        try { fs.unlinkSync(doc.filePath); } catch {}
+      }
       await storage.deleteDocument(doc.id);
       await storage.createAuditLog({
         userId: (req.user as any).id,
@@ -1850,6 +1864,101 @@ export async function registerRoutes(
         details: `Deleted document "${doc.documentName}"`,
       });
       res.json({ message: "Document deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Gmail attachment ingestion ─────────────────────────────────────────────
+  app.get("/api/gmail-import/estimate", requireAdmin, async (req, res) => {
+    try {
+      const { estimateGmailIngestionVolume } = await import("./gmailIngestion");
+      const estimate = await estimateGmailIngestionVolume();
+      res.json(estimate);
+    } catch (err: any) {
+      console.error("[gmail-import] estimate failed:", err?.message || err);
+      res.status(502).json({ message: err.message || "Failed to reach Gmail" });
+    }
+  });
+
+  app.get("/api/gmail-import/status", requireAdmin, async (req, res) => {
+    try {
+      const { getGmailProfile } = await import("./gmail");
+      const profile = await getGmailProfile();
+      const state = await storage.getGmailImportState(profile.emailAddress);
+      res.json({ mailbox: profile.emailAddress, state: state || null });
+    } catch (err: any) {
+      console.error("[gmail-import] status failed:", err?.message || err);
+      res.status(502).json({ message: err.message || "Failed to reach Gmail" });
+    }
+  });
+
+  app.post("/api/gmail-import/run", requireAdmin, async (req, res) => {
+    try {
+      const { runGmailIngestion } = await import("./gmailIngestion");
+      const summary = await runGmailIngestion();
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "ran",
+        entity: "gmail_import",
+        entityId: 0,
+        details: `Gmail ingestion for ${summary.mailbox}: ${summary.documentsFiled} document(s) filed, ${summary.attachmentsSkippedDuplicate} duplicate(s) skipped, ${summary.fieldProposalsCreated} field proposal(s) created.`,
+      });
+      res.json(summary);
+    } catch (err: any) {
+      console.error("[gmail-import] run failed:", err?.message || err);
+      res.status(502).json({ message: err.message || "Gmail ingestion failed" });
+    }
+  });
+
+  // ─── Document field proposal review queue ──────────────────────────────────
+  app.get("/api/field-proposals", requireAuth, async (req, res) => {
+    try {
+      const proposals = await storage.getPendingFieldProposals();
+      res.json(proposals);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/clients/:id/field-proposals", requireAuth, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const proposals = await storage.getFieldProposalsForClient(parseInt(req.params.id), status);
+      res.json(proposals);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/field-proposals/:id/accept", requireAuth, async (req, res) => {
+    try {
+      const proposal = await storage.getFieldProposal(parseInt(req.params.id));
+      if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+      if (proposal.status !== "PENDING") return res.status(400).json({ message: "Proposal already reviewed" });
+      const updated = await storage.reviewFieldProposal(proposal.id, "ACCEPTED", (req.user as any).fullName);
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "accepted",
+        entity: "document_field_proposal",
+        entityId: proposal.id,
+        details: `Confirmed "${proposal.fieldLabel}" = "${proposal.proposedValue}" from ${proposal.sourceLocation || "document"}.`,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/field-proposals/:id/reject", requireAuth, async (req, res) => {
+    try {
+      const proposal = await storage.getFieldProposal(parseInt(req.params.id));
+      if (!proposal) return res.status(404).json({ message: "Proposal not found" });
+      if (proposal.status !== "PENDING") return res.status(400).json({ message: "Proposal already reviewed" });
+      const updated = await storage.reviewFieldProposal(proposal.id, "REJECTED", (req.user as any).fullName);
+      res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

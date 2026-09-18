@@ -4,6 +4,9 @@ import {
   users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs, vendorContacts,
   communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
+  gmailImportState, documentFieldProposals,
+  type GmailImportState, type InsertGmailImportState,
+  type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
@@ -641,6 +644,77 @@ export class DatabaseStorage implements IStorage {
 
   async deleteDocument(id: number): Promise<void> {
     await db.delete(documents).where(eq(documents.id, id));
+  }
+
+  /** Finds a document already filed for this client with the exact same bytes, so Gmail ingestion never re-files what Kim already uploaded by hand. */
+  async findDocumentByContentHash(clientId: number, contentHash: string): Promise<Document | undefined> {
+    const [existing] = await db.select().from(documents)
+      .where(and(eq(documents.clientId, clientId), eq(documents.contentHash, contentHash)));
+    return existing;
+  }
+
+  /** Recognizes an attachment already pulled from this exact Gmail message, so a re-run of ingestion never re-downloads or re-bills Claude for it. */
+  async findAttachmentByGmailIds(gmailMessageId: string, gmailAttachmentId: string): Promise<CommunicationAttachment | undefined> {
+    const [existing] = await db.select().from(communicationAttachments)
+      .where(and(
+        eq(communicationAttachments.gmailMessageId, gmailMessageId),
+        eq(communicationAttachments.gmailAttachmentId, gmailAttachmentId),
+      ));
+    return existing;
+  }
+
+  async getGmailImportState(mailbox: string): Promise<GmailImportState | undefined> {
+    const [state] = await db.select().from(gmailImportState).where(eq(gmailImportState.mailbox, mailbox));
+    return state;
+  }
+
+  async upsertGmailImportState(mailbox: string, fields: Partial<InsertGmailImportState>): Promise<GmailImportState> {
+    const existing = await this.getGmailImportState(mailbox);
+    if (existing) {
+      const [updated] = await db.update(gmailImportState).set(fields).where(eq(gmailImportState.mailbox, mailbox)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(gmailImportState).values({ mailbox, ...fields }).returning();
+    return created;
+  }
+
+  async createDocumentFieldProposals(proposals: InsertDocumentFieldProposal[]): Promise<DocumentFieldProposal[]> {
+    if (proposals.length === 0) return [];
+    return db.insert(documentFieldProposals).values(proposals).returning();
+  }
+
+  async getFieldProposalsForClient(clientId: number, status?: string): Promise<DocumentFieldProposal[]> {
+    const conditions = [eq(documentFieldProposals.clientId, clientId)];
+    if (status) conditions.push(eq(documentFieldProposals.status, status));
+    return db.select().from(documentFieldProposals).where(and(...conditions)).orderBy(desc(documentFieldProposals.createdAt));
+  }
+
+  async getPendingFieldProposals(): Promise<(DocumentFieldProposal & { clientName: string; clientCode: string; documentName: string })[]> {
+    const rows = await db.select({
+      proposal: documentFieldProposals,
+      clientName: clients.clientName,
+      clientCode: clients.clientCode,
+      documentName: documents.documentName,
+    })
+      .from(documentFieldProposals)
+      .innerJoin(clients, eq(documentFieldProposals.clientId, clients.id))
+      .innerJoin(documents, eq(documentFieldProposals.documentId, documents.id))
+      .where(eq(documentFieldProposals.status, "PENDING"))
+      .orderBy(desc(documentFieldProposals.createdAt));
+    return rows.map((r) => ({ ...r.proposal, clientName: r.clientName, clientCode: r.clientCode, documentName: r.documentName }));
+  }
+
+  async getFieldProposal(id: number): Promise<DocumentFieldProposal | undefined> {
+    const [proposal] = await db.select().from(documentFieldProposals).where(eq(documentFieldProposals.id, id));
+    return proposal;
+  }
+
+  async reviewFieldProposal(id: number, status: "ACCEPTED" | "REJECTED", reviewedBy: string): Promise<DocumentFieldProposal> {
+    const [updated] = await db.update(documentFieldProposals)
+      .set({ status, reviewedBy, reviewedAt: new Date() })
+      .where(eq(documentFieldProposals.id, id))
+      .returning();
+    return updated;
   }
 
   async getIssues(clientId: number): Promise<Issue[]> {

@@ -50,3 +50,6 @@ waitForPort = 5000
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[objectStorage]
+defaultBucketID = "replit-objstore-f49d0420-663a-4797-8aa6-570aa577d1f3"

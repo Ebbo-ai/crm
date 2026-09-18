@@ -304,6 +304,19 @@ export const documents = pgTable("documents", {
   notes: text("notes"),
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
   uploadedBy: text("uploaded_by").notNull(),
+  /**
+   * Raw text pulled from the file at filing time (PDF/Word/Excel text layer,
+   * or Claude's OCR transcription for image-only pages). Kept so Claude
+   * field-extraction can be re-run — after a prompt change, or to retry a
+   * failed run — without re-fetching the file from Gmail or re-running OCR.
+   */
+  extractedText: text("extracted_text"),
+  /** True when extractedText came from Claude vision OCR rather than a native text layer. */
+  ocrUsed: boolean("ocr_used").notNull().default(false),
+  /** Set only when this document was filed from a Gmail-sourced attachment. */
+  sourceGmailMessageId: text("source_gmail_message_id"),
+  /** SHA-256 of the raw file bytes. Lets Gmail ingestion recognize a file Kim already uploaded by hand and skip filing a duplicate. */
+  contentHash: text("content_hash"),
 });
 
 /**
@@ -414,6 +427,65 @@ export const communicationAttachments = pgTable("communication_attachments", {
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
   /** Set once this attachment has been auto-filed onto the client's documents tab, so it is never filed twice. */
   filedAsDocumentId: integer("filed_as_document_id"),
+  /**
+   * Where storagePath actually lives. Attachments filed before the Object
+   * Storage migration stayed on local disk under storagePath; everything
+   * pulled from Gmail (and anything new) goes to Object Storage instead, and
+   * storagePath there is the bucket key, not a filesystem path.
+   */
+  storageBackend: text("storage_backend").notNull().default("local"),
+  /** Set only for attachments pulled directly from Gmail, never for inbound webhook mail. */
+  gmailMessageId: text("gmail_message_id"),
+  gmailAttachmentId: text("gmail_attachment_id"),
+  /** Which mailbox this came from (kim@..., etc), so re-imports can tell whose history they're walking. */
+  gmailMailbox: text("gmail_mailbox"),
+});
+
+/**
+ * Tracks Gmail backfill/import progress per mailbox so a re-run picks up
+ * where it left off instead of re-downloading and re-billing Claude for
+ * attachments already ingested. One row per connected mailbox.
+ */
+export const gmailImportState = pgTable("gmail_import_state", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull().unique(),
+  /** The oldest date this mailbox's backfill is allowed to reach — bounds cost, not a technical limit. */
+  backfillStartDate: timestamp("backfill_start_date"),
+  /** Internal date (ms since epoch, as Gmail returns it) of the newest message already processed. */
+  lastProcessedInternalDate: text("last_processed_internal_date"),
+  lastRunAt: timestamp("last_run_at"),
+  lastRunSummary: text("last_run_summary"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * A single field Claude proposed after reading a filed document (PPR, renewal
+ * letter, rate sheet). Never written to the target table automatically —
+ * Kim or Steve reviews each one against currentValue and the cited
+ * sourceLocation before it takes effect. Rejecting a proposal leaves the
+ * target record untouched.
+ */
+export const documentFieldProposals = pgTable("document_field_proposals", {
+  id: serial("id").primaryKey(),
+  documentId: integer("document_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  /** Logical field name, e.g. "adminFee", "renewalEffectiveDate", "lossRatio". */
+  fieldKey: text("field_key").notNull(),
+  /** Human-readable label for the review screen, e.g. "Admin fee (all-in)". */
+  fieldLabel: text("field_label").notNull(),
+  proposedValue: text("proposed_value").notNull(),
+  /** Where in the source document this came from, e.g. "Page 2, Renewal Summary table" or "Sheet1!B12". */
+  sourceLocation: text("source_location"),
+  /** What this would update if accepted. Nullable targetId means Claude could not confidently match a row (e.g. a new plan). */
+  targetTable: text("target_table").notNull(),
+  targetId: integer("target_id"),
+  targetField: text("target_field").notNull(),
+  /** Snapshot of the value in place when this was proposed, so the reviewer sees exactly what would change. */
+  currentValue: text("current_value"),
+  status: text("status").notNull().default("PENDING"), // PENDING | ACCEPTED | REJECTED
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const communicationTasks = pgTable("communication_tasks", {
@@ -526,6 +598,8 @@ export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, creat
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
+export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
+export const insertDocumentFieldProposalSchema = createInsertSchema(documentFieldProposals).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
 export const insertPprUploadSchema = createInsertSchema(pprUploads).omit({ id: true, uploadedAt: true });
 export const insertPprMetricsSchema = createInsertSchema(pprMetrics).omit({ id: true, importedAt: true });
@@ -545,6 +619,10 @@ export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type VendorContact = typeof vendorContacts.$inferSelect;
 export type InsertVendorContact = z.infer<typeof insertVendorContactSchema>;
+export type GmailImportState = typeof gmailImportState.$inferSelect;
+export type InsertGmailImportState = z.infer<typeof insertGmailImportStateSchema>;
+export type DocumentFieldProposal = typeof documentFieldProposals.$inferSelect;
+export type InsertDocumentFieldProposal = z.infer<typeof insertDocumentFieldProposalSchema>;
 export type Issue = typeof issues.$inferSelect;
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 export type PprUpload = typeof pprUploads.$inferSelect;
