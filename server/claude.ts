@@ -437,13 +437,21 @@ If nothing extractable is present, return {"fields": []}.`;
   try {
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-5",
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: "user", content: prompt }],
     });
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return [];
-    const parsed = JSON.parse(match[0]);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      // The field list got cut off mid-element (long document, token limit). Salvage the
+      // complete field objects instead of discarding every proposal Claude already found.
+      const fieldMatches = Array.from(text.matchAll(/\{\s*"fieldKey"[\s\S]*?\}(?=\s*[,\]])/g));
+      parsed = { fields: fieldMatches.map((m) => { try { return JSON.parse(m[0]); } catch { return null; } }).filter(Boolean) };
+    }
     if (!Array.isArray(parsed.fields)) return [];
     return parsed.fields.filter((f: any) => f?.fieldKey && f?.proposedValue);
   } catch (err: any) {

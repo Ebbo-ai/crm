@@ -20,6 +20,8 @@ import ReportsPage from "@/pages/reports";
 import RenewalAlertsPage from "@/pages/renewal-alerts";
 import CrmImportPage from "@/pages/crm-import";
 import DataResetPage from "@/pages/data-reset";
+import GmailImportPage from "@/pages/gmail-import";
+import FieldReviewPage from "@/pages/field-review";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
@@ -73,6 +75,8 @@ function Router() {
       <Route path="/settings/users">{() => <ProtectedRoute component={SettingsUsersPage} adminOnly />}</Route>
       <Route path="/settings/crm-import">{() => <ProtectedRoute component={CrmImportPage} adminOnly />}</Route>
       <Route path="/settings/data-reset">{() => <ProtectedRoute component={DataResetPage} adminOnly />}</Route>
+      <Route path="/settings/gmail-import">{() => <ProtectedRoute component={GmailImportPage} adminOnly />}</Route>
+      <Route path="/field-review">{() => <ProtectedRoute component={FieldReviewPage} />}</Route>
       <Route>{() => <ProtectedRoute component={NotFound} />}</Route>
     </Switch>
   );

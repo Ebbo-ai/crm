@@ -2905,8 +2905,10 @@ export async function registerRoutes(
   async function extractAttachmentText(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
     try {
       if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
-        const pdfParse = (await import("pdf-parse")).default;
-        const parsed = await pdfParse(buffer);
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: buffer });
+        const parsed = await parser.getText();
+        await parser.destroy();
         return parsed.text.slice(0, 8000);
       }
       if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filename.endsWith(".docx")) {

@@ -62,14 +62,16 @@ export async function extractDocumentText(
 ): Promise<ExtractionResult> {
   try {
     if (mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf")) {
-      const pdfParse = (await import("pdf-parse")).default;
-      const parsed = await pdfParse(buffer);
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      const parsed = await parser.getText();
+      await parser.destroy();
       const nativeText = parsed.text.trim();
       if (nativeText.length >= OCR_TRIGGER_THRESHOLD) {
         return { text: nativeText.slice(0, 30000), ocrUsed: false };
       }
       // Native layer is empty/near-empty — this is a scanned/image-only PDF.
-      const pageCount = parsed.numpages || 1;
+      const pageCount = parsed.total || parsed.pages?.length || 1;
       const pagesToOcr = Math.min(pageCount, MAX_OCR_PAGES);
       const images = await rasterizePdfPages(buffer, pagesToOcr);
       const transcripts = await Promise.all(

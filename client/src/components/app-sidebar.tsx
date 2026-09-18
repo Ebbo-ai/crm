@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database, Trash2, Building2 } from "lucide-react";
+import { LayoutDashboard, Users, Settings, Shield, LogOut, Search, AlertCircle, Inbox, FileSpreadsheet, BarChart2, Upload, Bell, Database, Trash2, Building2, FileSearch } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -38,10 +38,17 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
     refetchInterval: 120_000,
   });
 
+  const { data: fieldProposalsData } = useQuery<any[]>({
+    queryKey: ["/api/field-proposals"],
+    queryFn: () => fetch("/api/field-proposals", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+
   const activeIssueCount = activeIssuesData?.length ?? 0;
   const overdueFollowUpCount = followUpData?.count ?? 0;
   const unmatchedCount = unmatchedData?.count ?? 0;
   const renewalAlertCount = renewalAlertsData?.length ?? 0;
+  const fieldProposalCount = fieldProposalsData?.length ?? 0;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -149,6 +156,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
           { title: "Monthly Import", path: "/ppr-import", icon: Upload, badge: null },
           { title: "PPR Batch Upload", path: "/ppr-batch", icon: FileSpreadsheet, badge: null },
           { title: "Inbox", path: "/inbox", icon: Inbox, badge: unmatchedCount > 0 ? unmatchedCount : null, badgeAlert: unmatchedCount > 0 },
+          { title: "Field Review", path: "/field-review", icon: FileSearch, badge: fieldProposalCount > 0 ? fieldProposalCount : null, badgeAlert: false },
           // Work that belongs to the business rather than to any one account.
           { title: "General", path: "/general", icon: Building2, badge: null },
           { title: "Reports", path: "/reports", icon: BarChart2, badge: null },
@@ -222,6 +230,19 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
               >
                 <Trash2 className="w-4.5 h-4.5 flex-shrink-0" />
                 {!collapsed && <span>Data Reset</span>}
+              </div>
+            </Link>
+            <Link href="/settings/gmail-import">
+              <div
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                  isActive("/settings/gmail-import")
+                    ? "bg-card/15 text-white"
+                    : "text-white/70 hover:bg-card/10 hover:text-white"
+                } ${collapsed ? "justify-center" : ""}`}
+                data-testid="nav-gmail-import"
+              >
+                <Inbox className="w-4.5 h-4.5 flex-shrink-0" />
+                {!collapsed && <span>Gmail Import</span>}
               </div>
             </Link>
           </>
