@@ -4,9 +4,10 @@ import {
   users, clients, plans, rateCards, planTiers, documents, issues, pprUploads, pprMetrics, auditLogs, vendorContacts,
   communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
-  gmailImportState, documentFieldProposals,
+  gmailImportState, documentFieldProposals, fieldChangeHistory,
   type GmailImportState, type InsertGmailImportState,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
+  type FieldChangeHistory,
   type RenewalProgress,
   type User, type InsertUser,
   type Client, type InsertClient,
@@ -715,6 +716,338 @@ export class DatabaseStorage implements IStorage {
       .where(eq(documentFieldProposals.id, id))
       .returning();
     return updated;
+  }
+
+  /** Re-reads whatever the live column actually holds right now, not the stale snapshot on the proposal. */
+  async getLiveFieldValue(targetTable: string, targetId: number, targetField: string): Promise<string | null> {
+    if (targetTable === "clients") {
+      const [row] = await db.select().from(clients).where(eq(clients.id, targetId));
+      return row ? ((row as any)[targetField] ?? null)?.toString() ?? null : null;
+    }
+    if (targetTable === "plans") {
+      const [row] = await db.select().from(plans).where(eq(plans.id, targetId));
+      return row ? ((row as any)[targetField] ?? null)?.toString() ?? null : null;
+    }
+    throw new Error(`Unknown target table: ${targetTable}`);
+  }
+
+  /**
+   * Writes a proposal's confirmed value onto the real client/plan record, inside
+   * one transaction with the audit-trail row and the proposal's own status flip.
+   * Throws "OVERWRITE_CONFIRMATION_REQUIRED" when the live value is non-blank
+   * and differs from what's about to be written and the caller hasn't set
+   * force — the route layer turns that into a 409 with both values so the UI
+   * can show a warning before resubmitting with force=true.
+   */
+  async confirmFieldProposal(
+    proposalId: number,
+    opts: { value: string; coercedValue: string | number | boolean; confirmedBy: string; force?: boolean },
+  ): Promise<{ proposal: DocumentFieldProposal; history: FieldChangeHistory }> {
+    return db.transaction(async (tx) => {
+      const [proposal] = await tx.select().from(documentFieldProposals).where(eq(documentFieldProposals.id, proposalId));
+      if (!proposal) throw new Error("Proposal not found");
+      if (proposal.status !== "PENDING") throw new Error("Proposal already reviewed");
+      if (proposal.mappingStatus !== "MAPPED" || !proposal.targetId) throw new Error("This field has no matching place on the record and cannot be confirmed onto it");
+
+      const table = proposal.targetTable === "clients" ? clients : plans;
+      const [liveRow] = await tx.select().from(table as any).where(eq((table as any).id, proposal.targetId));
+      if (!liveRow) throw new Error(`${proposal.targetTable} record not found`);
+      const liveValue = (liveRow as any)[proposal.targetField];
+      const liveValueStr = liveValue === null || liveValue === undefined ? null : String(liveValue);
+
+      const newValueStr = String(opts.coercedValue);
+      if (liveValueStr && liveValueStr !== newValueStr && !opts.force) {
+        const err: any = new Error("OVERWRITE_CONFIRMATION_REQUIRED");
+        err.code = "OVERWRITE_CONFIRMATION_REQUIRED";
+        err.currentValue = liveValueStr;
+        throw err;
+      }
+
+      await tx.update(table as any)
+        .set({ [proposal.targetField]: opts.coercedValue, updatedAt: new Date() } as any)
+        .where(eq((table as any).id, proposal.targetId));
+
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, proposal.documentId));
+
+      const [history] = await tx.insert(fieldChangeHistory).values({
+        proposalId: proposal.id,
+        clientId: proposal.clientId,
+        targetTable: proposal.targetTable,
+        targetId: proposal.targetId,
+        targetField: proposal.targetField,
+        fieldLabel: proposal.fieldLabel,
+        oldValue: liveValueStr,
+        newValue: newValueStr,
+        sourceDocumentId: proposal.documentId,
+        sourceDocumentName: doc?.documentName || null,
+        confirmedBy: opts.confirmedBy,
+      }).returning();
+
+      const [updatedProposal] = await tx.update(documentFieldProposals)
+        .set({ status: "ACCEPTED", reviewedBy: opts.confirmedBy, reviewedAt: new Date(), currentValue: newValueStr, proposedValue: opts.value })
+        .where(eq(documentFieldProposals.id, proposalId))
+        .returning();
+
+      return { proposal: updatedProposal, history };
+    });
+  }
+
+  async getFieldChangeHistory(clientId?: number): Promise<(FieldChangeHistory & { clientName: string; clientCode: string })[]> {
+    const base = db.select({
+      history: fieldChangeHistory,
+      clientName: clients.clientName,
+      clientCode: clients.clientCode,
+    })
+      .from(fieldChangeHistory)
+      .innerJoin(clients, eq(fieldChangeHistory.clientId, clients.id));
+    const query = clientId ? base.where(eq(fieldChangeHistory.clientId, clientId)) : base;
+    const rows = await query.orderBy(desc(fieldChangeHistory.confirmedAt)).limit(200);
+    return rows.map((r) => ({ ...r.history, clientName: r.clientName, clientCode: r.clientCode }));
+  }
+
+  /**
+   * Re-resolves every PENDING proposal still sitting at the placeholder
+   * "review_only" target through the current field-mapping table. Safe to run
+   * on every boot: already-mapped or already-reviewed rows are left alone, and
+   * a fieldKey with no mapping entry resolves to the same UNMAPPED state it
+   * started in. Returns how many became mapped vs. stayed unmapped, for the
+   * one-time report on the existing proposal backlog.
+   */
+  async backfillFieldProposalMappings(): Promise<{ mapped: number; unmapped: number; total: number }> {
+    const rows = await db.select({
+      proposal: documentFieldProposals,
+      documentCategory: documents.category,
+      documentPlanId: documents.planId,
+    })
+      .from(documentFieldProposals)
+      .innerJoin(documents, eq(documentFieldProposals.documentId, documents.id))
+      .where(and(eq(documentFieldProposals.status, "PENDING"), eq(documentFieldProposals.targetTable, "review_only")));
+
+    let mapped = 0;
+    let unmapped = 0;
+    for (const row of rows) {
+      const { resolveFieldMapping } = await import("./fieldMapping");
+      const m = resolveFieldMapping(
+        row.proposal.fieldKey,
+        row.proposal.proposedValue,
+        row.documentCategory,
+        row.proposal.clientId,
+        row.documentPlanId,
+      );
+      if (m.mappingStatus === "MAPPED") mapped++; else unmapped++;
+      await db.update(documentFieldProposals)
+        .set({
+          targetTable: m.targetTable,
+          targetId: m.targetId,
+          targetField: m.targetField,
+          mappingStatus: m.mappingStatus,
+          confidence: m.confidence,
+          isPlanDesignField: m.isPlanDesignField,
+        })
+        .where(eq(documentFieldProposals.id, row.proposal.id));
+    }
+    return { mapped, unmapped, total: rows.length };
+  }
+
+  /**
+   * Fills documents.effectiveDate for any document that doesn't have one yet,
+   * using whatever date-bearing field Claude already extracted from it (or a
+   * year guessed from the filename as a last resort). Safe to re-run on every
+   * boot: already-dated rows are skipped, and a document with no usable date
+   * anywhere stays null and is left to fall back to uploadedAt at query time.
+   */
+  async backfillDocumentEffectiveDates(): Promise<{ dated: number; undated: number; total: number }> {
+    const { deriveDocumentEffectiveDate } = await import("./fieldGrouping");
+    const undatedDocs = await db.select().from(documents).where(isNull(documents.effectiveDate));
+    let dated = 0;
+    let undated = 0;
+    for (const doc of undatedDocs) {
+      const proposalsOnDoc = await db.select({ fieldKey: documentFieldProposals.fieldKey, proposedValue: documentFieldProposals.proposedValue })
+        .from(documentFieldProposals)
+        .where(eq(documentFieldProposals.documentId, doc.id));
+      const derived = deriveDocumentEffectiveDate(doc.documentName, proposalsOnDoc);
+      if (derived) {
+        await db.update(documents).set({ effectiveDate: derived }).where(eq(documents.id, doc.id));
+        dated++;
+      } else {
+        undated++;
+      }
+    }
+    return { dated, undated, total: undatedDocs.length };
+  }
+
+  /**
+   * Collapses the PENDING review queue from one row per (document, field) to
+   * one row per (client, target field) — the unit a reviewer actually cares
+   * about. Superseded, matched, conflicting, and still-needing-review states
+   * are computed live against documents.effectiveDate and the record's current
+   * value, never persisted, so they can't go stale as new proposals or manual
+   * edits land.
+   */
+  async getGroupedFieldProposals(): Promise<import("./fieldGrouping").GroupedFieldProposalsResult> {
+    const { FIELD_MAPPINGS } = await import("./fieldMapping");
+    type QueueState = "CONFLICT" | "NEEDS_REVIEW" | "SUPERSEDED" | "MATCHED" | "UNMAPPED";
+
+    const rows = await db.select({
+      proposal: documentFieldProposals,
+      clientName: clients.clientName,
+      clientCode: clients.clientCode,
+      documentName: documents.documentName,
+      documentEffectiveDate: documents.effectiveDate,
+      documentUploadedAt: documents.uploadedAt,
+      sourceLocation: documentFieldProposals.sourceLocation,
+    })
+      .from(documentFieldProposals)
+      .innerJoin(clients, eq(documentFieldProposals.clientId, clients.id))
+      .innerJoin(documents, eq(documentFieldProposals.documentId, documents.id))
+      .where(eq(documentFieldProposals.status, "PENDING"));
+
+    type Row = typeof rows[number];
+    const groups = new Map<string, Row[]>();
+    for (const r of rows) {
+      const key = `${r.proposal.clientId}|${r.proposal.targetTable}|${r.proposal.targetId ?? "none"}|${r.proposal.targetField}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+
+    const clientsMap = new Map<number, { clientId: number; clientName: string; clientCode: string; fields: any[] }>();
+    let totalSuperseded = 0, totalMatched = 0, totalNeedsReview = 0, totalConflicts = 0;
+
+    for (const [key, groupRows] of Array.from(groups.entries())) {
+      const sorted = [...groupRows].sort((a, b) => {
+        const dateA = (a.documentEffectiveDate || a.documentUploadedAt).getTime();
+        const dateB = (b.documentEffectiveDate || b.documentUploadedAt).getTime();
+        return dateB - dateA;
+      });
+      const top = sorted[0];
+      const topYear = (top.documentEffectiveDate || top.documentUploadedAt).getFullYear();
+
+      const toCandidate = (r: Row, coercedValue: string | null) => ({
+        proposalId: r.proposal.id,
+        proposedValue: r.proposal.proposedValue,
+        coercedValue,
+        documentId: r.proposal.documentId,
+        documentName: r.documentName,
+        effectiveDate: (r.documentEffectiveDate || r.documentUploadedAt).toISOString(),
+        sourceLocation: r.proposal.sourceLocation,
+      });
+
+      const coerceOf = (r: Row): string | null => {
+        const mapping = FIELD_MAPPINGS[r.proposal.fieldKey];
+        if (!mapping) return r.proposal.proposedValue.trim() || null;
+        const c = mapping.coerce(r.proposal.proposedValue);
+        return c === null ? null : String(c);
+      };
+
+      const sameYear = sorted.filter((r) => (r.documentEffectiveDate || r.documentUploadedAt).getFullYear() === topYear);
+      const older = sorted.filter((r) => (r.documentEffectiveDate || r.documentUploadedAt).getFullYear() !== topYear);
+
+      const distinctValues = new Set(sameYear.map((r) => coerceOf(r) ?? `__raw__:${r.proposal.proposedValue.trim()}`));
+      const isMapped = top.proposal.mappingStatus === "MAPPED";
+      let state: QueueState;
+      let candidates: ReturnType<typeof toCandidate>[];
+      let currentValue: string | null = null;
+
+      if (!isMapped) {
+        state = "UNMAPPED";
+        candidates = [toCandidate(top, null)];
+      } else if (distinctValues.size > 1) {
+        state = "CONFLICT";
+        candidates = sameYear.map((r) => toCandidate(r, coerceOf(r)));
+        totalConflicts++;
+      } else {
+        currentValue = top.proposal.targetId != null
+          ? await this.getLiveFieldValue(top.proposal.targetTable, top.proposal.targetId, top.proposal.targetField)
+          : null;
+        const coerced = coerceOf(top);
+        if (coerced !== null && currentValue !== null && coerced === currentValue) {
+          state = "MATCHED";
+          totalMatched++;
+        } else {
+          state = "NEEDS_REVIEW";
+          totalNeedsReview++;
+        }
+        candidates = [toCandidate(top, coerced)];
+      }
+
+      const superseded = older.map((r) => toCandidate(r, coerceOf(r)));
+      totalSuperseded += superseded.length;
+      // Same-year losers in a non-conflict scenario can't happen (distinctValues.size <= 1 means they all agree),
+      // but if there were duplicate same-year rows they still count as superseded history, not extra review items.
+      const extraSameYear = state !== "CONFLICT" ? sameYear.slice(1).map((r) => toCandidate(r, coerceOf(r))) : [];
+      totalSuperseded += extraSameYear.length;
+
+      const [clientId, targetTable, targetIdRaw, targetField] = key.split("|");
+      if (!clientsMap.has(top.proposal.clientId)) {
+        clientsMap.set(top.proposal.clientId, {
+          clientId: top.proposal.clientId, clientName: top.clientName, clientCode: top.clientCode, fields: [],
+        });
+      }
+      clientsMap.get(top.proposal.clientId)!.fields.push({
+        key,
+        clientId: top.proposal.clientId,
+        targetTable,
+        targetId: targetIdRaw === "none" ? null : parseInt(targetIdRaw, 10),
+        targetField,
+        fieldKey: top.proposal.fieldKey,
+        fieldLabel: top.proposal.fieldLabel,
+        mappingStatus: top.proposal.mappingStatus,
+        confidence: top.proposal.confidence,
+        isPlanDesignField: top.proposal.isPlanDesignField,
+        state,
+        currentValue,
+        candidates,
+        superseded: [...superseded, ...extraSameYear],
+      });
+    }
+
+    // Unmapped fields (no matching column on the record) aren't actionable — nothing
+    // to confirm them onto — so they're excluded from the headline review count and
+    // shown separately, deduplicated the same way, as reference material for the
+    // categorization-gap work rather than something Kim/Steve must clear.
+    const clientsArr = Array.from(clientsMap.values()).map((c) => ({
+      ...c,
+      needsReviewCount: c.fields.filter((f) => f.state === "NEEDS_REVIEW" || f.state === "CONFLICT").length,
+      conflictCount: c.fields.filter((f) => f.state === "CONFLICT").length,
+      unmappedCount: c.fields.filter((f) => f.state === "UNMAPPED").length,
+      fields: c.fields.sort((a, b) => {
+        const order: Record<string, number> = { CONFLICT: 0, NEEDS_REVIEW: 1, UNMAPPED: 2, MATCHED: 3, SUPERSEDED: 4 };
+        return order[a.state] - order[b.state];
+      }),
+    })).sort((a, b) => b.needsReviewCount - a.needsReviewCount);
+
+    const totalUnmapped = clientsArr.reduce((sum, c) => sum + c.unmappedCount, 0);
+
+    return {
+      clients: clientsArr,
+      totals: {
+        totalProposals: rows.length,
+        superseded: totalSuperseded,
+        matched: totalMatched,
+        needsReview: totalNeedsReview,
+        conflicts: totalConflicts,
+        unmapped: totalUnmapped,
+      },
+    };
+  }
+
+  async undoFieldChange(historyId: number, undoneBy: string): Promise<FieldChangeHistory> {
+    return db.transaction(async (tx) => {
+      const [history] = await tx.select().from(fieldChangeHistory).where(eq(fieldChangeHistory.id, historyId));
+      if (!history) throw new Error("History entry not found");
+      if (history.undoneAt) throw new Error("Already undone");
+
+      const table = history.targetTable === "clients" ? clients : plans;
+      await tx.update(table as any)
+        .set({ [history.targetField]: history.oldValue, updatedAt: new Date() } as any)
+        .where(eq((table as any).id, history.targetId));
+
+      const [updated] = await tx.update(fieldChangeHistory)
+        .set({ undoneBy, undoneAt: new Date() })
+        .where(eq(fieldChangeHistory.id, historyId))
+        .returning();
+      return updated;
+    });
   }
 
   async getIssues(clientId: number): Promise<Issue[]> {

@@ -317,6 +317,15 @@ export const documents = pgTable("documents", {
   sourceGmailMessageId: text("source_gmail_message_id"),
   /** SHA-256 of the raw file bytes. Lets Gmail ingestion recognize a file Kim already uploaded by hand and skip filing a duplicate. */
   contentHash: text("content_hash"),
+  /**
+   * The plan year / report period this document's content actually describes,
+   * as best derived from a date field Claude already extracted from it (or,
+   * failing that, a year guessed from the filename). Distinct from uploadedAt,
+   * which only says when Gmail happened to deliver it — renewal season email
+   * often arrives out of order relative to which document supersedes which.
+   * Null when neither source yields a usable date.
+   */
+  effectiveDate: timestamp("effective_date"),
 });
 
 /**
@@ -486,7 +495,51 @@ export const documentFieldProposals = pgTable("document_field_proposals", {
   reviewedBy: text("reviewed_by"),
   reviewedAt: timestamp("reviewed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  /**
+   * MAPPED | UNMAPPED. Set once, when the proposal is created (or backfilled), by
+   * running fieldKey through the fieldMapping table. UNMAPPED means Claude found a
+   * value but there is no known client/plan column for it — it stays in the queue
+   * forever rather than being silently dropped, since a person may still want to
+   * act on it by hand.
+   */
+  mappingStatus: text("mapping_status").notNull().default("UNMAPPED"),
+  /**
+   * normal | low. Low confidence means this is a plan-design field (deductible,
+   * coinsurance percents, ortho rules, annual max, etc.) proposed from a PPR
+   * report rather than a plan document or signed renewal. PPR's plan-design block
+   * is often stale, so these render with a warning and are excluded from bulk
+   * confirm — they still need a one-by-one look.
+   */
+  confidence: text("confidence").notNull().default("normal"),
+  /** True when fieldKey maps to a plan-design column (as opposed to admin/contact/financial fields). */
+  isPlanDesignField: boolean("is_plan_design_field").notNull().default(false),
 });
+
+/**
+ * Permanent audit trail of every value a field-proposal confirmation actually
+ * wrote to a client/plan record. One row per field per confirmation — a bulk
+ * confirm across several fields on the same document produces one row each,
+ * never a single combined row, so each field can be individually undone.
+ */
+export const fieldChangeHistory = pgTable("field_change_history", {
+  id: serial("id").primaryKey(),
+  proposalId: integer("proposal_id").notNull(),
+  clientId: integer("client_id").notNull(),
+  targetTable: text("target_table").notNull(),
+  targetId: integer("target_id").notNull(),
+  targetField: text("target_field").notNull(),
+  fieldLabel: text("field_label").notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value").notNull(),
+  sourceDocumentId: integer("source_document_id"),
+  sourceDocumentName: text("source_document_name"),
+  confirmedBy: text("confirmed_by").notNull(),
+  confirmedAt: timestamp("confirmed_at").notNull().defaultNow(),
+  /** Set only once this change is reverted. The proposal itself stays ACCEPTED — this row is the undo record. */
+  undoneBy: text("undone_by"),
+  undoneAt: timestamp("undone_at"),
+});
+export type FieldChangeHistory = typeof fieldChangeHistory.$inferSelect;
 
 export const communicationTasks = pgTable("communication_tasks", {
   id: serial("id").primaryKey(),

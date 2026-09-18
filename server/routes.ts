@@ -1922,6 +1922,19 @@ export async function registerRoutes(
     }
   });
 
+  // One row per (client, plan/client field) instead of one per document —
+  // collapses repeat proposals from prior-year and re-sent documents into a
+  // single item, flags disagreeing recent documents as a conflict, and drops
+  // items whose newest value already matches the record out of the count.
+  app.get("/api/field-proposals/grouped", requireAuth, async (req, res) => {
+    try {
+      const result = await storage.getGroupedFieldProposals();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/clients/:id/field-proposals", requireAuth, async (req, res) => {
     try {
       const status = req.query.status as string | undefined;
@@ -1937,14 +1950,115 @@ export async function registerRoutes(
       const proposal = await storage.getFieldProposal(parseInt(req.params.id));
       if (!proposal) return res.status(404).json({ message: "Proposal not found" });
       if (proposal.status !== "PENDING") return res.status(400).json({ message: "Proposal already reviewed" });
-      const updated = await storage.reviewFieldProposal(proposal.id, "ACCEPTED", (req.user as any).fullName);
+      if (proposal.mappingStatus !== "MAPPED") {
+        return res.status(400).json({ message: "This field has no matching place on the record. It stays in the queue as unmapped." });
+      }
+
+      const finalValue: string = typeof req.body?.value === "string" && req.body.value.trim() ? req.body.value : proposal.proposedValue;
+      const force = !!req.body?.force;
+
+      const { resolveFieldMapping } = await import("./fieldMapping");
+      const doc = await storage.getDocument(proposal.documentId);
+      const mapping = resolveFieldMapping(proposal.fieldKey, finalValue, doc?.category || "OTHER", proposal.clientId, proposal.targetTable === "plans" ? proposal.targetId : null);
+      if (mapping.coercedValue === null) {
+        return res.status(400).json({ message: `"${finalValue}" is not a valid value for ${proposal.fieldLabel}.` });
+      }
+
+      const result = await storage.confirmFieldProposal(proposal.id, {
+        value: finalValue,
+        coercedValue: mapping.coercedValue,
+        confirmedBy: (req.user as any).fullName,
+        force,
+      });
+
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
         action: "accepted",
         entity: "document_field_proposal",
         entityId: proposal.id,
-        details: `Confirmed "${proposal.fieldLabel}" = "${proposal.proposedValue}" from ${proposal.sourceLocation || "document"}.`,
+        details: `Confirmed "${proposal.fieldLabel}" = "${finalValue}" onto ${proposal.targetTable}#${proposal.targetId}.${proposal.targetField} from ${proposal.sourceLocation || "document"}.`,
+      });
+      res.json(result.proposal);
+    } catch (err: any) {
+      if (err.code === "OVERWRITE_CONFIRMATION_REQUIRED") {
+        return res.status(409).json({ message: "This would overwrite an existing value.", currentValue: err.currentValue });
+      }
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/field-proposals/bulk-accept", requireAuth, async (req, res) => {
+    try {
+      const ids: number[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const results: { id: number; ok: boolean; message?: string }[] = [];
+      for (const id of ids) {
+        const proposal = await storage.getFieldProposal(id);
+        if (!proposal || proposal.status !== "PENDING") {
+          results.push({ id, ok: false, message: "Not pending" });
+          continue;
+        }
+        if (proposal.mappingStatus !== "MAPPED") {
+          results.push({ id, ok: false, message: "Unmapped" });
+          continue;
+        }
+        if (proposal.confidence === "low") {
+          results.push({ id, ok: false, message: "Low confidence (PPR plan-design field) — confirm individually" });
+          continue;
+        }
+        try {
+          const { resolveFieldMapping } = await import("./fieldMapping");
+          const doc = await storage.getDocument(proposal.documentId);
+          const mapping = resolveFieldMapping(proposal.fieldKey, proposal.proposedValue, doc?.category || "OTHER", proposal.clientId, proposal.targetTable === "plans" ? proposal.targetId : null);
+          if (mapping.coercedValue === null) {
+            results.push({ id, ok: false, message: "Invalid value" });
+            continue;
+          }
+          await storage.confirmFieldProposal(proposal.id, {
+            value: proposal.proposedValue,
+            coercedValue: mapping.coercedValue,
+            confirmedBy: (req.user as any).fullName,
+            force: false,
+          });
+          await storage.createAuditLog({
+            userId: (req.user as any).id,
+            userName: (req.user as any).fullName,
+            action: "accepted",
+            entity: "document_field_proposal",
+            entityId: proposal.id,
+            details: `Bulk-confirmed "${proposal.fieldLabel}" = "${proposal.proposedValue}" onto ${proposal.targetTable}#${proposal.targetId}.${proposal.targetField}.`,
+          });
+          results.push({ id, ok: true });
+        } catch (err: any) {
+          results.push({ id, ok: false, message: err.code === "OVERWRITE_CONFIRMATION_REQUIRED" ? "Would overwrite an existing value — confirm individually" : err.message });
+        }
+      }
+      res.json({ results });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/field-proposals/history", requireAuth, async (req, res) => {
+    try {
+      const clientId = req.query.clientId ? parseInt(req.query.clientId as string) : undefined;
+      const history = await storage.getFieldChangeHistory(clientId);
+      res.json(history);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/field-proposals/history/:id/undo", requireAuth, async (req, res) => {
+    try {
+      const updated = await storage.undoFieldChange(parseInt(req.params.id), (req.user as any).fullName);
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "undone",
+        entity: "field_change_history",
+        entityId: updated.id,
+        details: `Reverted "${updated.fieldLabel}" back to "${updated.oldValue ?? "(blank)"}" on ${updated.targetTable}#${updated.targetId}.`,
       });
       res.json(updated);
     } catch (err: any) {
@@ -2929,15 +3043,28 @@ export async function registerRoutes(
     const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
     if (signingKey) {
       const { timestamp, token, signature } = req.body;
-      if (timestamp && token && signature) {
-        const hmac = crypto.createHmac("sha256", signingKey);
-        hmac.update(timestamp + token);
-        const computed = hmac.digest("hex");
-        if (computed !== signature) {
-          console.error("[email-inbound] Invalid Mailgun signature — rejecting");
-          return res.status(403).json({ message: "Invalid Mailgun signature" });
-        }
+      // A request missing any of the three signing fields is not a validly signed
+      // Mailgun call — it must be rejected, not silently waved through. Previously
+      // this branch only checked the signature when all three fields happened to be
+      // present, which let an attacker skip verification entirely by omitting them.
+      if (!timestamp || !token || !signature) {
+        console.error("[email-inbound] Missing Mailgun signature fields — rejecting");
+        return res.status(403).json({ message: "Missing Mailgun signature fields" });
       }
+      const hmac = crypto.createHmac("sha256", signingKey);
+      hmac.update(timestamp + token);
+      const computed = hmac.digest("hex");
+      const computedBuf = Buffer.from(computed, "hex");
+      const signatureBuf = Buffer.from(String(signature), "hex");
+      const valid =
+        computedBuf.length === signatureBuf.length &&
+        crypto.timingSafeEqual(computedBuf, signatureBuf);
+      if (!valid) {
+        console.error("[email-inbound] Invalid Mailgun signature — rejecting");
+        return res.status(403).json({ message: "Invalid Mailgun signature" });
+      }
+    } else {
+      console.warn("[email-inbound] MAILGUN_WEBHOOK_SIGNING_KEY not configured — accepting unverified inbound mail");
     }
 
     const body = req.body;

@@ -13,6 +13,10 @@ import { scheduleDailyDigest } from "./digest";
 const app = express();
 const httpServer = createServer(app);
 
+// Deployed behind Replit's proxy, which terminates TLS; without this, Express sees
+// every request as plain HTTP and a "secure" session cookie would never be set.
+app.set("trust proxy", 1);
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
@@ -1187,6 +1191,63 @@ app.use((req, res, next) => {
     `);
 
     log("Startup migration: duplicate plans cleaned, unique constraint ensured");
+
+    // ── Phase 16: Field-review confirm-to-record ──────────────────────────────
+    // Confirming a field proposal now writes the value onto the real client/plan
+    // record instead of only marking it reviewed. mapping_status/confidence/
+    // is_plan_design_field classify every proposal so the queue can tell a
+    // reviewer "no matching field on record" instead of quietly dropping it, and
+    // field_change_history is the permanent, undoable audit trail of every write.
+    await pool.query(`
+      ALTER TABLE document_field_proposals ADD COLUMN IF NOT EXISTS mapping_status TEXT NOT NULL DEFAULT 'UNMAPPED';
+      ALTER TABLE document_field_proposals ADD COLUMN IF NOT EXISTS confidence TEXT NOT NULL DEFAULT 'normal';
+      ALTER TABLE document_field_proposals ADD COLUMN IF NOT EXISTS is_plan_design_field BOOLEAN NOT NULL DEFAULT false;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS field_change_history (
+        id SERIAL PRIMARY KEY,
+        proposal_id INTEGER NOT NULL REFERENCES document_field_proposals(id) ON DELETE CASCADE,
+        client_id INTEGER NOT NULL,
+        target_table TEXT NOT NULL,
+        target_id INTEGER NOT NULL,
+        target_field TEXT NOT NULL,
+        field_label TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT NOT NULL,
+        source_document_id INTEGER,
+        source_document_name TEXT,
+        confirmed_by TEXT NOT NULL,
+        confirmed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        undone_by TEXT,
+        undone_at TIMESTAMP
+      );
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS field_change_history_client_idx ON field_change_history (client_id);
+    `);
+    log("Startup migration: field-review confirm-to-record columns and history table ready");
+
+    const { storage } = await import("./storage");
+    const backfill = await storage.backfillFieldProposalMappings();
+    if (backfill.total > 0) {
+      log(`Startup migration: field-proposal mapping backfill — ${backfill.mapped} mapped, ${backfill.unmapped} unmapped of ${backfill.total} pending`);
+    }
+
+    // ── Phase 17: dedupe the review queue by plan-year, not by document ────────
+    // The Gmail backfill filed every version of every renewal cycle (prior-year
+    // letters, monthly PPRs, corrected proposals) as its own document, so the
+    // same field on the same plan proposed several times looked like several
+    // fields needing review. documents.effective_date — the plan year / report
+    // period the file's content describes, not when Gmail delivered it — is
+    // what lets the review queue keep only the newest proposal per field and
+    // push the rest into "superseded" history instead of the review count.
+    await pool.query(`
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS effective_date TIMESTAMP;
+    `);
+    const dateBackfill = await storage.backfillDocumentEffectiveDates();
+    if (dateBackfill.total > 0) {
+      log(`Startup migration: document effective-date backfill — ${dateBackfill.dated} dated, ${dateBackfill.undated} left undated of ${dateBackfill.total}`);
+    }
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }

@@ -31,7 +31,10 @@ export function setupAuth(app: Express) {
       cookie: {
         maxAge: 8 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: false,
+        // Published deployments are HTTPS-only at Replit's proxy; requiring a secure
+        // cookie there stops it ever being sent in plaintext. Dev keeps it off since
+        // the local workflow is plain HTTP.
+        secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
       },
     })

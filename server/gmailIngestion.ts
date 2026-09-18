@@ -3,6 +3,7 @@ import { buildClientRefs } from "./client-context";
 import { matchEmailToClients } from "./claude";
 import { extractDocumentFields } from "./claude";
 import { extractDocumentText, hashBuffer } from "./documentExtraction";
+import { resolveFieldMapping } from "./fieldMapping";
 import { uploadAttachmentBytes } from "./objectStorage";
 import {
   getGmailProfile,
@@ -185,18 +186,24 @@ export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
               const fields = await extractDocumentFields(extractedText, "RENEWAL_PROPOSAL", client?.clientName || "");
               if (fields.length > 0) {
                 await storage.createDocumentFieldProposals(
-                  fields.map((f) => ({
-                    documentId: doc.id,
-                    clientId,
-                    fieldKey: f.fieldKey,
-                    fieldLabel: f.fieldLabel,
-                    proposedValue: f.proposedValue,
-                    sourceLocation: f.sourceLocation,
-                    targetTable: "review_only",
-                    targetId: null,
-                    targetField: f.fieldKey,
-                    currentValue: null,
-                  })),
+                  fields.map((f) => {
+                    const mapping = resolveFieldMapping(f.fieldKey, f.proposedValue, "RENEWAL_PROPOSAL", clientId, doc.planId ?? null);
+                    return {
+                      documentId: doc.id,
+                      clientId,
+                      fieldKey: f.fieldKey,
+                      fieldLabel: f.fieldLabel,
+                      proposedValue: f.proposedValue,
+                      sourceLocation: f.sourceLocation,
+                      targetTable: mapping.targetTable,
+                      targetId: mapping.targetId,
+                      targetField: mapping.targetField,
+                      currentValue: null,
+                      mappingStatus: mapping.mappingStatus,
+                      confidence: mapping.confidence,
+                      isPlanDesignField: mapping.isPlanDesignField,
+                    };
+                  }),
                 );
                 summary.fieldProposalsCreated += fields.length;
               }
