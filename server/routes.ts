@@ -1885,7 +1885,7 @@ export async function registerRoutes(
   app.get("/api/gmail-import/status", requireAdmin, async (req, res) => {
     try {
       const { getGmailProfile } = await import("./gmail");
-      const profile = await getGmailProfile();
+      const profile = await getGmailProfile("kim.anderson@simple.us");
       const state = await storage.getGmailImportState(profile.emailAddress);
       res.json({ mailbox: profile.emailAddress, state: state || null });
     } catch (err: any) {
@@ -1897,7 +1897,7 @@ export async function registerRoutes(
   app.post("/api/gmail-import/run", requireAdmin, async (req, res) => {
     try {
       const { runGmailIngestion } = await import("./gmailIngestion");
-      const summary = await runGmailIngestion();
+      const summary = await runGmailIngestion("kim.anderson@simple.us");
       await storage.createAuditLog({
         userId: (req.user as any).id,
         userName: (req.user as any).fullName,
@@ -1916,20 +1916,110 @@ export async function registerRoutes(
   // ─── Gmail inbox (full mail, read/search/summarize only — no send/reply) ───
   app.post("/api/gmail-inbox/sync", requireAdmin, async (req, res) => {
     try {
-      const { runGmailFullSync } = await import("./gmailFullSync");
-      const summary = await runGmailFullSync();
-      await storage.createAuditLog({
-        userId: (req.user as any).id,
-        userName: (req.user as any).fullName,
-        action: "ran",
-        entity: "gmail_inbox_sync",
-        entityId: 0,
-        details: `Gmail full sync for ${summary.mailbox}: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.attachmentsFiled} document(s) filed.`,
-      });
-      res.json(summary);
+      const { runGmailFullSyncAllMailboxes } = await import("./gmailFullSync");
+      const summaries = await runGmailFullSyncAllMailboxes();
+      for (const summary of summaries) {
+        await storage.createAuditLog({
+          userId: (req.user as any).id,
+          userName: (req.user as any).fullName,
+          action: "ran",
+          entity: "gmail_inbox_sync",
+          entityId: 0,
+          details: `Gmail full sync for ${summary.mailbox}: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.attachmentsFiled} document(s) filed.`,
+        });
+      }
+      res.json({ summaries });
     } catch (err: any) {
       console.error("[gmail-inbox] sync failed:", err?.message || err);
       res.status(502).json({ message: err.message || "Gmail sync failed" });
+    }
+  });
+
+  // ─── CRM-owned Gmail OAuth: connect/reconnect kim.anderson@, clientservice@, steve.schultz@ ───
+  app.get("/api/mail-accounts", requireAdmin, async (req, res) => {
+    try {
+      const { CONFIGURED_MAILBOXES } = await import("./googleOAuth");
+      const accounts = await storage.getGmailAccounts();
+      const byMailbox = new Map(accounts.map(a => [a.mailbox, a]));
+      const rows = CONFIGURED_MAILBOXES.map(cfg => {
+        const acct = byMailbox.get(cfg.mailbox);
+        return {
+          mailbox: cfg.mailbox,
+          displayName: cfg.displayName,
+          status: acct ? acct.status : "NOT_CONNECTED",
+          scopes: acct?.scopes || [],
+          lastSyncAt: acct?.lastSyncAt || null,
+          lastSyncSummary: acct?.lastSyncSummary || null,
+          connectedAt: acct?.connectedAt || null,
+          connectedBy: acct?.connectedBy || null,
+        };
+      });
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/mail-accounts/:mailbox/connect", requireAdmin, async (req, res) => {
+    try {
+      const { buildAuthUrl, redirectUriFor, CONFIGURED_MAILBOXES } = await import("./googleOAuth");
+      const mailbox = String(req.params.mailbox).toLowerCase();
+      if (!CONFIGURED_MAILBOXES.some(m => m.mailbox === mailbox)) {
+        return res.status(400).json({ message: `${mailbox} is not one of the mailboxes this app authorizes.` });
+      }
+      const url = buildAuthUrl(mailbox, redirectUriFor(req));
+      res.redirect(url);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Not requireAdmin: Google redirects the browser here directly after consent, carrying no session
+  // header of ours. The mailbox being authorized is trusted from the `state` param Google echoes back,
+  // which this server itself set when building the auth URL — not user-suppliable in a way that grants
+  // anything beyond letting an already-logged-in admin who clicked Connect finish that same flow.
+  app.get("/api/oauth/gmail/callback", requireAdmin, async (req, res) => {
+    const mailbox = String(req.query.state || "");
+    try {
+      if (req.query.error) throw new Error(`Google returned an error: ${req.query.error}`);
+      const code = String(req.query.code || "");
+      if (!code || !mailbox) throw new Error("Missing code or state from Google's redirect.");
+      const { completeAuthorization, redirectUriFor } = await import("./googleOAuth");
+      await completeAuthorization(mailbox, code, redirectUriFor(req), (req.user as any)?.fullName || "admin");
+      res.redirect("/settings/mail-accounts?connected=" + encodeURIComponent(mailbox));
+    } catch (err: any) {
+      console.error("[gmail-oauth] callback failed:", err?.message || err);
+      res.redirect("/settings/mail-accounts?error=" + encodeURIComponent(err.message || "Authorization failed"));
+    }
+  });
+
+  // ─── Steve's mailbox allow-list: client/broker-derived domains, admin-reviewed before first use ───
+  app.get("/api/mail-allowlist/domains", requireAdmin, async (req, res) => {
+    try {
+      res.json(await storage.getMailAllowlistDomains());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/mail-allowlist/refresh", requireAdmin, async (req, res) => {
+    try {
+      const { refreshMailAllowlistCandidates } = await import("./mailAllowlist");
+      const result = await refreshMailAllowlistCandidates();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/mail-allowlist/domains/:id", requireAdmin, async (req, res) => {
+    try {
+      const approved = !!req.body.approved;
+      const row = await storage.reviewMailAllowlistDomain(Number(req.params.id), approved, (req.user as any)?.fullName || "admin");
+      if (!row) return res.status(404).json({ message: "Domain not found" });
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -3414,15 +3504,29 @@ export async function registerRoutes(
       const signatureBlock = identity.signature ? `\n\n${identity.signature}` : "";
       const text = `${bodyText}${signatureBlock}`;
 
-      const result = await sendEmail({
-        from: `${identity.displayName} <${identity.email}>`,
-        to: toList,
-        subject: subject || "(no subject)",
-        text,
-        replyTo,
-        bcc: identity.email,
-      });
-      if (!result.ok) return res.status(502).json({ message: result.error });
+      // Client-facing sends go through the Gmail API as the identity's own
+      // connected mailbox — the client sees it exactly as if Kim or Steve
+      // sent it by hand, and it lands in that mailbox's own Sent folder.
+      // Mailgun (server/mailer.ts) is reserved for system mail (digests,
+      // notifications) that never needs to look like a person's message.
+      const account = await storage.getGmailAccountByMailbox(identity.email);
+      let messageIdHeader: string | null = null;
+      if (account && account.status === "CONNECTED") {
+        const { sendViaGmail } = await import("./gmailSend");
+        const result = await sendViaGmail(identity.email, {
+          fromName: identity.displayName,
+          to: toList,
+          subject: subject || "(no subject)",
+          text,
+          replyTo,
+          bcc: identity.email.toLowerCase() === "clientservice@simple.us" ? undefined : "clientservice@simple.us",
+        });
+        if (!result.ok) return res.status(502).json({ message: result.error });
+      } else {
+        return res.status(409).json({
+          message: `${identity.email} is not connected to Gmail yet. Connect it in Settings \u2192 Mail Accounts before sending as this identity.`,
+        });
+      }
 
       const parsedClientIds: number[] = Array.isArray(clientIds) ? clientIds.map(Number).filter(Boolean) : [];
       const comm = await storage.createOutboundCommunication({
@@ -3435,7 +3539,7 @@ export async function registerRoutes(
         sentByUserId: user.id,
         sentByUserName: user.fullName,
         clientIds: parsedClientIds,
-      });
+      } as any);
       res.status(201).json(comm);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

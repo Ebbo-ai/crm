@@ -48,9 +48,8 @@ export interface GmailIngestionSummary {
  * Safe to call repeatedly — every dedup check (Gmail ids, content hash) runs
  * before any write.
  */
-export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
-  const profile = await getGmailProfile();
-  const mailbox = profile.emailAddress;
+export async function runGmailIngestion(mailbox: string = "kim.anderson@simple.us"): Promise<GmailIngestionSummary> {
+  const profile = await getGmailProfile(mailbox);
   const summary: GmailIngestionSummary = {
     mailbox,
     messagesScanned: 0,
@@ -75,7 +74,7 @@ export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
   let newestInternalDate: string | undefined;
 
   do {
-    const page = await searchThreadsWithAttachments(query, pageToken, 50);
+    const page = await searchThreadsWithAttachments(mailbox, query, pageToken, 50);
     for (const thread of page.threads) {
       for (const msg of thread.messages) {
         if (summary.messagesScanned >= MAX_MESSAGES_PER_RUN) break;
@@ -83,7 +82,7 @@ export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
         if (!newestInternalDate || msg.date > newestInternalDate) newestInternalDate = msg.date;
 
         try {
-          const full = await getMessageFull(msg.id);
+          const full = await getMessageFull(mailbox, msg.id);
           const attachmentRefs = extractAttachmentRefs(full.payload);
           if (attachmentRefs.length === 0) continue;
 
@@ -121,7 +120,7 @@ export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
               continue;
             }
 
-            const bytes = await getAttachmentBytes(msg.id, ref.attachmentId);
+            const bytes = await getAttachmentBytes(mailbox, msg.id, ref.attachmentId);
             summary.attachmentsDownloaded++;
             const contentHash = hashBuffer(bytes);
 
@@ -229,9 +228,9 @@ export async function runGmailIngestion(): Promise<GmailIngestionSummary> {
 }
 
 /** A bounded, read-only count so the UI can show an estimate before running a real ingestion. */
-export async function estimateGmailIngestionVolume(): Promise<{ mailbox: string; matchingThreadsEstimate: number; windowMonths: number }> {
-  const profile = await getGmailProfile();
+export async function estimateGmailIngestionVolume(mailbox: string = "kim.anderson@simple.us"): Promise<{ mailbox: string; matchingThreadsEstimate: number; windowMonths: number }> {
+  const profile = await getGmailProfile(mailbox);
   const query = `has:attachment after:${monthsAgoEpochSeconds(BACKFILL_MONTHS)}`;
-  const page = await searchThreadsWithAttachments(query, undefined, 1);
+  const page = await searchThreadsWithAttachments(mailbox, query, undefined, 1);
   return { mailbox: profile.emailAddress, matchingThreadsEstimate: page.resultCountEstimate || 0, windowMonths: BACKFILL_MONTHS };
 }

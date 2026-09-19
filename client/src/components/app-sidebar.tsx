@@ -259,6 +259,19 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
                 {!collapsed && <span>Gmail Import</span>}
               </div>
             </Link>
+            <Link href="/settings/mail-accounts">
+              <div
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                  isActive("/settings/mail-accounts")
+                    ? "bg-card/15 text-white"
+                    : "text-white/70 hover:bg-card/10 hover:text-white"
+                } ${collapsed ? "justify-center" : ""}`}
+                data-testid="nav-mail-accounts"
+              >
+                <Mail className="w-4.5 h-4.5 flex-shrink-0" />
+                {!collapsed && <span>Mail Accounts</span>}
+              </div>
+            </Link>
           </>
         )}
       </nav>

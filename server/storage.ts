@@ -6,10 +6,12 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
-  sendingIdentities, userSendingIdentities,
+  sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains,
   type SendingIdentity, type InsertSendingIdentity,
   type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
+  type GmailAccount, type InsertGmailAccount,
+  type MailAllowlistDomain, type InsertMailAllowlistDomain,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
   type GmailThread, type InsertGmailThread,
@@ -634,6 +636,71 @@ export class DatabaseStorage implements IStorage {
   async updateVendorContact(id: number, fields: { email?: string | null; phone?: string | null }) {
     const [updated] = await db.update(vendorContacts).set(fields).where(eq(vendorContacts.id, id)).returning();
     return updated;
+  }
+
+  // ── CRM-owned Gmail OAuth accounts (kim.anderson@, clientservice@, steve.schultz@) ──
+
+  async getGmailAccounts(): Promise<GmailAccount[]> {
+    return db.select().from(gmailAccounts).orderBy(asc(gmailAccounts.mailbox));
+  }
+
+  async getGmailAccountByMailbox(mailbox: string): Promise<GmailAccount | undefined> {
+    const [row] = await db.select().from(gmailAccounts).where(eq(gmailAccounts.mailbox, mailbox.toLowerCase()));
+    return row;
+  }
+
+  /** Called once per mailbox after the OAuth consent flow completes, and again on every re-authorization. */
+  async upsertGmailAccount(data: InsertGmailAccount): Promise<GmailAccount> {
+    const mailbox = data.mailbox.toLowerCase();
+    const existing = await this.getGmailAccountByMailbox(mailbox);
+    if (existing) {
+      const [row] = await db.update(gmailAccounts).set({ ...data, mailbox, status: "CONNECTED" }).where(eq(gmailAccounts.id, existing.id)).returning();
+      return row;
+    }
+    const [row] = await db.insert(gmailAccounts).values({ ...data, mailbox }).returning();
+    return row;
+  }
+
+  /** Just the access token / expiry / status fields, written on every token refresh — never touches refreshToken unless Google issues a new one. */
+  async updateGmailAccountToken(mailbox: string, fields: { accessToken?: string | null; accessTokenExpiresAt?: Date | null; status?: string; refreshToken?: string }): Promise<void> {
+    await db.update(gmailAccounts).set(fields).where(eq(gmailAccounts.mailbox, mailbox.toLowerCase()));
+  }
+
+  async markGmailAccountNeedsReauth(mailbox: string): Promise<void> {
+    await db.update(gmailAccounts).set({ status: "NEEDS_REAUTH" }).where(eq(gmailAccounts.mailbox, mailbox.toLowerCase()));
+  }
+
+  async recordGmailAccountSync(mailbox: string, summary: string): Promise<void> {
+    await db.update(gmailAccounts).set({ lastSyncAt: new Date(), lastSyncSummary: summary }).where(eq(gmailAccounts.mailbox, mailbox.toLowerCase()));
+  }
+
+  // ── Steve's mailbox allow-list domains (client/broker-derived, admin-reviewed) ──
+
+  async getMailAllowlistDomains(): Promise<MailAllowlistDomain[]> {
+    return db.select().from(mailAllowlistDomains).orderBy(asc(mailAllowlistDomains.domain));
+  }
+
+  async getApprovedMailAllowlistDomains(): Promise<Set<string>> {
+    const rows = await db.select({ domain: mailAllowlistDomains.domain }).from(mailAllowlistDomains).where(eq(mailAllowlistDomains.approved, true));
+    return new Set(rows.map(r => r.domain));
+  }
+
+  /** Adds any domain not already on file, as pending (approved = null). Never overwrites a reviewed decision. */
+  async addCandidateMailAllowlistDomains(candidates: { domain: string; source: string; sourceLabel: string | null }[]): Promise<number> {
+    if (candidates.length === 0) return 0;
+    let added = 0;
+    for (const c of candidates) {
+      const [existing] = await db.select({ id: mailAllowlistDomains.id }).from(mailAllowlistDomains).where(eq(mailAllowlistDomains.domain, c.domain));
+      if (existing) continue;
+      await db.insert(mailAllowlistDomains).values({ domain: c.domain, source: c.source, sourceLabel: c.sourceLabel, approved: null });
+      added++;
+    }
+    return added;
+  }
+
+  async reviewMailAllowlistDomain(id: number, approved: boolean, reviewedBy: string): Promise<MailAllowlistDomain | undefined> {
+    const [row] = await db.update(mailAllowlistDomains).set({ approved, reviewedAt: new Date(), reviewedBy }).where(eq(mailAllowlistDomains.id, id)).returning();
+    return row;
   }
 
   /** Attachments on this communication that have not yet been filed onto a client's documents tab. */
@@ -2668,6 +2735,17 @@ export class DatabaseStorage implements IStorage {
 
   async getGmailMessageByGmailId(gmailMessageId: string): Promise<GmailMessage | undefined> {
     const [row] = await db.select().from(gmailMessages).where(eq(gmailMessages.gmailMessageId, gmailMessageId));
+    return row;
+  }
+
+  /** Cross-mailbox dedupe: the same email seen via two connected mailboxes (Steve CCs clientservice@, or a message lands in both Kim's and clientservice@'s mailbox) has two different Gmail message ids but one Message-ID header. */
+  async getGmailMessageByMessageIdHeader(messageIdHeader: string): Promise<GmailMessage | undefined> {
+    const [row] = await db.select().from(gmailMessages).where(eq(gmailMessages.messageIdHeader, messageIdHeader));
+    return row;
+  }
+
+  async getCommunicationByMessageIdHeader(messageIdHeader: string): Promise<Communication | undefined> {
+    const [row] = await db.select().from(communications).where(eq(communications.messageIdHeader, messageIdHeader));
     return row;
   }
 

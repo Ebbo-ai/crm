@@ -1045,6 +1045,55 @@ app.use((req, res, next) => {
     `);
     log("Startup migration: Gmail attachment ingestion + field-proposal review tables ready");
 
+    // ── Phase 24: CRM-owned Gmail OAuth accounts + Steve allow-list + 90DB filing + Message-ID dedupe ──
+    // Sits before Phase 10 in the file because Phase 10 must stay last.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gmail_accounts (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        access_token TEXT,
+        access_token_expires_at TIMESTAMP,
+        scopes JSONB NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'CONNECTED',
+        last_sync_at TIMESTAMP,
+        last_sync_summary TEXT,
+        connected_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        connected_by TEXT
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mail_allowlist_domains (
+        id SERIAL PRIMARY KEY,
+        domain TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL,
+        source_label TEXT,
+        approved BOOLEAN,
+        reviewed_at TIMESTAMP,
+        reviewed_by TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS files_to_vendor BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS message_id_header TEXT;
+      ALTER TABLE gmail_threads ADD COLUMN IF NOT EXISTS files_to_vendor BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS message_id_header TEXT;
+    `);
+    // Partial unique indexes: only enforced when the header was actually
+    // captured, so historical rows imported before this phase (null header)
+    // never collide with each other.
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS gmail_messages_message_id_header_unique
+        ON gmail_messages (message_id_header) WHERE message_id_header IS NOT NULL;
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS communications_message_id_header_idx
+        ON communications (message_id_header) WHERE message_id_header IS NOT NULL;
+    `);
+    log("Startup migration: Gmail OAuth accounts, Steve allow-list, 90DB filing, Message-ID dedupe ready");
+
     // ── Phase 10: Renewals as year-specific records ───────────────────────────
     // MUST RUN LAST. This phase drops columns that earlier phases used to add.
     // Those ADDs have been removed from Phases 8 and 9, but keeping the drops at
@@ -1380,10 +1429,12 @@ app.use((req, res, next) => {
   const GMAIL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
   async function runGmailSyncSafely() {
     try {
-      const { runGmailFullSync } = await import("./gmailFullSync");
-      const summary = await runGmailFullSync();
-      if (summary.messagesNew > 0 || summary.errors.length > 0) {
-        log(`Gmail inbox sync: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.errors.length} error(s)`);
+      const { runGmailFullSyncAllMailboxes } = await import("./gmailFullSync");
+      const summaries = await runGmailFullSyncAllMailboxes();
+      for (const summary of summaries) {
+        if (summary.messagesNew > 0 || summary.errors.length > 0) {
+          log(`Gmail inbox sync (${summary.mailbox}): ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.errors.length} error(s)`);
+        }
       }
     } catch (err: any) {
       console.error("Gmail inbox sync error:", err?.message || err);

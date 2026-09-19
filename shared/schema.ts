@@ -436,6 +436,21 @@ export const communications = pgTable("communications", {
    */
   sentByUserId: integer("sent_by_user_id"),
   sentByUserName: text("sent_by_user_name"),
+  /**
+   * Set when a message doesn't resolve to a specific client but the
+   * counterparty is 90 Degree Benefits (the TPA) — general/global TPA
+   * discussion files here instead of sitting unassigned. A message that DOES
+   * resolve to a client always files there even when the sender is 90DB, per
+   * the rule that a group-specific message belongs to that group.
+   */
+  filesToVendor: boolean("files_to_vendor").notNull().default(false),
+  /**
+   * The RFC822 Message-ID header, the same for every mailbox's copy of one
+   * email. Gmail's own per-mailbox message id differs for the same email
+   * seen in two connected mailboxes (e.g. Steve CCs clientservice@ on a
+   * message he sends), so cross-mailbox dedupe keys on this instead.
+   */
+  messageIdHeader: text("message_id_header"),
 });
 
 /**
@@ -710,6 +725,8 @@ export const gmailThreads = pgTable("gmail_threads", {
    * before any workflow depends on it.
    */
   isPrivate: boolean("is_private").notNull().default(false),
+  /** Same meaning as communications.filesToVendor: general 90 Degree Benefits correspondence that never resolved to a specific client. */
+  filesToVendor: boolean("files_to_vendor").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -754,6 +771,8 @@ export const gmailMessages = pgTable("gmail_messages", {
   sentAt: timestamp("sent_at").notNull(),
   direction: gmailMessageDirectionEnum("direction").notNull(),
   hasAttachments: boolean("has_attachments").notNull().default(false),
+  /** RFC822 Message-ID header — see communications.messageIdHeader for why this, not Gmail's per-mailbox id, is the cross-mailbox dedupe key. */
+  messageIdHeader: text("message_id_header"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -903,6 +922,64 @@ export const brokerContacts = pgTable("broker_contacts", {
 });
 
 export const insertBrokerContactSchema = createInsertSchema(brokerContacts).omit({ id: true, createdAt: true, updatedAt: true });
+
+/**
+ * One row per mailbox the CRM's own Gmail OAuth app can act as
+ * (kim.anderson@, clientservice@, steve.schultz@). Replaces the Replit Gmail
+ * connector for these three, since that connector holds one account at a
+ * time and these three mailboxes must be authorized concurrently, each with
+ * its own scopes. Refresh tokens are sensitive — never returned from any API
+ * route, only read server-side to mint a short-lived access token.
+ */
+export const gmailAccounts = pgTable("gmail_accounts", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  accessToken: text("access_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at"),
+  /** Scopes actually granted at the last successful (re)authorization. */
+  scopes: jsonb("scopes").notNull().default([]),
+  /** CONNECTED | NEEDS_REAUTH — flips to NEEDS_REAUTH the moment a refresh attempt fails (revoked/expired), surfaced in the Mail Accounts admin page rather than failing silently mid-sync. */
+  status: text("status").notNull().default("CONNECTED"),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastSyncSummary: text("last_sync_summary"),
+  connectedAt: timestamp("connected_at").notNull().defaultNow(),
+  connectedBy: text("connected_by"),
+});
+
+export const insertGmailAccountSchema = createInsertSchema(gmailAccounts).omit({ id: true, connectedAt: true });
+export type GmailAccount = typeof gmailAccounts.$inferSelect;
+export type InsertGmailAccount = typeof gmailAccounts.$inferInsert;
+
+/**
+ * Domains eligible for Steve's mailbox allow-list, generated from client and
+ * broker records rather than hand-maintained. `approved` starts null
+ * (pending review) — the allow-list backfill and ongoing sync both refuse to
+ * treat a domain as eligible until an admin has explicitly reviewed it, per
+ * the requirement that the first pass never runs against an unreviewed list.
+ * Free mail providers (gmail.com etc.) are never generated as candidates —
+ * filtered out before insertion — since a domain rule there would sweep in
+ * personal mail; contacts on those providers rely on the exact-address list
+ * instead.
+ */
+export const mailAllowlistDomains = pgTable("mail_allowlist_domains", {
+  id: serial("id").primaryKey(),
+  domain: text("domain").notNull().unique(),
+  /** CLIENT | BROKER | VENDOR — where this domain was generated from, shown to the reviewer for context. */
+  source: text("source").notNull(),
+  /** e.g. the client or firm name, for the review screen — not used in matching. */
+  sourceLabel: text("source_label"),
+  /** null = pending review, true = approved for matching, false = explicitly rejected. */
+  approved: boolean("approved"),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: text("reviewed_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertMailAllowlistDomainSchema = createInsertSchema(mailAllowlistDomains).omit({ id: true, createdAt: true });
+export type MailAllowlistDomain = typeof mailAllowlistDomains.$inferSelect;
+export type InsertMailAllowlistDomain = typeof mailAllowlistDomains.$inferInsert;
 export type BrokerContact = typeof brokerContacts.$inferSelect;
 export type InsertBrokerContact = z.infer<typeof insertBrokerContactSchema>;
 

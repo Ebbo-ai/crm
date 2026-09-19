@@ -1,18 +1,27 @@
-import { ReplitConnectors } from "@replit/connectors-sdk";
+import { getValidAccessToken } from "./googleOAuth";
 
 /**
- * Read-only Gmail access through the Replit connector. Only ever GETs —
- * ingestion never modifies, labels, or sends mail. See replit.md / the Stage
- * 3 notes for why: this pipeline pulls attachments, it does not touch the
- * mailbox.
+ * Gmail access through the CRM's own OAuth app (server/googleOAuth.ts), one
+ * mailbox at a time, selected by the caller. Replaces the Replit connector,
+ * which only ever held one Google account — these mailboxes (Kim,
+ * clientservice@, Steve) are authorized concurrently, each with a fresh
+ * access token minted per call so a request never uses a stale one.
+ *
+ * Every ingestion path here only ever GETs. Sending lives in
+ * server/gmailSend.ts, kept separate so it's obvious at a glance which
+ * module can write to a mailbox and which only reads.
  */
-const connectors = new ReplitConnectors();
+const GMAIL_API_BASE = "https://gmail.googleapis.com";
 
-async function gmailGet<T>(path: string): Promise<T> {
-  const res = await connectors.proxy("google-mail", path, { method: "GET" });
+async function gmailGet<T>(mailbox: string, path: string): Promise<T> {
+  const token = await getValidAccessToken(mailbox);
+  const res = await fetch(`${GMAIL_API_BASE}${path}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Gmail API ${path} failed: ${res.status} ${body.slice(0, 500)}`);
+    throw new Error(`Gmail API ${path} failed for ${mailbox}: ${res.status} ${body.slice(0, 500)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -23,8 +32,8 @@ export interface GmailProfile {
   threadsTotal: number;
 }
 
-export async function getGmailProfile(): Promise<GmailProfile> {
-  return gmailGet<GmailProfile>("/gmail/v1/users/me/profile");
+export async function getGmailProfile(mailbox: string): Promise<GmailProfile> {
+  return gmailGet<GmailProfile>(mailbox, "/gmail/v1/users/me/profile");
 }
 
 export interface GmailThreadSearchResult {
@@ -52,13 +61,14 @@ export interface GmailThreadSearchResult {
  * cares about messages carrying files.
  */
 export async function searchThreadsWithAttachments(
+  mailbox: string,
   query: string,
   pageToken?: string,
   pageSize = 50,
 ): Promise<GmailThreadSearchResult> {
   const params = new URLSearchParams({ q: query, pageSize: String(pageSize) });
   if (pageToken) params.set("pageToken", pageToken);
-  return gmailGet<GmailThreadSearchResult>(`/gmail/v1/users/me/threads:search?${params.toString()}`);
+  return gmailGet<GmailThreadSearchResult>(mailbox, `/gmail/v1/users/me/threads:search?${params.toString()}`);
 }
 
 interface MimePart {
@@ -77,8 +87,8 @@ export interface GmailMessageFull {
   payload?: MimePart;
 }
 
-export async function getMessageFull(messageId: string): Promise<GmailMessageFull> {
-  return gmailGet<GmailMessageFull>(`/gmail/v1/users/me/messages/${messageId}?format=full`);
+export async function getMessageFull(mailbox: string, messageId: string): Promise<GmailMessageFull> {
+  return gmailGet<GmailMessageFull>(mailbox, `/gmail/v1/users/me/messages/${messageId}?format=full`);
 }
 
 export interface GmailAttachmentRef {
@@ -161,13 +171,14 @@ export interface GmailMessageListResult {
 
 /** Plain message listing across the whole mailbox — no has:attachment restriction, sent and received both, newest first. */
 export async function searchMessageIds(
+  mailbox: string,
   query: string,
   pageToken?: string,
   pageSize = 100,
 ): Promise<GmailMessageListResult> {
   const params = new URLSearchParams({ q: query, maxResults: String(pageSize) });
   if (pageToken) params.set("pageToken", pageToken);
-  return gmailGet<GmailMessageListResult>(`/gmail/v1/users/me/messages?${params.toString()}`);
+  return gmailGet<GmailMessageListResult>(mailbox, `/gmail/v1/users/me/messages?${params.toString()}`);
 }
 
 interface GmailAttachmentBody {
@@ -175,8 +186,9 @@ interface GmailAttachmentBody {
   data: string; // base64url
 }
 
-export async function getAttachmentBytes(messageId: string, attachmentId: string): Promise<Buffer> {
+export async function getAttachmentBytes(mailbox: string, messageId: string, attachmentId: string): Promise<Buffer> {
   const body = await gmailGet<GmailAttachmentBody>(
+    mailbox,
     `/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
   );
   return Buffer.from(body.data, "base64url");

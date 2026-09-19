@@ -5,6 +5,7 @@ import { extractDocumentText, hashBuffer } from "./documentExtraction";
 import { uploadAttachmentBytes } from "./objectStorage";
 import { sanitizeEmailHtml, textToSafeHtml } from "./gmailSanitize";
 import { splitQuotedText } from "./gmailQuoteStrip";
+import { checkAllowlist, isVendorCorrespondence } from "./mailAllowlist";
 import {
   getGmailProfile,
   searchMessageIds,
@@ -23,6 +24,14 @@ const MAX_MESSAGES_PER_RUN = 250;
 const EMBEDDED_IMAGE_MAX_BYTES = 30_000;
 /** Threads shorter than this (combined body length) are self-evidently short — skip the AI summary. */
 const SUMMARY_MIN_CHARS = 400;
+
+/**
+ * Steve's mailbox is the one mailbox that carries decades of personal
+ * correspondence alongside business mail — see mailAllowlist.ts. Every other
+ * connected mailbox (Kim, clientservice@) is business-only and synced in
+ * full, same as before this mailbox became configurable.
+ */
+const ALLOWLIST_FILTERED_MAILBOXES = new Set(["steve.schultz@simple.us"]);
 
 function monthsAgoEpochSeconds(months: number): number {
   const d = new Date();
@@ -44,10 +53,13 @@ export interface GmailFullSyncSummary {
   mailbox: string;
   messagesScanned: number;
   messagesNew: number;
+  messagesSkippedNotAllowlisted: number;
+  messagesSkippedDuplicateAcrossMailboxes: number;
   threadsTouched: number;
   matched: number;
   unassigned: number;
   notBusiness: number;
+  filedToVendor: number;
   attachmentsFiled: number;
   attachmentsSkippedEmbedded: number;
   attachmentsSkippedDuplicate: number;
@@ -56,28 +68,42 @@ export interface GmailFullSyncSummary {
 }
 
 /**
- * Full-mailbox sync: every message (sent and received, not just attachments),
- * full body stored and sanitized, grouped into threads, classified as
- * matched/unassigned/not-business, and summarized. Safe to call repeatedly —
- * every dedup check runs on the Gmail message id before any write, so a
- * scheduled poll and a manual "sync now" can never double-file a message.
+ * Full-mailbox sync for one connected mailbox: every message (sent and
+ * received, not just attachments), full body stored and sanitized, grouped
+ * into threads, classified as matched/unassigned/not-business/vendor, and
+ * summarized. Safe to call repeatedly — every dedup check runs on both the
+ * Gmail message id and the RFC822 Message-ID header before any write, so a
+ * scheduled poll, a manual "sync now", and the same email arriving in two
+ * connected mailboxes can never double-file a message.
+ *
+ * For steve.schultz@ specifically (see ALLOWLIST_FILTERED_MAILBOXES), a
+ * message whose counterparty addresses don't resolve against the reviewed
+ * allow-list is skipped before anything is read out of its body — no
+ * subject, sender, or body is stored, and `messagesSkippedNotAllowlisted` is
+ * the only trace it leaves, a plain count with nothing identifying in it.
  *
  * State is tracked under `${mailbox}#full` in gmail_import_state, kept
  * separate from the original has:attachment-only importer's row so neither
  * overwrites the other's progress marker.
  */
-export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
-  const profile = await getGmailProfile();
-  const mailbox = profile.emailAddress;
+export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSummary> {
+  const profile = await getGmailProfile(mailbox);
+  if (profile.emailAddress.toLowerCase() !== mailbox.toLowerCase()) {
+    throw new Error(`Connected account for ${mailbox} authenticates as ${profile.emailAddress} — refusing to sync under a mismatched identity.`);
+  }
+  const filterForAllowlist = ALLOWLIST_FILTERED_MAILBOXES.has(mailbox.toLowerCase());
   const stateKey = `${mailbox}#full`;
   const summary: GmailFullSyncSummary = {
     mailbox,
     messagesScanned: 0,
     messagesNew: 0,
+    messagesSkippedNotAllowlisted: 0,
+    messagesSkippedDuplicateAcrossMailboxes: 0,
     threadsTouched: 0,
     matched: 0,
     unassigned: 0,
     notBusiness: 0,
+    filedToVendor: 0,
     attachmentsFiled: 0,
     attachmentsSkippedEmbedded: 0,
     attachmentsSkippedDuplicate: 0,
@@ -112,7 +138,7 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
     // it, since Gmail's pageToken only lets you resume at the next page,
     // not partway through one. A little overrun past MAX_MESSAGES_PER_RUN
     // (up to one page's worth) is the trade for never dropping a message.
-    const page = await searchMessageIds(query, pageToken, 100);
+    const page = await searchMessageIds(mailbox, query, pageToken, 100);
     for (const ref of page.messages || []) {
       summary.messagesScanned++;
 
@@ -120,11 +146,36 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
         const already = await storage.getGmailMessageByGmailId(ref.id);
         if (already) continue; // already synced this message
 
-        const full = await getMessageFull(ref.id);
+        const full = await getMessageFull(mailbox, ref.id);
         const fromHeader = getHeader(full.payload, "From") || "";
         const fromParsed = parseAddressList(fromHeader)[0] || { name: null, email: "unknown@unknown.com" };
         const toEmails = parseAddressList(getHeader(full.payload, "To")).map((a) => a.email);
         const ccEmails = parseAddressList(getHeader(full.payload, "Cc")).map((a) => a.email);
+        const messageIdHeader = getHeader(full.payload, "Message-ID") || getHeader(full.payload, "Message-Id");
+
+        // Steve's mailbox: decide purely from headers, before the body is
+        // ever read, whether this message's counterparties are a known
+        // business contact. Anything else is skipped with zero trace.
+        if (filterForAllowlist) {
+          const { allowed } = await checkAllowlist([fromParsed.email, ...toEmails, ...ccEmails]);
+          if (!allowed) {
+            summary.messagesSkippedNotAllowlisted++;
+            continue;
+          }
+        }
+
+        // Cross-mailbox dedupe: the same email can land in two connected
+        // mailboxes (Steve CC'd on his own send to clientservice@, or a
+        // message forwarded historically into another inbox). Gmail's
+        // per-mailbox id differs each time; the Message-ID header does not.
+        if (messageIdHeader) {
+          const existingByHeader = await storage.getGmailMessageByMessageIdHeader(messageIdHeader);
+          if (existingByHeader) {
+            summary.messagesSkippedDuplicateAcrossMailboxes++;
+            continue;
+          }
+        }
+
         const subject = getHeader(full.payload, "Subject") || "(no subject)";
         const dateHeader = getHeader(full.payload, "Date");
         const sentAt = dateHeader ? new Date(dateHeader) : new Date(Number(full.internalDate));
@@ -170,6 +221,7 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
           sentAt,
           direction,
           hasAttachments: realAttachmentRefs.length > 0,
+          messageIdHeader,
         } as any);
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
@@ -201,7 +253,7 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
 
           let filedAsDocumentId: number | null = null;
           if (clientId) {
-            const bytes = await getAttachmentBytes(ref.id, attRef.attachmentId);
+            const bytes = await getAttachmentBytes(mailbox, ref.id, attRef.attachmentId);
             const contentHash = hashBuffer(bytes);
             const existingDoc = await storage.findDocumentByContentHash(clientId, contentHash);
             if (existingDoc) {
@@ -261,6 +313,7 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
 
       const existingClientIds = await storage.getGmailThreadClientIds(threadId);
       let businessStatus = thread.businessStatus;
+      let filesToVendor = thread.filesToVendor;
       if (existingClientIds.length === 0) {
         const latest = messages[messages.length - 1];
         const matches = await matchEmailToClients(
@@ -270,12 +323,28 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
         if (matches.length > 0) {
           await storage.setGmailThreadClients(threadId, matches.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
           businessStatus = "MATCHED";
+          filesToVendor = false;
         } else {
-          const { isBusiness } = await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "");
-          businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
+          // Doesn't resolve to a client — check whether the counterparty is
+          // one of the 90 Degree Benefits vendor contacts before falling
+          // back to the AI relevance classifier. A vendor thread that also
+          // matched a client above is filed to the client instead (handled
+          // in the branch above), per the rule that a group-specific
+          // message belongs to that group even when 90DB is on it.
+          const allAddresses = messages.flatMap((m) => [m.fromEmail, ...((m.toEmails as string[] | null) || []), ...((m.ccEmails as string[] | null) || [])]);
+          const isVendorThread = await isVendorCorrespondence(allAddresses);
+          if (isVendorThread) {
+            businessStatus = "UNASSIGNED";
+            filesToVendor = true;
+          } else {
+            const { isBusiness } = await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "");
+            businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
+            filesToVendor = false;
+          }
         }
       } else {
         businessStatus = "MATCHED";
+        filesToVendor = false;
       }
 
       // Summaries are built from each message's new text only (quoted
@@ -300,10 +369,11 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
         }
       }
 
-      await storage.updateGmailThread(threadId, { businessStatus, ...summaryUpdate } as any);
+      await storage.updateGmailThread(threadId, { businessStatus, filesToVendor, ...summaryUpdate } as any);
       if (businessStatus === "MATCHED") summary.matched++;
       else if (businessStatus === "NOT_BUSINESS") summary.notBusiness++;
       else summary.unassigned++;
+      if (filesToVendor) summary.filedToVendor++;
     } catch (err: any) {
       summary.errors.push(`thread ${threadId} classify/summarize: ${err?.message || String(err)}`);
     }
@@ -314,8 +384,30 @@ export async function runGmailFullSync(): Promise<GmailFullSyncSummary> {
     backfillStartDate: new Date(backfillFloorEpoch * 1000),
     lastProcessedInternalDate: finalPageToken || null,
     lastRunAt: new Date(),
-    lastRunSummary: `${summary.messagesScanned} scanned, ${summary.messagesNew} new, ${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business), ${summary.attachmentsFiled} attachments filed, ${summary.errors.length} errors.`,
+    lastRunSummary: `${summary.messagesScanned} scanned, ${summary.messagesNew} new${filterForAllowlist ? `, ${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)` : ""}, ${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates, ${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits), ${summary.attachmentsFiled} attachments filed, ${summary.errors.length} errors.`,
   });
+  await storage.recordGmailAccountSync(mailbox, summary.errors.length ? `Completed with ${summary.errors.length} error(s)` : "Synced successfully");
 
   return summary;
+}
+
+/** Runs the sync for every currently-connected mailbox, one after another. A failure on one mailbox (e.g. NEEDS_REAUTH) is recorded and does not stop the others. */
+export async function runGmailFullSyncAllMailboxes(): Promise<GmailFullSyncSummary[]> {
+  const accounts = await storage.getGmailAccounts();
+  const results: GmailFullSyncSummary[] = [];
+  for (const account of accounts) {
+    if (account.status !== "CONNECTED") continue;
+    try {
+      results.push(await runGmailFullSync(account.mailbox));
+    } catch (err: any) {
+      results.push({
+        mailbox: account.mailbox,
+        messagesScanned: 0, messagesNew: 0, messagesSkippedNotAllowlisted: 0, messagesSkippedDuplicateAcrossMailboxes: 0,
+        threadsTouched: 0, matched: 0, unassigned: 0, notBusiness: 0, filedToVendor: 0,
+        attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, summariesGenerated: 0,
+        errors: [err?.message || String(err)],
+      });
+    }
+  }
+  return results;
 }
