@@ -6,6 +6,9 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
+  sendingIdentities, userSendingIdentities,
+  type SendingIdentity, type InsertSendingIdentity,
+  type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
@@ -2869,6 +2872,112 @@ export class DatabaseStorage implements IStorage {
     await db.delete(documentFieldProposals).where(inArray(documentFieldProposals.documentId, ids));
     await db.delete(documents).where(inArray(documents.id, ids));
     return { deleted: ids.length, documentIds: ids };
+  }
+
+  // ── Sending identities & per-user send permissions ──────────────────────
+
+  async getAllSendingIdentities(): Promise<SendingIdentity[]> {
+    return db.select().from(sendingIdentities).orderBy(asc(sendingIdentities.email));
+  }
+
+  async getSendingIdentity(id: number): Promise<SendingIdentity | undefined> {
+    const [row] = await db.select().from(sendingIdentities).where(eq(sendingIdentities.id, id));
+    return row;
+  }
+
+  async getSendingIdentityByEmail(email: string): Promise<SendingIdentity | undefined> {
+    const [row] = await db.select().from(sendingIdentities).where(eq(sendingIdentities.email, email.toLowerCase()));
+    return row;
+  }
+
+  async createSendingIdentity(data: InsertSendingIdentity): Promise<SendingIdentity> {
+    const [row] = await db.insert(sendingIdentities).values({ ...data, email: data.email.toLowerCase() }).returning();
+    return row;
+  }
+
+  async updateSendingIdentitySignature(id: number, signature: string): Promise<SendingIdentity | undefined> {
+    const [row] = await db.update(sendingIdentities).set({ signature }).where(eq(sendingIdentities.id, id)).returning();
+    return row;
+  }
+
+  /** Identities a given user is permitted to send as. The permission check itself lives in this table, never in an if/else on name or role. */
+  async getSendingIdentitiesForUser(userId: number): Promise<SendingIdentity[]> {
+    const rows = await db.select({ identity: sendingIdentities })
+      .from(userSendingIdentities)
+      .innerJoin(sendingIdentities, eq(userSendingIdentities.sendingIdentityId, sendingIdentities.id))
+      .where(and(eq(userSendingIdentities.userId, userId), eq(sendingIdentities.isActive, true)));
+    return rows.map(r => r.identity);
+  }
+
+  async userMaySendAs(userId: number, identityEmail: string): Promise<boolean> {
+    const [row] = await db.select({ id: userSendingIdentities.id })
+      .from(userSendingIdentities)
+      .innerJoin(sendingIdentities, eq(userSendingIdentities.sendingIdentityId, sendingIdentities.id))
+      .where(and(
+        eq(userSendingIdentities.userId, userId),
+        eq(sendingIdentities.isActive, true),
+        eq(sendingIdentities.email, identityEmail.toLowerCase()),
+      ));
+    return !!row;
+  }
+
+  /** Full permission matrix for the admin settings screen: every user paired with the identity ids they may send as. */
+  async getAllUserSendingIdentities(): Promise<UserSendingIdentity[]> {
+    return db.select().from(userSendingIdentities);
+  }
+
+  /** Replaces one user's entire permitted-identity set in a single transaction, so a partial save never leaves them with zero or duplicate rows. */
+  async setUserSendingIdentities(userId: number, identityIds: number[]): Promise<void> {
+    await db.transaction(async tx => {
+      await tx.delete(userSendingIdentities).where(eq(userSendingIdentities.userId, userId));
+      if (identityIds.length === 0) return;
+      await tx.insert(userSendingIdentities).values(identityIds.map(sendingIdentityId => ({ userId, sendingIdentityId })));
+    });
+  }
+
+  /**
+   * Logs a message the CRM actually sent through Mailgun. Auto-resolved on
+   * creation (status RESOLVED) — an outbound message is already-actioned by
+   * definition and must not show up in the ACTIVE triage feed asking someone
+   * to work it.
+   */
+  async createOutboundCommunication(data: {
+    subject: string | null;
+    fromEmail: string;
+    fromName: string;
+    to: string[];
+    bodyText: string;
+    replyToEmail: string | null;
+    sentByUserId: number;
+    sentByUserName: string;
+    clientIds: number[];
+  }): Promise<Communication> {
+    const domain = data.fromEmail.split("@")[1]?.toLowerCase() || null;
+    const [comm] = await db.insert(communications).values({
+      subject: data.subject || "(no subject)",
+      senderEmail: data.fromEmail.toLowerCase(),
+      senderName: data.fromName,
+      senderDomain: domain,
+      bodyText: data.bodyText,
+      bodyHtml: null,
+      isInternal: false,
+      isUnmatched: data.clientIds.length === 0,
+      source: "sent",
+      direction: "OUTBOUND",
+      recipientEmails: data.to.map(e => e.toLowerCase()),
+      replyToEmail: data.replyToEmail,
+      sentByUserId: data.sentByUserId,
+      sentByUserName: data.sentByUserName,
+      status: "RESOLVED",
+      resolutionType: "SENT",
+      resolutionNote: `Sent by ${data.sentByUserName}.`,
+      resolvedAt: new Date(),
+      resolvedBy: data.sentByUserName,
+    }).returning();
+    if (data.clientIds.length > 0) {
+      await this.assignCommunicationToClients(comm.id, data.clientIds.map(clientId => ({ clientId, confidence: "manual" })));
+    }
+    return comm;
   }
 }
 

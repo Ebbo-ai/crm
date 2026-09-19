@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { ResolveDialog } from "@/components/resolution-dialogs";
@@ -46,6 +47,17 @@ interface Communication {
   followUpReason: string | null;
   attachments: CommAttachment[];
   tasks: TaskLike[];
+  direction: "INBOUND" | "OUTBOUND";
+  recipientEmails: string[];
+  replyToEmail: string | null;
+  sentByUserName: string | null;
+}
+
+interface SendingIdentity {
+  id: number;
+  email: string;
+  displayName: string;
+  signature: string | null;
 }
 
 /** Inline free-form task, for the things the AI did not spot. */
@@ -144,6 +156,7 @@ function CommCard({
     onError: (e: any) => toast({ title: "Could not resolve", description: e.message, variant: "destructive" }),
   });
 
+  const isOutbound = comm.direction === "OUTBOUND";
   const senderLabel = comm.senderName || comm.senderEmail;
   const timeAgo = formatDistanceToNow(new Date(comm.receivedAt), { addSuffix: true });
   const isResolved = comm.status === "RESOLVED";
@@ -166,7 +179,9 @@ function CommCard({
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-foreground" data-testid={`text-sender-${comm.id}`}>{senderLabel}</span>
+                  <span className="text-sm font-semibold text-foreground" data-testid={`text-sender-${comm.id}`}>
+                    {isOutbound ? `To: ${comm.recipientEmails?.[0] || "?"}` : senderLabel}
+                  </span>
                   {comm.isFollowUp && !isResolved && (
                     <span className="inline-flex items-center gap-1 text-xs font-bold text-danger uppercase tracking-wide">
                       <AlertTriangle className="w-3 h-3" /> Chasing us
@@ -174,10 +189,16 @@ function CommCard({
                   )}
                   {comm.isInternal && <Badge variant="outline" className="text-xs h-4 px-1.5 border-brand text-brand">Internal</Badge>}
                   {comm.source === "manual" && <Badge variant="outline" className="text-xs h-4 px-1.5 border-muted-foreground text-muted-foreground">Manual</Badge>}
-                  {comm.senderDomain && !comm.isInternal && (
+                  {isOutbound && <Badge variant="outline" className="text-xs h-4 px-1.5 border-success text-success">Sent</Badge>}
+                  {comm.senderDomain && !comm.isInternal && !isOutbound && (
                     <span className="text-xs text-muted-foreground">@{comm.senderDomain}</span>
                   )}
                 </div>
+                {isOutbound && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    From {senderLabel}{comm.sentByUserName && comm.sentByUserName !== comm.senderName ? ` — sent by ${comm.sentByUserName}` : ""}
+                  </p>
+                )}
                 <p className="text-sm text-foreground font-medium mt-0.5 truncate">{comm.subject || "(no subject)"}</p>
                 <p className="text-xs text-muted-foreground mt-0.5" title={format(new Date(comm.receivedAt), "PPpp")}>{timeAgo}</p>
               </div>
@@ -390,8 +411,98 @@ function AddManualDialog({ clientId, onClose }: { clientId: number; onClose: () 
   );
 }
 
+function SendMessageDialog({ clientId, defaultTo, onClose }: { clientId: number; defaultTo: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const { data: identities = [] } = useQuery<SendingIdentity[]>({ queryKey: ["/api/sending-identities/mine"] });
+  const [fromIdentityId, setFromIdentityId] = useState<string>("");
+  const [form, setForm] = useState({ to: defaultTo, subject: "", bodyText: "" });
+
+  useEffect(() => {
+    if (!fromIdentityId && identities.length > 0) setFromIdentityId(String(identities[0].id));
+  }, [identities, fromIdentityId]);
+
+  const selected = identities.find(i => String(i.id) === fromIdentityId);
+
+  const send = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/communications/send", {
+      fromIdentityId: Number(fromIdentityId),
+      to: form.to.split(",").map(s => s.trim()).filter(Boolean),
+      subject: form.subject,
+      bodyText: form.bodyText,
+      clientIds: [clientId],
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", String(clientId), "communications"] });
+      toast({ title: "Message sent" });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Could not send", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Send a message</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">From</Label>
+              <Select value={fromIdentityId} onValueChange={setFromIdentityId}>
+                <SelectTrigger className="mt-1" data-testid="select-from-identity">
+                  <SelectValue placeholder="Choose sending address" />
+                </SelectTrigger>
+                <SelectContent>
+                  {identities.map(i => (
+                    <SelectItem key={i.id} value={String(i.id)}>{i.displayName} &lt;{i.email}&gt;</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {identities.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-1">You have no sending addresses set up yet — ask an admin in Settings.</p>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs">To *</Label>
+              <Input value={form.to} onChange={e => setForm(f => ({ ...f, to: e.target.value }))}
+                placeholder="broker@example.com" className="mt-1" data-testid="input-send-to" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Subject</Label>
+            <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
+              placeholder="Re: 2027 dental renewal" className="mt-1" data-testid="input-send-subject" />
+          </div>
+          <div>
+            <Label className="text-xs">Message *</Label>
+            <Textarea value={form.bodyText} onChange={e => setForm(f => ({ ...f, bodyText: e.target.value }))}
+              rows={8} className="mt-1 text-sm" data-testid="textarea-send-body" />
+            {selected?.signature && (
+              <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">Signature added automatically:{"\n"}{selected.signature}</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} data-testid="button-cancel-send">Cancel</Button>
+            <Button
+              onClick={() => send.mutate()}
+              disabled={!fromIdentityId || !form.to.trim() || !form.bodyText.trim() || send.isPending}
+              className="bg-brand text-brand-foreground gap-2"
+              data-testid="button-submit-send"
+            >
+              {send.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {send.isPending ? "Sending..." : "Send"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function CommunicationsTab({ clientId, focusCommId = null }: { clientId: number; focusCommId?: number | null }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [showSend, setShowSend] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [askLoading, setAskLoading] = useState(false);
@@ -493,10 +604,16 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
             Resolved {isLoading ? "" : `(${resolved.length})`}
           </button>
         </div>
-        <Button onClick={() => setShowAdd(true)} variant="outline" size="sm"
-          className="gap-1.5 text-brand border-brand" data-testid="button-add-communication">
-          <Plus className="w-3.5 h-3.5" /> Add Communication
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowSend(true)} size="sm"
+            className="gap-1.5 bg-brand text-brand-foreground" data-testid="button-send-message">
+            <Send className="w-3.5 h-3.5" /> Send Message
+          </Button>
+          <Button onClick={() => setShowAdd(true)} variant="outline" size="sm"
+            className="gap-1.5 text-brand border-brand" data-testid="button-add-communication">
+            <Plus className="w-3.5 h-3.5" /> Add Communication
+          </Button>
+        </div>
       </div>
 
       {/* Work captured by hand: a phone call, a conversation. There is no
@@ -557,6 +674,7 @@ export default function CommunicationsTab({ clientId, focusCommId = null }: { cl
       )}
 
       {showAdd && <AddManualDialog clientId={clientId} onClose={() => setShowAdd(false)} />}
+      {showSend && <SendMessageDialog clientId={clientId} defaultTo="" onClose={() => setShowSend(false)} />}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import {
   ResetNotConfirmedError,
 } from "./data-reset";
 import { matchEmailToClients, matchTextToClients, processEmail, queryClientCommunications, findDuplicateTask } from "./claude";
+import { sendEmail } from "./mailer";
 import { buildClientRefs } from "./client-context";
 import bcrypt from "bcryptjs";
 import multer from "multer";
@@ -3308,6 +3309,136 @@ export async function registerRoutes(
       console.error("[email-inbound] Fatal error processing webhook:", err?.message || err);
       // Return 5xx so Mailgun's automatic retry fires instead of treating this as delivered
       return res.status(500).json({ message: "Internal error processing email" });
+    }
+  });
+
+  // ─── Sending identities & per-user send permissions ────────────────────────
+
+  /** Identities the logged-in user is permitted to send as, each with its own editable signature. */
+  app.get("/api/sending-identities/mine", requireAuth, async (req, res) => {
+    try {
+      res.json(await storage.getSendingIdentitiesForUser((req.user as any).id));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Every identity the user is permitted to send as may have its signature edited by that user — permission to send as an address implies permission to sign it. */
+  app.patch("/api/sending-identities/:id/signature", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const identity = await storage.getSendingIdentity(id);
+      if (!identity) return res.status(404).json({ message: "Not found" });
+      const allowed = (req.user as any).role === "ADMIN" || await storage.userMaySendAs((req.user as any).id, identity.email);
+      if (!allowed) return res.status(403).json({ message: "You may not edit this identity's signature" });
+      const { signature } = req.body;
+      res.json(await storage.updateSendingIdentitySignature(id, signature ?? ""));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Admin: the full list of identities, for the settings screen. */
+  app.get("/api/sending-identities", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getAllSendingIdentities());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/sending-identities", requireAdmin, async (req, res) => {
+    try {
+      const { email, displayName, signature } = req.body;
+      if (!email || !displayName) return res.status(400).json({ message: "email and displayName are required" });
+      res.status(201).json(await storage.createSendingIdentity({ email, displayName, signature: signature ?? null, isActive: true }));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Admin: the full user × identity permission matrix, data-backed rather than hardcoded so a new user or address never needs a code change. */
+  app.get("/api/sending-permissions", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await storage.getAllUserSendingIdentities());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/sending-permissions/:userId", requireAdmin, async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const identityIds: number[] = Array.isArray(req.body.identityIds) ? req.body.identityIds.map(Number) : [];
+      await storage.setUserSendingIdentities(userId, identityIds);
+      res.json({ message: "Updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * Sends a message from the CRM as one of the logged-in user's permitted
+   * identities. The From address is checked against the permission table
+   * here — server-side — regardless of what the client sent; a disallowed
+   * From is rejected even if it slipped past a stale UI.
+   *
+   * When the identity used isn't the sender's own login address (covering
+   * for someone, or sending as the shared clientservice@ box), Reply-To is
+   * set to clientservice@simple.us so the reply lands on the shared mailbox
+   * rather than only the person who happened to hit Send. A copy is BCC'd to
+   * the identity's own mailbox so it has a record of its own outbound mail
+   * once Gmail sync is watching that box (Mailgun's API leaves no Sent-folder
+   * copy in Gmail the way sending through Gmail itself would).
+   */
+  app.post("/api/communications/send", requireAuth, async (req, res) => {
+    try {
+      const { fromIdentityId, to, subject, bodyText, clientIds } = req.body;
+      const user = req.user as any;
+      if (!fromIdentityId || !to || !bodyText) {
+        return res.status(400).json({ message: "fromIdentityId, to and bodyText are required" });
+      }
+      const identity = await storage.getSendingIdentity(parseInt(fromIdentityId));
+      if (!identity || !identity.isActive) return res.status(400).json({ message: "Unknown sending identity" });
+
+      const allowed = await storage.userMaySendAs(user.id, identity.email);
+      if (!allowed) {
+        return res.status(403).json({ message: `You are not permitted to send as ${identity.email}` });
+      }
+
+      const toList: string[] = Array.isArray(to) ? to : [to];
+      const isOwnAddress = identity.email.toLowerCase() === String(user.email).toLowerCase();
+      const CLIENT_SERVICE_ADDRESS = "clientservice@simple.us";
+      const replyTo = !isOwnAddress && identity.email.toLowerCase() !== CLIENT_SERVICE_ADDRESS ? CLIENT_SERVICE_ADDRESS : undefined;
+
+      const signatureBlock = identity.signature ? `\n\n${identity.signature}` : "";
+      const text = `${bodyText}${signatureBlock}`;
+
+      const result = await sendEmail({
+        from: `${identity.displayName} <${identity.email}>`,
+        to: toList,
+        subject: subject || "(no subject)",
+        text,
+        replyTo,
+        bcc: identity.email,
+      });
+      if (!result.ok) return res.status(502).json({ message: result.error });
+
+      const parsedClientIds: number[] = Array.isArray(clientIds) ? clientIds.map(Number).filter(Boolean) : [];
+      const comm = await storage.createOutboundCommunication({
+        subject: subject || null,
+        fromEmail: identity.email,
+        fromName: identity.displayName,
+        to: toList,
+        bodyText: text,
+        replyToEmail: replyTo || null,
+        sentByUserId: user.id,
+        sentByUserName: user.fullName,
+        clientIds: parsedClientIds,
+      });
+      res.status(201).json(comm);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 

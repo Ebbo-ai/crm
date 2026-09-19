@@ -11,6 +11,7 @@ import ClientsPage from "@/pages/clients";
 import ClientFormPage from "@/pages/client-form";
 import ClientDetailPage from "@/pages/client-detail";
 import SettingsUsersPage from "@/pages/settings-users";
+import SettingsSendingPage from "@/pages/settings-sending";
 import IssuesPage from "@/pages/issues";
 import InboxPage from "@/pages/inbox";
 import GeneralPage from "@/pages/general";
@@ -74,6 +75,7 @@ function Router() {
       <Route path="/reports">{() => <ProtectedRoute component={ReportsPage} />}</Route>
       <Route path="/renewal-alerts">{() => <ProtectedRoute component={RenewalAlertsPage} />}</Route>
       <Route path="/settings/users">{() => <ProtectedRoute component={SettingsUsersPage} adminOnly />}</Route>
+      <Route path="/settings/sending">{() => <ProtectedRoute component={SettingsSendingPage} adminOnly />}</Route>
       <Route path="/settings/crm-import">{() => <ProtectedRoute component={CrmImportPage} adminOnly />}</Route>
       <Route path="/settings/data-reset">{() => <ProtectedRoute component={DataResetPage} adminOnly />}</Route>
       <Route path="/settings/gmail-import">{() => <ProtectedRoute component={GmailImportPage} adminOnly />}</Route>

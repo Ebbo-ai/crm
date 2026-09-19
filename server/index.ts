@@ -2,7 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { seedDatabase } from "./seed";
+import { seedDatabase, seedSendingIdentities } from "./seed";
 import {
   startRatingEngine,
   waitForRatingEngine,
@@ -1336,6 +1336,29 @@ app.use((req, res, next) => {
     if (quoteBackfill > 0) {
       log(`Startup migration: computed quoted-text splits for ${quoteBackfill} previously-imported Gmail message(s)`);
     }
+
+    // ── Phase 20: per-user sending identities + outbound communication log ──
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sending_identities (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        signature TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS user_sending_identities (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        sending_identity_id INTEGER NOT NULL
+      );
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'INBOUND';
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS recipient_emails JSONB NOT NULL DEFAULT '[]';
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS reply_to_email TEXT;
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS sent_by_user_id INTEGER;
+      ALTER TABLE communications ADD COLUMN IF NOT EXISTS sent_by_user_name TEXT;
+    `);
+    await seedSendingIdentities();
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }

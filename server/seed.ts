@@ -197,3 +197,42 @@ export async function seedDatabase() {
 
   console.log("Database seeded successfully");
 }
+
+/**
+ * Ensures the three known sending identities exist and grants the
+ * currently-known permissions when a matching user account is already
+ * present. Idempotent and additive only — it never deletes or overwrites a
+ * permission, so an admin's manual changes in Settings are never clobbered
+ * by a restart. If Kim/Steve's user accounts don't exist yet (fresh
+ * install), the identities are still created; permissions get assigned once
+ * those accounts exist, either by re-running this (next boot) or by the
+ * admin granting them by hand in Settings.
+ */
+export async function seedSendingIdentities() {
+  const defaults: { email: string; displayName: string }[] = [
+    { email: "kim.anderson@simple.us", displayName: "Kim Anderson" },
+    { email: "steve.schultz@simple.us", displayName: "Steve Schultz" },
+    { email: "clientservice@simple.us", displayName: "Simple Client Service" },
+  ];
+  const identityByEmail = new Map<string, { id: number }>();
+  for (const d of defaults) {
+    let identity = await storage.getSendingIdentityByEmail(d.email);
+    if (!identity) identity = await storage.createSendingIdentity({ email: d.email, displayName: d.displayName, signature: null, isActive: true });
+    identityByEmail.set(d.email, identity);
+  }
+
+  const grants: Record<string, string[]> = {
+    "kim.anderson@simple.us": ["kim.anderson@simple.us", "clientservice@simple.us"],
+    "steve.schultz@simple.us": ["kim.anderson@simple.us", "steve.schultz@simple.us", "clientservice@simple.us"],
+  };
+  for (const [userEmail, identityEmails] of Object.entries(grants)) {
+    const user = await storage.getUserByEmail(userEmail);
+    if (!user) continue; // account not created yet; nothing to grant against
+    const already = await storage.getSendingIdentitiesForUser(user.id);
+    const alreadyEmails = new Set(already.map(i => i.email));
+    const toGrant = identityEmails.filter(e => !alreadyEmails.has(e));
+    if (toGrant.length === 0) continue;
+    const ids = [...already.map(i => i.id), ...toGrant.map(e => identityByEmail.get(e)!.id)];
+    await storage.setUserSendingIdentities(user.id, ids);
+  }
+}

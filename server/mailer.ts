@@ -1,12 +1,16 @@
 /**
  * Outbound mail, sent through Mailgun's HTTP API on the mg.simple.us sending
  * domain (SPF, DKIM and the tracking CNAME are verified there). From
- * addresses live on simple.us itself (renewals@, kim.anderson@) — Mailgun
- * sends on their behalf the same way any transactional sender does, it does
- * not need to receive mail for that domain.
+ * addresses live on simple.us itself (clientservice@ — the shared general
+ * client-service identity, kim.anderson@, steve.schultz@) — Mailgun sends on
+ * their behalf the same way any transactional sender does, it does not need
+ * to receive mail for that domain.
  *
  * mg.simple.us has no verified receiving MX, so this module is send-only.
- * Replies to renewals@ / kim.anderson@ land in Google Workspace, not here.
+ * Replies land in Google Workspace, not here: kim.anderson@ and
+ * steve.schultz@ are each read by their own person, and clientservice@ is a
+ * real Workspace mailbox delegated to both, picked up by the Gmail sync like
+ * any other mailbox once it is connected.
  */
 
 const MAILGUN_SENDING_DOMAIN = "mg.simple.us";
@@ -21,6 +25,17 @@ export interface OutboundEmail {
   subject: string;
   text: string;
   html?: string;
+  /** Set when the sender is covering for another identity, so a reply lands on the shared mailbox instead of one person's alone. */
+  replyTo?: string;
+  /**
+   * Delivers a copy to the sending mailbox itself. Sending through Mailgun's
+   * API (rather than through Gmail's own SMTP relay) leaves no Sent-folder
+   * copy in Gmail, so a shared identity like clientservice@ would otherwise
+   * have no record of its own outbound mail once Gmail sync starts reading
+   * it — the CRM's own communication log is the only trace. BCC-ing the
+   * mailbox closes that gap.
+   */
+  bcc?: string;
 }
 
 /**
@@ -42,6 +57,8 @@ export async function sendEmail(email: OutboundEmail): Promise<{ ok: true } | { 
   form.set("subject", email.subject);
   form.set("text", email.text);
   if (email.html) form.set("html", email.html);
+  if (email.replyTo) form.set("h:Reply-To", email.replyTo);
+  if (email.bcc) form.set("bcc", email.bcc);
 
   try {
     const res = await fetch(`https://api.mailgun.net/v3/${MAILGUN_SENDING_DOMAIN}/messages`, {

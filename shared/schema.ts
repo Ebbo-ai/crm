@@ -416,6 +416,49 @@ export const communications = pgTable("communications", {
    */
   isFollowUp: boolean("is_follow_up").notNull().default(false),
   followUpReason: text("follow_up_reason"),
+  /**
+   * INBOUND (default, back-compat with every row imported before sending
+   * existed) | OUTBOUND for a message a staff member sent from the CRM.
+   * senderEmail/senderName hold the sending identity (From address) for both
+   * directions, so the list renders uniformly either way.
+   */
+  direction: text("direction").notNull().default("INBOUND"),
+  /** Outbound only: who the message was sent to. */
+  recipientEmails: jsonb("recipient_emails").notNull().default([]),
+  /** Outbound only: set when the logged-in user is not the identity's own owner, so replies land on the shared mailbox instead of only the person being covered for. */
+  replyToEmail: text("reply_to_email"),
+  /**
+   * Outbound only: the user actually logged in and clicking Send — distinct
+   * from senderEmail, which is the identity chosen (possibly someone else's,
+   * e.g. Steve covering for Kim). Both userId and a mirrored name are kept:
+   * the name survives a deactivated account, matching the pattern used for
+   * task/resolution attribution elsewhere in this app.
+   */
+  sentByUserId: integer("sent_by_user_id"),
+  sentByUserName: text("sent_by_user_name"),
+});
+
+/**
+ * A mailbox a staff member can send as from the CRM (kim.anderson@simple.us,
+ * clientservice@simple.us, ...). Data, not an enum or hardcoded conditional,
+ * so a new address or a new user never requires a code change — see
+ * userSendingIdentities for who may use each one.
+ */
+export const sendingIdentities = pgTable("sending_identities", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  /** Editable per identity — Kim's signature on kim.anderson@ is hers alone, independent of who else is permitted to send as that address. */
+  signature: text("signature"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** Which users may send as which identities. The permission check lives here, not in code. */
+export const userSendingIdentities = pgTable("user_sending_identities", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  sendingIdentityId: integer("sending_identity_id").notNull(),
 });
 
 export const communicationClients = pgTable("communication_clients", {
@@ -752,6 +795,8 @@ export const insertCommunicationTaskSchema = createInsertSchema(communicationTas
   id: true, createdAt: true, completedAt: true, resolvedAt: true, resolvedBy: true, todoAddedAt: true,
 });
 export const insertTaskClientSchema = createInsertSchema(taskClients).omit({ id: true });
+export const insertSendingIdentitySchema = createInsertSchema(sendingIdentities).omit({ id: true, createdAt: true });
+export const insertUserSendingIdentitySchema = createInsertSchema(userSendingIdentities).omit({ id: true });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
@@ -808,6 +853,10 @@ export type CommunicationClient = typeof communicationClients.$inferSelect;
 export type InsertCommunicationClient = z.infer<typeof insertCommunicationClientSchema>;
 export type CommunicationAttachment = typeof communicationAttachments.$inferSelect;
 export type InsertCommunicationAttachment = z.infer<typeof insertCommunicationAttachmentSchema>;
+export type SendingIdentity = typeof sendingIdentities.$inferSelect;
+export type InsertSendingIdentity = z.infer<typeof insertSendingIdentitySchema>;
+export type UserSendingIdentity = typeof userSendingIdentities.$inferSelect;
+export type InsertUserSendingIdentity = z.infer<typeof insertUserSendingIdentitySchema>;
 export type CommunicationTask = typeof communicationTasks.$inferSelect;
 export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSchema>;
 export type TaskClient = typeof taskClients.$inferSelect;

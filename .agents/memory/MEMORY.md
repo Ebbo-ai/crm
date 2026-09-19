@@ -20,3 +20,4 @@
 - [Blank vs zero in reports](report-blank-vs-zero.md) — a missing number renders blank; totals skip nulls and mark partial; preview and print are separate code paths.
 - [pdf-parse v2 API break](pdf-parse-v2-api.md) — v2 dropped the function export for a PDFParse class; the old call pattern fails at runtime, not just types.
 - [Gmail full-mail sync](gmail-full-mail-sync.md) — separate state key from the old has:attachment importer; must finish a full page before checking the run cap or a big backlog stalls sync forever.
+- [Per-user sending identities](sending-identities.md) — From-address permissions are a data table, not code; Reply-To/BCC covers Mailgun's no-Gmail-Sent-copy gap but doesn't stitch Gmail threading.
