@@ -1969,7 +1969,10 @@ export async function registerRoutes(
       }
       const redirectUri = redirectUriFor(req);
       const url = buildAuthUrl(mailbox, redirectUri);
+      const cid = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
       console.log(`[mail-accounts] connect ${mailbox} — redirect_uri=${redirectUri} host=${req.get("host")} protocol=${req.protocol}`);
+      console.log(`[mail-accounts] client_id length=${cid.length} startsWith=${JSON.stringify(cid.slice(0, 6))} endsWith=${JSON.stringify(cid.slice(-24))} hasWhitespace=${/\s/.test(cid)}`);
+      console.log(`[mail-accounts] full auth url=${url}`);
       res.redirect(url);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
