@@ -6,6 +6,7 @@ import { uploadAttachmentBytes } from "./objectStorage";
 import { sanitizeEmailHtml, textToSafeHtml } from "./gmailSanitize";
 import { splitQuotedText } from "./gmailQuoteStrip";
 import { checkAllowlist, isVendorCorrespondence } from "./mailAllowlist";
+import { isEnrichmentPaused } from "./llmUsage";
 import type { GmailMessage } from "@shared/schema";
 import {
   getGmailProfile,
@@ -76,6 +77,8 @@ export interface GmailFullSyncSummary {
   attachmentsSkippedDuplicate: number;
   summariesGenerated: number;
   tasksCreated: number;
+  /** True when the daily LLM cost ceiling was already hit at the start of this run — matching, classification, action-item extraction and summaries were all skipped, but message ingestion still ran in full. */
+  enrichmentPaused: boolean;
   errors: string[];
 }
 
@@ -121,8 +124,19 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
     attachmentsSkippedDuplicate: 0,
     summariesGenerated: 0,
     tasksCreated: 0,
+    enrichmentPaused: false,
     errors: [],
   };
+
+  // Checked once per run, not once per call: cheap, and stable behaviour
+  // across a single sync rather than flipping mid-run. Only gates the four
+  // LLM calls below — message/attachment ingestion always proceeds.
+  const enrichmentGate = await isEnrichmentPaused();
+  if (enrichmentGate.paused) {
+    summary.enrichmentPaused = true;
+    console.warn(`[gmailFullSync] LLM enrichment paused for ${mailbox}: today's spend $${enrichmentGate.todaySpend.toFixed(2)} has reached the $${enrichmentGate.ceiling.toFixed(2)} daily ceiling. Ingesting mail without matching/classifying/summarizing until the ceiling resets or is raised.`);
+  }
+  const usageCtx = { mailbox };
 
   const state = await storage.getGmailImportState(stateKey);
   const backfillFloorEpoch = monthsAgoEpochSeconds(BACKFILL_MONTHS);
@@ -272,7 +286,9 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
             continue;
           }
 
-          const matches = await matchEmailToClients(`From: ${fromHeader}\nSubject: ${subject}\n\n${bodyText.slice(0, 1000)}`, clientRefs);
+          const matches = enrichmentGate.paused
+            ? []
+            : await matchEmailToClients(`From: ${fromHeader}\nSubject: ${subject}\n\n${bodyText.slice(0, 1000)}`, clientRefs, usageCtx);
           const clientId = matches[0]?.clientId;
 
           let filedAsDocumentId: number | null = null;
@@ -338,10 +354,13 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       let existingClientIds = await storage.getGmailThreadClientIds(threadId);
       let businessStatus = thread.businessStatus;
       if (existingClientIds.length === 0) {
-        const matches = await matchEmailToClients(
-          `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
-          clientRefs,
-        );
+        const matches = enrichmentGate.paused
+          ? []
+          : await matchEmailToClients(
+              `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
+              clientRefs,
+              usageCtx,
+            );
         if (matches.length > 0) {
           await storage.setGmailThreadClients(threadId, matches.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
           existingClientIds = matches.map((m) => m.clientId);
@@ -360,7 +379,9 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
 
       if (existingClientIds.length === 0 && !filesToVendor && businessStatus !== "MATCHED") {
         const latest = messages[messages.length - 1];
-        const { isBusiness } = await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "");
+        const { isBusiness } = enrichmentGate.paused
+          ? { isBusiness: true }
+          : await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "", usageCtx);
         businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
       } else if (existingClientIds.length === 0 && businessStatus !== "MATCHED") {
         businessStatus = "UNASSIGNED";
@@ -372,7 +393,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       // correctly. Skipped entirely for NOT_BUSINESS threads (newsletters,
       // personal mail on steve.schultz@) so no task work is spent on them.
       const newMsgs = newReceivedMessagesByThread.get(threadId) || [];
-      if (newMsgs.length > 0 && businessStatus !== "NOT_BUSINESS") {
+      if (newMsgs.length > 0 && businessStatus !== "NOT_BUSINESS" && !enrichmentGate.paused) {
         for (const msg of newMsgs) {
           try {
             // Guard against ever double-creating a task for the same email.
@@ -385,7 +406,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
               if (legacyDupe) continue;
             }
             const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
-            const processed = await processEmail(fullText, []);
+            const processed = await processEmail(fullText, [], usageCtx);
             if (processed.actionItems.length === 0) continue;
 
             const owner = ownerForMailbox(mailbox);
@@ -420,10 +441,11 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       // request counted once per quoted repetition.
       const totalChars = messages.reduce((n, m) => n + (m.bodyTextNew?.length || m.bodyText?.length || 0), 0);
       let summaryUpdate: { summary?: string | null; summaryOneLine?: string | null; summaryGeneratedAt?: Date; summaryForMessageCount?: number } = {};
-      if (totalChars >= SUMMARY_MIN_CHARS && thread.summaryForMessageCount !== messages.length) {
+      if (totalChars >= SUMMARY_MIN_CHARS && thread.summaryForMessageCount !== messages.length && !enrichmentGate.paused) {
         const result = await generateThreadSummary(
           thread.subject || "",
           messages.map((m) => ({ fromName: m.fromName, fromEmail: m.fromEmail, sentAt: m.sentAt.toISOString(), bodyText: m.bodyTextNew || m.bodyText || "" })),
+          usageCtx,
         );
         if (result) {
           summaryUpdate = {
@@ -472,7 +494,7 @@ export async function runGmailFullSyncAllMailboxes(): Promise<GmailFullSyncSumma
         messagesScanned: 0, messagesNew: 0, messagesSkippedNotAllowlisted: 0, messagesSkippedDuplicateAcrossMailboxes: 0,
         threadsTouched: 0, matched: 0, unassigned: 0, notBusiness: 0, filedToVendor: 0,
         attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, summariesGenerated: 0,
-        tasksCreated: 0,
+        tasksCreated: 0, enrichmentPaused: false,
         errors: [err?.message || String(err)],
       });
     }

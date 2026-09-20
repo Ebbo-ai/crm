@@ -556,6 +556,25 @@ export const communicationAttachments = pgTable("communication_attachments", {
 });
 
 /**
+ * One row per Anthropic API call made anywhere in the app, so live-sync spend
+ * is visible and can be capped instead of discovered after the fact. Written
+ * right after the call returns, from actual token usage on the response —
+ * never estimated in advance, since that would drift from what's really billed.
+ */
+export const llmUsageLog = pgTable("llm_usage_log", {
+  id: serial("id").primaryKey(),
+  /** Which mailbox's sync triggered this call, or "manual" for on-demand calls (e.g. a to-do note match) not tied to any mailbox. */
+  mailbox: text("mailbox").notNull(),
+  /** matchEmailToClients | matchTextToClients | processEmail | classifyMailRelevance | generateThreadSummary | findDuplicateTask | ocrPageImage | extractDocumentFields | queryClientCommunications */
+  callType: text("call_type").notNull(),
+  model: text("model").notNull(),
+  inputTokens: integer("input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  estimatedCostUsd: decimal("estimated_cost_usd", { precision: 10, scale: 6 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
  * Tracks Gmail backfill/import progress per mailbox so a re-run picks up
  * where it left off instead of re-downloading and re-billing Claude for
  * attachments already ingested. One row per connected mailbox.
@@ -902,6 +921,7 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({ id: tru
 export const insertGlobalDocumentSchema = createInsertSchema(globalDocuments).omit({ id: true, uploadedAt: true });
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
 export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
+export const insertLlmUsageLogSchema = createInsertSchema(llmUsageLog).omit({ id: true, createdAt: true });
 export const insertAppSettingSchema = createInsertSchema(appSettings).omit({ id: true, updatedAt: true });
 export const insertDocumentFieldProposalSchema = createInsertSchema(documentFieldProposals).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
@@ -926,6 +946,8 @@ export type InsertGlobalDocument = z.infer<typeof insertGlobalDocumentSchema>;
 export type VendorContact = typeof vendorContacts.$inferSelect;
 export type InsertVendorContact = z.infer<typeof insertVendorContactSchema>;
 export type GmailImportState = typeof gmailImportState.$inferSelect;
+export type LlmUsageLog = typeof llmUsageLog.$inferSelect;
+export type InsertLlmUsageLog = z.infer<typeof insertLlmUsageLogSchema>;
 export type InsertGmailImportState = z.infer<typeof insertGmailImportStateSchema>;
 export type DocumentFieldProposal = typeof documentFieldProposals.$inferSelect;
 export type InsertDocumentFieldProposal = z.infer<typeof insertDocumentFieldProposalSchema>;

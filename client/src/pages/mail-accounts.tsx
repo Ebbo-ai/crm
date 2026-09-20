@@ -5,8 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Link2, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, ShieldX } from "lucide-react";
-import { useEffect } from "react";
+import { Input } from "@/components/ui/input";
+import { Mail, Link2, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, ShieldX, DollarSign, PauseCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 
 interface MailAccountRow {
@@ -18,6 +19,16 @@ interface MailAccountRow {
   lastSyncSummary: string | null;
   connectedAt: string | null;
   connectedBy: string | null;
+}
+
+interface LlmUsageSummary {
+  todaySpendUsd: number;
+  ceilingUsd: number;
+  paused: boolean;
+  byMailbox: { mailbox: string; calls: number; costUsd: number }[];
+  byCallType: { callType: string; calls: number; costUsd: number }[];
+  totalCalls: number;
+  totalCostUsd: number;
 }
 
 interface AllowlistDomain {
@@ -43,9 +54,24 @@ function StatusBadge({ status }: { status: MailAccountRow["status"] }) {
 export default function MailAccountsPage() {
   const { toast } = useToast();
   const [location] = useLocation();
+  const [ceilingInput, setCeilingInput] = useState("");
 
   const accounts = useQuery<MailAccountRow[]>({ queryKey: ["/api/mail-accounts"] });
   const domains = useQuery<AllowlistDomain[]>({ queryKey: ["/api/mail-allowlist/domains"] });
+  const usage = useQuery<LlmUsageSummary>({ queryKey: ["/api/llm-usage/summary"], refetchInterval: 30_000 });
+
+  const updateCeiling = useMutation({
+    mutationFn: async (ceilingUsd: number) => {
+      const res = await apiRequest("PUT", "/api/llm-usage/ceiling", { ceilingUsd });
+      return res.json() as Promise<LlmUsageSummary>;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/llm-usage/summary"], data);
+      setCeilingInput("");
+      toast({ title: "Daily ceiling updated", description: `LLM enrichment now pauses at $${data.ceilingUsd.toFixed(2)}/day.` });
+    },
+    onError: (err: any) => toast({ title: "Update failed", description: err.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -149,6 +175,106 @@ export default function MailAccountsPage() {
               </div>
             ))
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-brand" />
+              <h2 className="font-semibold text-brand">LLM usage & cost guard</h2>
+            </div>
+            {usage.data?.paused && (
+              <Badge className="bg-danger-strong text-danger-foreground gap-1" data-testid="badge-enrichment-paused">
+                <PauseCircle className="w-3 h-3" /> Enrichment paused today
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Every Claude call made by the Gmail sync (matching, classifying, action items, summaries) is logged with
+            its real token usage. When today's estimated spend reaches the ceiling, matching/classifying/summarizing/task-extraction
+            pause for the rest of the day — messages keep being ingested and stored, just without AI enrichment — until spend
+            resets tomorrow or the ceiling is raised. Costs shown are estimates from published list pricing, not an actual invoice.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {usage.isLoading ? (
+            <Skeleton className="h-24" />
+          ) : usage.data ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="border border-border rounded-lg px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Today's spend</p>
+                  <p className="text-lg font-semibold text-brand" data-testid="text-today-spend">${usage.data.todaySpendUsd.toFixed(2)}</p>
+                </div>
+                <div className="border border-border rounded-lg px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Daily ceiling</p>
+                  <p className="text-lg font-semibold text-brand" data-testid="text-ceiling">${usage.data.ceilingUsd.toFixed(2)}</p>
+                </div>
+                <div className="border border-border rounded-lg px-4 py-3">
+                  <p className="text-xs text-muted-foreground">All-time (since guard installed)</p>
+                  <p className="text-lg font-semibold text-brand" data-testid="text-total-spend">${usage.data.totalCostUsd.toFixed(2)} <span className="text-xs font-normal text-muted-foreground">/ {usage.data.totalCalls} calls</span></p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  step="0.5"
+                  placeholder={`New ceiling (currently $${usage.data.ceilingUsd.toFixed(2)})`}
+                  value={ceilingInput}
+                  onChange={(e) => setCeilingInput(e.target.value)}
+                  className="max-w-xs"
+                  data-testid="input-ceiling"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!ceilingInput || updateCeiling.isPending}
+                  onClick={() => updateCeiling.mutate(Number(ceilingInput))}
+                  data-testid="button-update-ceiling"
+                >
+                  Update ceiling
+                </Button>
+              </div>
+
+              {usage.data.byMailbox.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">By mailbox</p>
+                  <div className="space-y-1.5">
+                    {usage.data.byMailbox.map((m) => (
+                      <div key={m.mailbox} className="flex items-center justify-between text-sm px-4 py-1.5 border border-border rounded-lg" data-testid={`row-usage-mailbox-${m.mailbox}`}>
+                        <span className="text-foreground">{m.mailbox}</span>
+                        <span className="text-muted-foreground">{m.calls} calls — ${m.costUsd.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {usage.data.byCallType.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">By call type</p>
+                  <div className="space-y-1.5">
+                    {usage.data.byCallType.map((c) => (
+                      <div key={c.callType} className="flex items-center justify-between text-sm px-4 py-1.5 border border-border rounded-lg" data-testid={`row-usage-calltype-${c.callType}`}>
+                        <span className="text-foreground">{c.callType}</span>
+                        <span className="text-muted-foreground">{c.calls} calls — ${c.costUsd.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {usage.data.totalCalls === 0 && (
+                <p className="text-sm text-muted-foreground" data-testid="text-no-usage">
+                  No LLM calls logged yet — this counter started tracking just now, so it does not include spend from before today.
+                </p>
+              )}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

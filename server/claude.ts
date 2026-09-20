@@ -1,6 +1,27 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { recordLlmCall } from "./llmUsage";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+/**
+ * Identifies which mailbox/sync run triggered a call, for the cost guard's
+ * per-mailbox breakdown. Optional and defaulted so call sites outside the
+ * Gmail sync loop (a manual to-do note, the ad-hoc "process email" route)
+ * don't have to know or care about mailbox attribution.
+ */
+export interface LlmUsageContext {
+  mailbox?: string;
+}
+
+async function logUsage(ctx: LlmUsageContext | undefined, callType: string, model: string, response: Anthropic.Message): Promise<void> {
+  await recordLlmCall({
+    mailbox: ctx?.mailbox || "manual",
+    callType,
+    model,
+    inputTokens: response.usage?.input_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
+  });
+}
 
 export interface ClientRef {
   id: number;
@@ -80,7 +101,8 @@ export interface EmailProcessResult {
 
 export async function matchEmailToClients(
   emailText: string,
-  clients: ClientRef[]
+  clients: ClientRef[],
+  usageCtx?: LlmUsageContext
 ): Promise<MatchResult[]> {
   if (!process.env.ANTHROPIC_API_KEY) return [];
 
@@ -119,6 +141,7 @@ Return ONLY the JSON array, no other text.`;
       max_tokens: 512,
       messages: [{ role: "user", content: prompt }],
     });
+    await logUsage(usageCtx, "matchEmailToClients", "claude-haiku-4-5", response);
 
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "[]";
     const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
@@ -163,7 +186,8 @@ Return ONLY the JSON array, no other text.`;
  */
 export async function matchTextToClients(
   noteText: string,
-  clients: ClientRef[]
+  clients: ClientRef[],
+  usageCtx?: LlmUsageContext
 ): Promise<MatchResult[]> {
   if (!process.env.ANTHROPIC_API_KEY) return [];
   const text = noteText.trim();
@@ -207,6 +231,7 @@ Return ONLY the JSON array, no other text.`;
       max_tokens: 512,
       messages: [{ role: "user", content: prompt }],
     });
+    await logUsage(usageCtx, "matchTextToClients", "claude-haiku-4-5", response);
 
     const raw = response.content[0].type === "text" ? response.content[0].text.trim() : "[]";
     const parsed = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
@@ -234,7 +259,8 @@ Return ONLY the JSON array, no other text.`;
 
 export async function processEmail(
   emailText: string,
-  attachmentTexts: string[]
+  attachmentTexts: string[],
+  usageCtx?: LlmUsageContext
 ): Promise<EmailProcessResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     return {
@@ -302,6 +328,7 @@ Return ONLY the JSON object, no other text.`;
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });
+    await logUsage(usageCtx, "processEmail", "claude-sonnet-4-5", response);
 
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -346,6 +373,7 @@ export async function classifyMailRelevance(
   fromEmail: string,
   subject: string,
   bodyExcerpt: string,
+  usageCtx?: LlmUsageContext,
 ): Promise<{ isBusiness: boolean }> {
   if (!process.env.ANTHROPIC_API_KEY) return { isBusiness: true };
 
@@ -368,6 +396,7 @@ When genuinely unsure, return true.`;
       max_tokens: 64,
       messages: [{ role: "user", content: prompt }],
     });
+    await logUsage(usageCtx, "classifyMailRelevance", "claude-haiku-4-5", response);
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "{}";
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
     return { isBusiness: parsed.isBusiness !== false };
@@ -392,6 +421,7 @@ export interface ThreadSummaryResult {
 export async function generateThreadSummary(
   subject: string,
   messages: { fromName: string | null; fromEmail: string; sentAt: string; bodyText: string }[],
+  usageCtx?: LlmUsageContext,
 ): Promise<ThreadSummaryResult | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
@@ -423,6 +453,7 @@ Return ONLY JSON:
       max_tokens: 512,
       messages: [{ role: "user", content: prompt }],
     });
+    await logUsage(usageCtx, "generateThreadSummary", "claude-haiku-4-5", response);
     const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
     if (!parsed.summary) return null;

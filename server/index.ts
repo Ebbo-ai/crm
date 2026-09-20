@@ -1426,6 +1426,22 @@ app.use((req, res, next) => {
       ALTER TABLE communications ADD COLUMN IF NOT EXISTS sent_by_user_name TEXT;
     `);
     await seedSendingIdentities();
+
+    // ── Phase 22: LLM cost guard — per-call usage log + configurable daily ceiling ──
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS llm_usage_log (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        call_type TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        estimated_cost_usd NUMERIC(10, 6) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_llm_usage_log_created_at ON llm_usage_log (created_at);
+      CREATE INDEX IF NOT EXISTS idx_llm_usage_log_mailbox ON llm_usage_log (mailbox);
+    `);
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }

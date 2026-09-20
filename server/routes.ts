@@ -1992,6 +1992,38 @@ export async function registerRoutes(
     }
   });
 
+  // ─── LLM cost guard: running spend, per-mailbox/call-type breakdown, configurable daily ceiling ───
+  app.get("/api/llm-usage/summary", requireAdmin, async (req, res) => {
+    try {
+      const { getUsageSummary } = await import("./llmUsage");
+      res.json(await getUsageSummary());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/llm-usage/ceiling", requireAdmin, async (req, res) => {
+    try {
+      const value = Number(req.body?.ceilingUsd);
+      if (!Number.isFinite(value) || value <= 0) {
+        return res.status(400).json({ message: "ceilingUsd must be a positive number" });
+      }
+      const { setDailyCeilingUsd, getUsageSummary } = await import("./llmUsage");
+      await setDailyCeilingUsd(value, (req.user as any)?.fullName || "admin");
+      await storage.createAuditLog({
+        userId: (req.user as any).id,
+        userName: (req.user as any).fullName,
+        action: "updated",
+        entity: "llm_daily_ceiling",
+        entityId: 0,
+        details: `Set the daily LLM spend ceiling to $${value.toFixed(2)}.`,
+      });
+      res.json(await getUsageSummary());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ─── Steve's mailbox allow-list: client/broker-derived domains, admin-reviewed before first use ───
   app.get("/api/mail-allowlist/domains", requireAdmin, async (req, res) => {
     try {
