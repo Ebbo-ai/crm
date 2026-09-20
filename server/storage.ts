@@ -713,9 +713,28 @@ export class DatabaseStorage implements IStorage {
     await db.update(communicationAttachments).set({ filedAsDocumentId: documentId }).where(eq(communicationAttachments.id, attachmentId));
   }
 
+  /**
+   * Categories that carry a "current version" concept — filing a new one
+   * supersedes the client's prior document of the same category, which is
+   * retained (never deleted) with isCurrent flipped to false. Categories
+   * outside this set (CLIENT_AGREEMENT, PROPOSAL, BROKER_* , OTHER, ...) have
+   * no such notion — a client can hold several at once — so they are left
+   * untouched.
+   */
+  private static readonly SUPERSEDING_DOCUMENT_CATEGORIES = new Set([
+    "SPD", "PPR_REPORT", "HANDOUT", "RENEWAL_PROPOSAL", "RENEWAL_ACCEPTANCE",
+    "NEW_PROPOSAL", "RATE_NOTICE", "PLAN_TRANSMITTAL",
+  ]);
+
   async createDocument(doc: InsertDocument): Promise<Document> {
-    const [created] = await db.insert(documents).values(doc).returning();
-    return created;
+    return db.transaction(async tx => {
+      if (DatabaseStorage.SUPERSEDING_DOCUMENT_CATEGORIES.has(doc.category as string)) {
+        await tx.update(documents).set({ isCurrent: false })
+          .where(and(eq(documents.clientId, doc.clientId), eq(documents.category, doc.category as any), eq(documents.isCurrent, true)));
+      }
+      const [created] = await tx.insert(documents).values(doc).returning();
+      return created;
+    });
   }
 
   async deleteDocument(id: number): Promise<void> {

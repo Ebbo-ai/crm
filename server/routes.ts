@@ -39,7 +39,6 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import crypto from "crypto";
 import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
 import { callRatingEngine, sendRatingEngineError } from "./rating-engine";
 
@@ -3250,157 +3249,13 @@ export async function registerRoutes(
   }
 
   // ─── Mailgun inbound email webhook ─────────────────────────────────────────
-  app.post("/api/email/inbound", emailUpload.any(), async (req, res) => {
-    // Verify Mailgun webhook signature if key is configured
-    const signingKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
-    if (signingKey) {
-      const { timestamp, token, signature } = req.body;
-      // A request missing any of the three signing fields is not a validly signed
-      // Mailgun call — it must be rejected, not silently waved through. Previously
-      // this branch only checked the signature when all three fields happened to be
-      // present, which let an attacker skip verification entirely by omitting them.
-      if (!timestamp || !token || !signature) {
-        console.error("[email-inbound] Missing Mailgun signature fields — rejecting");
-        return res.status(403).json({ message: "Missing Mailgun signature fields" });
-      }
-      const hmac = crypto.createHmac("sha256", signingKey);
-      hmac.update(timestamp + token);
-      const computed = hmac.digest("hex");
-      const computedBuf = Buffer.from(computed, "hex");
-      const signatureBuf = Buffer.from(String(signature), "hex");
-      const valid =
-        computedBuf.length === signatureBuf.length &&
-        crypto.timingSafeEqual(computedBuf, signatureBuf);
-      if (!valid) {
-        console.error("[email-inbound] Invalid Mailgun signature — rejecting");
-        return res.status(403).json({ message: "Invalid Mailgun signature" });
-      }
-    } else {
-      console.warn("[email-inbound] MAILGUN_WEBHOOK_SIGNING_KEY not configured — accepting unverified inbound mail");
-    }
-
-    const body = req.body;
-    const files = (req.files as Express.Multer.File[]) || [];
-
-    try {
-      const sender: string = body.sender || body.from || "";
-      const subject: string = body.subject || "(no subject)";
-      const bodyText: string = body["body-plain"] || body["stripped-text"] || body.text || "";
-      const bodyHtml: string = body["body-html"] || body["stripped-html"] || "";
-
-      // Parse sender name and email
-      const senderMatch = sender.match(/^"?([^"<]+)"?\s*<([^>]+)>$/) || [null, null, sender];
-      const senderName = senderMatch[1]?.trim() || null;
-      const senderEmail = (senderMatch[2] || sender).trim().toLowerCase();
-      const senderDomain = senderEmail.split("@")[1] || null;
-      const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
-      const isInternal = senderDomain === internalDomain;
-
-      console.log(`[email-inbound] Received from ${senderEmail || "(unknown)"}, subject: "${subject}"`);
-
-      // ── STEP 1: Save the raw email immediately so it's never lost ──────────
-      const comm = await storage.createCommunication({
-        subject,
-        senderEmail: senderEmail || "unknown@unknown.com",
-        senderName,
-        senderDomain,
-        bodyText: bodyText.slice(0, 50000),
-        bodyHtml: bodyHtml.slice(0, 50000),
-        claudeSummary: "Processing…",
-        claudeActionItems: "[]",
-        isInternal,
-        isUnmatched: true,
-        source: "email",
-        rawPayload: JSON.stringify(body).slice(0, 10000),
-      });
-      console.log(`[email-inbound] Saved communication #${comm.id} — enriching with AI…`);
-
-      // ── STEP 2: Extract attachment text ────────────────────────────────────
-      const attachmentTexts: string[] = [];
-      const attachmentMeta: { filename: string; mimeType: string; sizeBytes: number; storagePath: string; extractedText: string }[] = [];
-      for (const file of files) {
-        try {
-          const text = await extractAttachmentText(fs.readFileSync(file.path), file.mimetype, file.originalname);
-          attachmentTexts.push(text);
-          attachmentMeta.push({ filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, storagePath: file.path, extractedText: text });
-        } catch { /* skip unreadable attachments */ }
-      }
-      for (const att of attachmentMeta) {
-        await storage.createCommunicationAttachment({
-          communicationId: comm.id, filename: att.filename, mimeType: att.mimeType,
-          sizeBytes: att.sizeBytes, storagePath: att.storagePath, claudeAnalysis: att.extractedText || null,
-        });
-      }
-
-      // ── STEP 3: Claude enrichment (parallel) ───────────────────────────────
-      const fullText = `From: ${senderName ? `${senderName} <${senderEmail}>` : senderEmail}\nSubject: ${subject}\n\n${bodyText}`;
-      // Only live clients are candidates. The closed ones still carry broker firms
-      // and contact emails, so leaving them in the list lets a closed account win a
-      // domain or firm match against the active client the email is actually about.
-      // Terminating and run-out clients stay in: that is precisely when the
-      // correspondence about winding the account down arrives.
-      const clientRefs = await buildClientRefs();
-
-      const [matches, processed] = await Promise.all([
-        matchEmailToClients(fullText, clientRefs),
-        processEmail(fullText, attachmentTexts),
-      ]);
-
-      const matchSummary = matches.length === 0
-        ? "unmatched (no client found)"
-        : matches.map(m => `client #${m.clientId} (${m.confidence})`).join(", ");
-      console.log(`[email-inbound] #${comm.id} match result: ${matchSummary}`);
-
-      // ── STEP 4: Update record with Claude results ──────────────────────────
-      await storage.updateCommunication(comm.id, {
-        claudeSummary: processed.summary,
-        claudeActionItems: JSON.stringify(processed.actionItems),
-        isUnmatched: matches.length === 0,
-        isFollowUp: processed.isFollowUp,
-        followUpReason: processed.followUpReason,
-      });
-      if (processed.isFollowUp) {
-        console.log(`[email-inbound] #${comm.id} flagged as a follow-up: ${processed.followUpReason ?? "no reason given"}`);
-      }
-
-      // ── STEP 5: Assign to clients and create tasks ─────────────────────────
-      if (matches.length > 0) {
-        await storage.assignCommunicationToClients(comm.id, matches);
-        // Most incoming documents arrive as email attachments, so file them
-        // onto the client's record automatically instead of waiting for
-        // someone to notice and re-upload them by hand.
-        await autoFileAttachments(comm.id, matches[0].clientId, "System (auto-filed)");
-        // One action item is one task, however many clients it touches. It used
-        // to be written once per matched client, which meant the same job had
-        // to be resolved twice and the same note typed twice.
-        for (const item of processed.actionItems) {
-          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          const created = await storage.createTaskWithClients({
-            communicationId: comm.id, clientId: matches[0].clientId,
-            description: item.description,
-            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-          }, matches);
-          await dedupAgainstOpenTasks(created.id, matches[0].clientId, item.description);
-        }
-      } else {
-        for (const item of processed.actionItems) {
-          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-          await storage.createCommunicationTask({
-            communicationId: comm.id, clientId: null,
-            description: item.description,
-            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-          });
-        }
-      }
-
-      console.log(`[email-inbound] Completed #${comm.id} — ${matchSummary}, ${processed.actionItems.length} action item(s)`);
-      return res.status(200).json({ ok: true });
-    } catch (err: any) {
-      console.error("[email-inbound] Fatal error processing webhook:", err?.message || err);
-      // Return 5xx so Mailgun's automatic retry fires instead of treating this as delivered
-      return res.status(500).json({ message: "Internal error processing email" });
-    }
-  });
+  // NOTE: the Mailgun inbound-parse webhook ("/api/email/inbound") that used
+  // to live here has been removed. Its MX record (mg.simple.us) was never
+  // verified and never carried real traffic — see replit.md "Mail pipeline
+  // consolidation" for the record of this decision. Mailgun is retained only
+  // for outbound system mail (server/digest.ts, server/mailer.ts). All real
+  // inbound/outbound client mail now flows through the Gmail-native pipeline
+  // (server/gmailFullSync.ts).
 
   // ─── Sending identities & per-user send permissions ────────────────────────
 

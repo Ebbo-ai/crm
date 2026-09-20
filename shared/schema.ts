@@ -18,7 +18,15 @@ export const planBasisEnum = pgEnum("plan_basis", ["PROCEDURE_BASED", "DOLLAR_BA
 export const tierEnum = pgEnum("tier", ["EE", "EE_CHILD", "EE_SPOUSE", "FAMILY"]); // legacy — replaced by plan_tiers table
 export const bankingTypeEnum = pgEnum("banking_type", ["CLIENT_BANK", "NINETY_DEGREE_BANK"]);
 export const fundingTypeEnum = pgEnum("funding_type", ["REQUIRES_APPROVAL", "PROCESS_WITHOUT_APPROVAL"]);
-export const documentCategoryEnum = pgEnum("document_category", ["CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD", "RENEWAL_PROPOSAL", "PPR_REPORT", "OTHER"]);
+export const documentCategoryEnum = pgEnum("document_category", [
+  "CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD",
+  "RENEWAL_PROPOSAL", "PPR_REPORT", "OTHER",
+  // Per-client variable document types (Requirement 2 groundwork — see replit.md "Document model").
+  "SPD", "HANDOUT", "RENEWAL_ACCEPTANCE", "NEW_PROPOSAL", "RATE_NOTICE",
+  // Internal-only: admin fee breakdown. Never attach to a client/broker-facing send —
+  // enforced server-side in server/documentGuards.ts, not just a UI warning.
+  "PLAN_TRANSMITTAL",
+]);
 export const heldRowStatusEnum = pgEnum("held_row_status", ["PENDING", "ACCEPTED", "DISCARDED"]);
 export const issueStatusEnum = pgEnum("issue_status", ["ACTIVE", "RESOLVED"]);
 export const clientStatusEnum = pgEnum("client_status", ["PROSPECT", "ACTIVE", "TERMINATED"]);
@@ -326,6 +334,34 @@ export const documents = pgTable("documents", {
    * Null when neither source yields a usable date.
    */
   effectiveDate: timestamp("effective_date"),
+  /**
+   * True for the current version of this client+category document; false once
+   * superseded. Superseded documents are never deleted — a prior year's Rate
+   * Notice or Renewal Proposal stays on file, just no longer the one shown by
+   * default. Set by storage.createDocument, which flips any older row in the
+   * same clientId+category to false when a new one is filed.
+   */
+  isCurrent: boolean("is_current").notNull().default(true),
+});
+
+/**
+ * Fixed marketing/reference documents that are the same for every client
+ * (e.g. "Simple vs Traditional Plans", "Simple Plan Options") — a data-driven
+ * list, not per-client copies and not a hardcoded set in code. `category` is
+ * free text here (not the documentCategoryEnum, which describes per-client
+ * variable documents) so a new global document type never requires a schema
+ * change. `isCurrent` carries forward the same superseded-but-retained model
+ * as `documents.isCurrent`.
+ */
+export const globalDocuments = pgTable("global_documents", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  filePath: text("file_path").notNull(),
+  fileName: text("file_name").notNull(),
+  isCurrent: boolean("is_current").notNull().default(true),
+  uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+  uploadedBy: text("uploaded_by").notNull(),
 });
 
 /**
@@ -610,6 +646,13 @@ export const communicationTasks = pgTable("communication_tasks", {
    */
   communicationId: integer("communication_id"),
   /**
+   * The Gmail-native message this task came from, for tasks created off the
+   * gmail_messages/gmail_threads pipeline instead of the legacy communications
+   * webhook path. Exactly one of communicationId/gmailMessageId is set for an
+   * AI-origin task; both are null for a manually typed to-do.
+   */
+  gmailMessageId: integer("gmail_message_id"),
+  /**
    * Mirror of the first attached client, kept so older callers that expect a
    * single client keep working. `task_clients` is the truth: a task can be
    * about more than one account, and about none at all.
@@ -823,6 +866,7 @@ export const insertPlanTierSchema = createInsertSchema(planTiers).omit({ id: tru
 export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
+export const insertGlobalDocumentSchema = createInsertSchema(globalDocuments).omit({ id: true, uploadedAt: true });
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
 export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
 export const insertDocumentFieldProposalSchema = createInsertSchema(documentFieldProposals).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
@@ -843,6 +887,8 @@ export type RateCard = typeof rateCards.$inferSelect;
 export type InsertRateCard = z.infer<typeof insertRateCardSchema>;
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type GlobalDocument = typeof globalDocuments.$inferSelect;
+export type InsertGlobalDocument = z.infer<typeof insertGlobalDocumentSchema>;
 export type VendorContact = typeof vendorContacts.$inferSelect;
 export type InsertVendorContact = z.infer<typeof insertVendorContactSchema>;
 export type GmailImportState = typeof gmailImportState.$inferSelect;

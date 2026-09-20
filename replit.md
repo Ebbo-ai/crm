@@ -64,6 +64,46 @@ shared/
   Always run "Check file" first: it validates against the database inside a transaction
   and rolls back, so nothing is written until the import is run deliberately.
 
+## Mail pipeline consolidation
+The Mailgun inbound-parse webhook (`/api/email/inbound`) has been removed. Its MX
+record (mg.simple.us) was never verified and never carried real traffic, so it
+never received real client mail. All real inbound/outbound client mail flows
+through the Gmail-native pipeline (`server/gmailFullSync.ts`), which now also
+does the AI action-item/task extraction the webhook used to do. Mailgun is kept
+only for outbound system mail (digests, notifications) via `server/mailer.ts`.
+
+**Known double-write, not yet a problem today:** outbound sends
+(`/api/communications/send`) and Gmail-attachment ingestion (`server/gmailIngestion.ts`)
+still write to both the legacy `communications` table and, separately, into
+`gmailMessages`/`gmailThreads` via the full sync's own pass over the same mailbox.
+This is harmless right now because `inbox.tsx`, `communication-feed.tsx`, and
+`communications-tab.tsx` all read only from `communications` — the Gmail-native
+copy just sits alongside, unread by any screen. It becomes a visible duplicate
+the moment a future screen switches to reading `gmailMessages`/`gmailThreads`
+instead. When that happens: dedupe on `messageIdHeader` (present on both tables),
+and treat `communications` rows created before the Gmail-native pipeline existed
+as the authoritative historical record for anything that has no matching
+`gmailMessages` row (see the "Backfill Message-ID headers" project task) —
+`gmailMessages` should win for any message that exists in both.
+
+## Document model
+`documents.category` now includes per-client variable types beyond the original
+set: SPD, HANDOUT, RENEWAL_ACCEPTANCE, NEW_PROPOSAL, RATE_NOTICE, and the
+internal-only PLAN_TRANSMITTAL (carries the admin fee breakdown — never
+client/broker-facing). Filing a new document in one of these categories for a
+client flips any prior document in the same category to `isCurrent = false`
+instead of deleting it (see `DatabaseStorage.SUPERSEDING_DOCUMENT_CATEGORIES` in
+`server/storage.ts`). `globalDocuments` is a separate, data-driven table for
+fixed marketing/reference documents shared by every client (e.g. "Simple vs
+Traditional Plans") — not per-client copies, and not squeezed into the enum.
+
+`server/documentGuards.ts` has a pure `checkDocumentRecipientGuard` function
+that hard-blocks PLAN_TRANSMITTAL from being sent to any recipient outside
+Simple's own domain and 90 Degree Benefits. It is not wired into any route
+yet — that belongs to the future compose/attach flow (client Communications
+tab work) — but the check must be a hard block there, never a dismissible
+warning, once wired in.
+
 ## Seed Credentials
 - Email: admin@simplebenefits.com
 - Password: Admin123!

@@ -1,11 +1,12 @@
 import { storage } from "./storage";
 import { buildClientRefs } from "./client-context";
-import { matchEmailToClients, classifyMailRelevance, generateThreadSummary } from "./claude";
+import { matchEmailToClients, classifyMailRelevance, generateThreadSummary, processEmail } from "./claude";
 import { extractDocumentText, hashBuffer } from "./documentExtraction";
 import { uploadAttachmentBytes } from "./objectStorage";
 import { sanitizeEmailHtml, textToSafeHtml } from "./gmailSanitize";
 import { splitQuotedText } from "./gmailQuoteStrip";
 import { checkAllowlist, isVendorCorrespondence } from "./mailAllowlist";
+import type { GmailMessage } from "@shared/schema";
 import {
   getGmailProfile,
   searchMessageIds,
@@ -32,6 +33,16 @@ const SUMMARY_MIN_CHARS = 400;
  * full, same as before this mailbox became configurable.
  */
 const ALLOWLIST_FILTERED_MAILBOXES = new Set(["steve.schultz@simple.us"]);
+
+/** Who a task extracted from a mailbox's mail defaults to. Everything defaults to Kim, the service rep, matching the convention on communication_tasks.owner. */
+const MAILBOX_OWNERS: Record<string, string> = {
+  "kim.anderson@simple.us": "Kim Anderson",
+  "clientservice@simple.us": "Kim Anderson",
+  "steve.schultz@simple.us": "Steve Schultz",
+};
+function ownerForMailbox(mailbox: string): string {
+  return MAILBOX_OWNERS[mailbox.toLowerCase()] || "Kim Anderson";
+}
 
 function monthsAgoEpochSeconds(months: number): number {
   const d = new Date();
@@ -64,6 +75,7 @@ export interface GmailFullSyncSummary {
   attachmentsSkippedEmbedded: number;
   attachmentsSkippedDuplicate: number;
   summariesGenerated: number;
+  tasksCreated: number;
   errors: string[];
 }
 
@@ -108,6 +120,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
     attachmentsSkippedEmbedded: 0,
     attachmentsSkippedDuplicate: 0,
     summariesGenerated: 0,
+    tasksCreated: 0,
     errors: [],
   };
 
@@ -121,6 +134,12 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
   const query = `after:${afterEpoch}`;
   const clientRefs = await buildClientRefs();
   const touchedThreadIds = new Set<number>();
+  // Newly-created RECEIVED messages this run, grouped by thread, so the
+  // classify pass below can extract AI action items/tasks against them once
+  // the thread's client and vendor links are known. SENT messages never get
+  // action-item extraction — a message never generates a task off its own
+  // sender's outgoing mail.
+  const newReceivedMessagesByThread = new Map<number, GmailMessage[]>();
 
   // Resume from where the last run's page cursor left off (stored in
   // lastProcessedInternalDate, repurposed here to hold a Gmail pageToken
@@ -225,6 +244,11 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
         } as any);
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
+        if (direction === "RECEIVED") {
+          const bucket = newReceivedMessagesByThread.get(thread.id);
+          if (bucket) bucket.push(message);
+          else newReceivedMessagesByThread.set(thread.id, [message]);
+        }
 
         if (sentAt > thread.latestMessageAt) {
           await storage.updateGmailThread(thread.id, { latestMessageAt: sentAt, subject: thread.subject || subject });
@@ -311,40 +335,78 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       const messages = await storage.getGmailMessagesForThread(threadId);
       if (messages.length === 0) continue;
 
-      const existingClientIds = await storage.getGmailThreadClientIds(threadId);
+      let existingClientIds = await storage.getGmailThreadClientIds(threadId);
       let businessStatus = thread.businessStatus;
-      let filesToVendor = thread.filesToVendor;
       if (existingClientIds.length === 0) {
-        const latest = messages[messages.length - 1];
         const matches = await matchEmailToClients(
           `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
           clientRefs,
         );
         if (matches.length > 0) {
           await storage.setGmailThreadClients(threadId, matches.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
+          existingClientIds = matches.map((m) => m.clientId);
           businessStatus = "MATCHED";
-          filesToVendor = false;
-        } else {
-          // Doesn't resolve to a client — check whether the counterparty is
-          // one of the 90 Degree Benefits vendor contacts before falling
-          // back to the AI relevance classifier. A vendor thread that also
-          // matched a client above is filed to the client instead (handled
-          // in the branch above), per the rule that a group-specific
-          // message belongs to that group even when 90DB is on it.
-          const allAddresses = messages.flatMap((m) => [m.fromEmail, ...((m.toEmails as string[] | null) || []), ...((m.ccEmails as string[] | null) || [])]);
-          const isVendorThread = await isVendorCorrespondence(allAddresses);
-          if (isVendorThread) {
-            businessStatus = "UNASSIGNED";
-            filesToVendor = true;
-          } else {
-            const { isBusiness } = await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "");
-            businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
-            filesToVendor = false;
-          }
         }
       } else {
         businessStatus = "MATCHED";
-        filesToVendor = false;
+      }
+
+      // 90 Degree Benefits involvement is tracked independently of client
+      // matches — Steve's decision: a thread can be linked to one or more
+      // clients AND flagged as 90DB correspondence at the same time (broker/
+      // vendor mail routinely spans multiple groups), not either/or.
+      const allAddresses = messages.flatMap((m) => [m.fromEmail, ...((m.toEmails as string[] | null) || []), ...((m.ccEmails as string[] | null) || [])]);
+      const filesToVendor = await isVendorCorrespondence(allAddresses);
+
+      if (existingClientIds.length === 0 && !filesToVendor && businessStatus !== "MATCHED") {
+        const latest = messages[messages.length - 1];
+        const { isBusiness } = await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "");
+        businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
+      } else if (existingClientIds.length === 0 && businessStatus !== "MATCHED") {
+        businessStatus = "UNASSIGNED";
+      }
+
+      // ── AI action-item extraction on newly-synced inbound mail ──
+      // Only for RECEIVED messages this run, and only once the thread's
+      // client/vendor context is known so a resulting task can be linked
+      // correctly. Skipped entirely for NOT_BUSINESS threads (newsletters,
+      // personal mail on steve.schultz@) so no task work is spent on them.
+      const newMsgs = newReceivedMessagesByThread.get(threadId) || [];
+      if (newMsgs.length > 0 && businessStatus !== "NOT_BUSINESS") {
+        for (const msg of newMsgs) {
+          try {
+            // Guard against ever double-creating a task for the same email.
+            // The legacy Mailgun inbound webhook (the only other place that
+            // ran this same extraction on inbound mail) has been removed, so
+            // this should never actually find a match — kept as a defensive
+            // check on the shared Message-ID key rather than an assumption.
+            if (msg.messageIdHeader) {
+              const legacyDupe = await storage.getCommunicationByMessageIdHeader(msg.messageIdHeader);
+              if (legacyDupe) continue;
+            }
+            const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
+            const processed = await processEmail(fullText, []);
+            if (processed.actionItems.length === 0) continue;
+
+            const owner = ownerForMailbox(mailbox);
+            const clientAssignments = existingClientIds.map((clientId) => ({ clientId, confidence: "medium" }));
+            for (const item of processed.actionItems) {
+              const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+              const created = await storage.createTaskWithClients({
+                communicationId: null,
+                gmailMessageId: msg.id,
+                clientId: existingClientIds[0] ?? null,
+                description: item.description,
+                dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+                owner,
+              } as any, clientAssignments);
+              summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
+              void created;
+            }
+          } catch (err: any) {
+            summary.errors.push(`message ${msg.gmailMessageId} action-item extraction: ${err?.message || String(err)}`);
+          }
+        }
       }
 
       // Summaries are built from each message's new text only (quoted
@@ -405,6 +467,7 @@ export async function runGmailFullSyncAllMailboxes(): Promise<GmailFullSyncSumma
         messagesScanned: 0, messagesNew: 0, messagesSkippedNotAllowlisted: 0, messagesSkippedDuplicateAcrossMailboxes: 0,
         threadsTouched: 0, matched: 0, unassigned: 0, notBusiness: 0, filedToVendor: 0,
         attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, summariesGenerated: 0,
+        tasksCreated: 0,
         errors: [err?.message || String(err)],
       });
     }
