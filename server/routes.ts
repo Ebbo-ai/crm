@@ -1967,7 +1967,9 @@ export async function registerRoutes(
       if (!CONFIGURED_MAILBOXES.some(m => m.mailbox === mailbox)) {
         return res.status(400).json({ message: `${mailbox} is not one of the mailboxes this app authorizes.` });
       }
-      const url = buildAuthUrl(mailbox, redirectUriFor(req));
+      const redirectUri = redirectUriFor(req);
+      const url = buildAuthUrl(mailbox, redirectUri);
+      console.log(`[mail-accounts] connect ${mailbox} — redirect_uri=${redirectUri} host=${req.get("host")} protocol=${req.protocol}`);
       res.redirect(url);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
