@@ -1442,6 +1442,68 @@ app.use((req, res, next) => {
       CREATE INDEX IF NOT EXISTS idx_llm_usage_log_created_at ON llm_usage_log (created_at);
       CREATE INDEX IF NOT EXISTS idx_llm_usage_log_mailbox ON llm_usage_log (mailbox);
     `);
+
+    // ── Phase 23: carry Steve's allow-list domain review into every environment ──
+    // Steve reviewed and approved these 44 domains through the Settings → Mail
+    // Accounts UI, but that review only ran against whichever database was
+    // connected at the time. Re-asserting them here (ON CONFLICT DO NOTHING)
+    // means the same approved list reaches every environment this code runs
+    // in, including production on its next deploy, without asking Steve to
+    // redo a review he already completed.
+    const REVIEWED_ALLOWLIST_DOMAINS: { domain: string; source: string; sourceLabel: string }[] = [
+      { domain: "acadiabenefits.com", source: "BROKER", sourceLabel: "Jessica Rainsford" },
+      { domain: "ajg.com", source: "BROKER", sourceLabel: "Maggie Hayes" },
+      { domain: "alphaomega.coach", source: "BROKER", sourceLabel: "Alan Zeigler" },
+      { domain: "bbejaguars.org", source: "CLIENT", sourceLabel: "Belgrade Brooten Elrosa PS #2364" },
+      { domain: "benefitcompany.com", source: "BROKER", sourceLabel: "Christine Muro" },
+      { domain: "benefithealthadvisor", source: "BROKER", sourceLabel: "Travis Hopkins" },
+      { domain: "benson.k12.mn.us", source: "CLIENT", sourceLabel: "Benson ISD 777" },
+      { domain: "carriagehillinsurance.com", source: "BROKER", sourceLabel: "Chris Wampler" },
+      { domain: "clearpathbenefits.com", source: "BROKER", sourceLabel: "Stephanie Valdez" },
+      { domain: "corpsyn.com", source: "BROKER", sourceLabel: "Paul Schandel" },
+      { domain: "coverrainsurance.com", source: "BROKER", sourceLabel: "Laura Cunliffe" },
+      { domain: "crimed.com", source: "CLIENT", sourceLabel: "Consulting Radiologists, LTD." },
+      { domain: "dentalcity.com", source: "CLIENT", sourceLabel: "ICP Inc. dba Dental City" },
+      { domain: "directbenefits.biz", source: "BROKER", sourceLabel: "Dan Dixon" },
+      { domain: "elrodassociates.net", source: "BROKER", sourceLabel: "Beverly Elrod" },
+      { domain: "hubinternational.com", source: "BROKER", sourceLabel: "Alexis Stein" },
+      { domain: "jcboe.net", source: "CLIENT", sourceLabel: "Jefferson County Schools" },
+      { domain: "jicbenefits.com", source: "BROKER", sourceLabel: "Michelle Miller" },
+      { domain: "lrwebber.com", source: "BROKER", sourceLabel: "Allison Kronawetter" },
+      { domain: "marshmma.com", source: "BROKER", sourceLabel: "Teresa Gagliardi" },
+      { domain: "mndental.org", source: "CLIENT", sourceLabel: "Minnesota Dental Association" },
+      { domain: "mountainseed.com", source: "CLIENT", sourceLabel: "Mountainseed Appraisal Management, LLC." },
+      { domain: "nfp.com", source: "BROKER", sourceLabel: "Jenna Charmoli" },
+      { domain: "nisbenefits.com", source: "BROKER", sourceLabel: "Mari Wagner" },
+      { domain: "noramcomail.com", source: "CLIENT", sourceLabel: "TPG Noramco / Noramco Transport" },
+      { domain: "pattersoncompanies.com", source: "CLIENT", sourceLabel: "Patterson Dental" },
+      { domain: "pemusa.com", source: "CLIENT", sourceLabel: "Plastic Extrusion Machinery LLC" },
+      { domain: "reamesebs.com", source: "BROKER", sourceLabel: "Sarah Beaudoin" },
+      { domain: "redlake.k12.mn.us", source: "CLIENT", sourceLabel: "Red Lake Public School" },
+      { domain: "tartancompanies.com", source: "BROKER", sourceLabel: "Josh White" },
+      { domain: "tavaresconcrete.com", source: "CLIENT", sourceLabel: "Tavares Concrete Company Inc." },
+      { domain: "thebottomsgroup", source: "BROKER", sourceLabel: "Jamie Jones" },
+      { domain: "thebottomsgroup.com", source: "BROKER", sourceLabel: "Jamie Jones" },
+      { domain: "totemsolutions.com", source: "BROKER", sourceLabel: "Annette Griffin" },
+      { domain: "usebsg.com", source: "BROKER", sourceLabel: "Kimberly Boddy" },
+      { domain: "usi.com", source: "BROKER", sourceLabel: "Art Freeman" },
+      { domain: "veizon.net", source: "BROKER", sourceLabel: "Cork Coyner" },
+      { domain: "verizon.net", source: "BROKER", sourceLabel: "Cork Coyner" },
+      { domain: "vpuc.com", source: "CLIENT", sourceLabel: "Virginia Public Utilities" },
+      { domain: "waseca.k12.mn.us", source: "CLIENT", sourceLabel: "Independent School District #829 (Waseca)" },
+      { domain: "wda.org", source: "CLIENT", sourceLabel: "Wisconsin Dental Association" },
+      { domain: "whaschools.org", source: "CLIENT", sourceLabel: "Walker Public Schools (ISD #113)" },
+      { domain: "willistowerswatson.com", source: "BROKER", sourceLabel: "Hillary Keeton" },
+      { domain: "wtwco.com", source: "BROKER", sourceLabel: "Duane Topp" },
+    ];
+    for (const d of REVIEWED_ALLOWLIST_DOMAINS) {
+      await pool.query(
+        `INSERT INTO mail_allowlist_domains (domain, source, source_label, approved, reviewed_by, reviewed_at)
+         VALUES ($1, $2, $3, true, 'Steve Schultz', now())
+         ON CONFLICT (domain) DO NOTHING`,
+        [d.domain, d.source, d.sourceLabel],
+      );
+    }
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }
