@@ -6,7 +6,7 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
-  sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains,
+  sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
   type SendingIdentity, type InsertSendingIdentity,
   type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
@@ -38,6 +38,8 @@ import {
   type PlanPerformanceFacts, type InsertPlanPerformanceFacts,
   type PprImportBatch, type InsertPprImportBatch,
   type PprHeldRow, type InsertPprHeldRow,
+  type AppSetting,
+  PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT,
 } from "@shared/schema";
 import { countsAsActive, deriveClientState } from "@shared/client-state";
 import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
@@ -1683,6 +1685,129 @@ export class DatabaseStorage implements IStorage {
 
       return "ok" as const;
     });
+  }
+
+  // ── App settings — small admin-tunable knobs, one row per key ──
+
+  async getAppSetting(key: string): Promise<AppSetting | undefined> {
+    const [row] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    return row;
+  }
+
+  async setAppSetting(key: string, value: string, updatedBy: string): Promise<AppSetting> {
+    const [row] = await db.insert(appSettings).values({ key, value, updatedBy })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedBy, updatedAt: new Date() } })
+      .returning();
+    return row;
+  }
+
+  async getTriageMinPriority(): Promise<string> {
+    const row = await this.getAppSetting(TRIAGE_MIN_PRIORITY_KEY);
+    return row?.value ?? TRIAGE_MIN_PRIORITY_DEFAULT;
+  }
+
+  /**
+   * The per-owner Gmail-native triage feed: AI-extracted action items whose
+   * priority meets the tunable TRIAGE_MIN_PRIORITY setting, joined out to the
+   * message they came from so the row can show a client name (falling back
+   * to the sender's name) and link straight to the actual email.
+   *
+   * `owner` is a specific person's name, or "ALL" to show everyone's queue —
+   * the dashboard uses this for Steve's toggle between his own tasks, Kim's,
+   * and the combined view. Kim herself only ever sees her own.
+   */
+  async getGmailTriageFeed(owner: string, status: "OPEN" | "RESOLVED"): Promise<any[]> {
+    const minPriority = await this.getTriageMinPriority();
+    const minRank = PRIORITY_RANK[minPriority] ?? 0;
+
+    const conditions = [
+      sql`${communicationTasks.gmailMessageId} IS NOT NULL`,
+      eq(communicationTasks.status, status),
+    ];
+    if (owner !== "ALL") conditions.push(eq(communicationTasks.owner, owner));
+
+    const rows = await db.select({
+      task: communicationTasks,
+      message: gmailMessages,
+    }).from(communicationTasks)
+      .innerJoin(gmailMessages, eq(communicationTasks.gmailMessageId, gmailMessages.id))
+      .where(and(...conditions))
+      .orderBy(desc(communicationTasks.createdAt));
+
+    const filtered = status === "OPEN"
+      ? rows.filter(r => PRIORITY_RANK[r.task.aiPriority ?? "MEDIUM"] >= minRank)
+      : rows;
+
+    const taskIds = filtered.map(r => r.task.id);
+    const clientLinks = taskIds.length
+      ? await db.select({ taskId: taskClients.taskId, clientId: taskClients.clientId, clientName: clients.clientName })
+          .from(taskClients).innerJoin(clients, eq(taskClients.clientId, clients.id))
+          .where(inArray(taskClients.taskId, taskIds))
+      : [];
+    const clientsByTask = new Map<number, { id: number; clientName: string }[]>();
+    for (const l of clientLinks) {
+      const list = clientsByTask.get(l.taskId) ?? [];
+      list.push({ id: l.clientId, clientName: l.clientName });
+      clientsByTask.set(l.taskId, list);
+    }
+
+    return filtered.map(r => ({
+      id: r.task.id,
+      description: r.task.description,
+      dueDate: r.task.dueDate,
+      owner: r.task.owner,
+      aiPriority: r.task.aiPriority,
+      createdAt: r.task.createdAt,
+      resolvedAt: r.task.resolvedAt,
+      resolvedBy: r.task.resolvedBy,
+      resolutionNote: r.task.resolutionNote,
+      gmailMessageId: r.message.id,
+      gmailThreadId: r.message.threadId,
+      subject: r.message.subject,
+      senderName: r.message.fromName,
+      senderEmail: r.message.fromEmail,
+      clients: clientsByTask.get(r.task.id) ?? [],
+      // Display name resolution: client name if resolved, else the sender's
+      // display name, else their bare address — never a blank row.
+      displayName: (clientsByTask.get(r.task.id) ?? []).map(c => c.clientName).join(", ") || r.message.fromName || r.message.fromEmail,
+    }));
+  }
+
+  /**
+   * One-click dismiss, no confirmation and no mandatory note — this is the
+   * Gmail-native triage queue, deliberately lighter-weight than the legacy
+   * communications resolve flow. Un-resolving it later has no time limit
+   * (see unresolveGmailTask), so a wrong dismiss is never unrecoverable.
+   */
+  async dismissGmailTask(id: number, byUser: string): Promise<CommunicationTask | undefined> {
+    const resolvedAt = new Date();
+    const [row] = await db.update(communicationTasks).set({
+      status: "RESOLVED",
+      isCompleted: true,
+      completedAt: resolvedAt,
+      resolvedAt,
+      resolvedBy: byUser,
+      resolutionNote: "Dismissed from triage.",
+    }).where(and(eq(communicationTasks.id, id), sql`${communicationTasks.gmailMessageId} IS NOT NULL`))
+      .returning();
+    return row;
+  }
+
+  /** Unlimited-time undo — unlike the legacy communications undo, there is no expiry window here. */
+  async unresolveGmailTask(id: number): Promise<CommunicationTask | undefined> {
+    const [row] = await db.update(communicationTasks).set({
+      status: "OPEN",
+      isCompleted: false,
+      completedAt: null,
+      resolvedAt: null,
+      resolvedBy: null,
+      resolutionNote: null,
+    }).where(and(
+      eq(communicationTasks.id, id),
+      sql`${communicationTasks.gmailMessageId} IS NOT NULL`,
+      eq(communicationTasks.status, "RESOLVED"),
+    )).returning();
+    return row;
   }
 
   async getAllCommunications(filters?: { senderDomain?: string; senderName?: string; clientId?: number; unmatched?: boolean; isInternal?: boolean }) {

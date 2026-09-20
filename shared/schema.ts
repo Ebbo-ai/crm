@@ -487,6 +487,17 @@ export const communications = pgTable("communications", {
    * message he sends), so cross-mailbox dedupe keys on this instead.
    */
   messageIdHeader: text("message_id_header"),
+  /**
+   * Set once this legacy row is confirmed to be the same physical email as
+   * a row already ingested by the Gmail-native pipeline (gmail_messages).
+   * Legacy rows predate Message-ID header capture, so this is matched by
+   * sender + subject + a tight send-time window rather than an exact key —
+   * see server/mailDedup.ts. Never deleted, just marked: a superseded row
+   * keeps its resolution note/audit trail but is excluded from the
+   * Gmail-native triage view (which reads gmail_messages directly) so the
+   * same email never shows up twice across the two stores.
+   */
+  supersededByGmailMessageId: integer("superseded_by_gmail_message_id"),
 });
 
 /**
@@ -693,6 +704,28 @@ export const communicationTasks = pgTable("communication_tasks", {
    * others listed underneath instead of as separate rows.
    */
   groupId: text("group_id"),
+  /**
+   * HIGH | MEDIUM | LOW, set only on AI-origin tasks (gmailMessageId is set)
+   * from the same extraction call that produced the description. Null for
+   * manual to-dos. Drives the per-owner triage dashboard's inclusion
+   * threshold (app_settings key TRIAGE_MIN_PRIORITY) — a tunable setting
+   * compared at query time, not a filter baked into the extraction prompt,
+   * so raising or lowering the bar surfaces or hides already-extracted items
+   * without re-running AI extraction.
+   */
+  aiPriority: text("ai_priority"),
+});
+
+/**
+ * Small set of admin-tunable knobs that used to be constants in code. One
+ * row per key, so a new setting is a data row, not a migration.
+ */
+export const appSettings = pgTable("app_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
 });
 
 /**
@@ -869,6 +902,7 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({ id: tru
 export const insertGlobalDocumentSchema = createInsertSchema(globalDocuments).omit({ id: true, uploadedAt: true });
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
 export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
+export const insertAppSettingSchema = createInsertSchema(appSettings).omit({ id: true, updatedAt: true });
 export const insertDocumentFieldProposalSchema = createInsertSchema(documentFieldProposals).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
 export const insertIssueSchema = createInsertSchema(issues).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
 export const insertPprUploadSchema = createInsertSchema(pprUploads).omit({ id: true, uploadedAt: true });
@@ -926,6 +960,13 @@ export type CommunicationTask = typeof communicationTasks.$inferSelect;
 export type InsertCommunicationTask = z.infer<typeof insertCommunicationTaskSchema>;
 export type TaskClient = typeof taskClients.$inferSelect;
 export type InsertTaskClient = z.infer<typeof insertTaskClientSchema>;
+export type AppSetting = typeof appSettings.$inferSelect;
+export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
+
+/** Priority ranking, low to high — used to compare an AI-tagged item's priority against the tunable TRIAGE_MIN_PRIORITY setting. */
+export const PRIORITY_RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+export const TRIAGE_MIN_PRIORITY_KEY = "TRIAGE_MIN_PRIORITY";
+export const TRIAGE_MIN_PRIORITY_DEFAULT = "LOW";
 
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;

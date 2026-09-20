@@ -1386,6 +1386,24 @@ app.use((req, res, next) => {
       log(`Startup migration: computed quoted-text splits for ${quoteBackfill} previously-imported Gmail message(s)`);
     }
 
+    // ── Phase 21: reconcile legacy communications rows against Gmail-native data ──
+    await pool.query(`ALTER TABLE communications ADD COLUMN IF NOT EXISTS superseded_by_gmail_message_id INTEGER;`);
+    await pool.query(`
+      ALTER TABLE communication_tasks ADD COLUMN IF NOT EXISTS ai_priority TEXT;
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id SERIAL PRIMARY KEY,
+        key TEXT NOT NULL UNIQUE,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_by TEXT
+      );
+    `);
+    const { reconcileLegacyCommunicationsWithGmail } = await import("./mailDedup");
+    const dedupResult = await reconcileLegacyCommunicationsWithGmail();
+    if (dedupResult.matched > 0) {
+      log(`Startup migration: marked ${dedupResult.matched} legacy communication row(s) as superseded by a matching Gmail-native message (${dedupResult.scanned} legacy row(s) still unmatched)`);
+    }
+
     // ── Phase 20: per-user sending identities + outbound communication log ──
     await pool.query(`
       CREATE TABLE IF NOT EXISTS sending_identities (

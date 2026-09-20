@@ -2123,6 +2123,72 @@ export async function registerRoutes(
     }
   });
 
+  // ─── Per-owner Gmail-native triage dashboard ───────────────────────────────
+  // Reads only Gmail-native tables (gmail_messages joined through
+  // communication_tasks) — this is the screen the dedup cutover is for.
+
+  app.get("/api/gmail-triage/settings", requireAuth, async (_req, res) => {
+    try {
+      const minPriority = await storage.getTriageMinPriority();
+      res.json({ minPriority });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/gmail-triage/settings", requireAdmin, async (req, res) => {
+    try {
+      const { minPriority } = req.body;
+      if (!["LOW", "MEDIUM", "HIGH"].includes(minPriority)) {
+        return res.status(400).json({ message: "minPriority must be LOW, MEDIUM, or HIGH" });
+      }
+      const user = (req.user as any)?.fullName ?? "Unknown";
+      await storage.setAppSetting("TRIAGE_MIN_PRIORITY", minPriority, user);
+      res.json({ minPriority });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * owner query param: a full name ("Kim Anderson" / "Steve Schultz") or
+   * "ALL". Kim's UI always requests her own name; Steve's toggle can request
+   * any of the three.
+   */
+  app.get("/api/gmail-triage/feed", requireAuth, async (req, res) => {
+    try {
+      const owner = (req.query.owner as string) || (req.user as any).fullName;
+      const status = req.query.status === "RESOLVED" ? "RESOLVED" : "OPEN";
+      const rows = await storage.getGmailTriageFeed(owner, status);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** One click, no confirmation dialog, no note required. */
+  app.post("/api/gmail-triage/:id/dismiss", requireAuth, async (req, res) => {
+    try {
+      const user = (req.user as any)?.fullName ?? "Unknown";
+      const row = await storage.dismissGmailTask(parseInt(req.params.id), user);
+      if (!row) return res.status(404).json({ message: "Not found" });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /** Unlimited time — the Resolved tab is where this lives, not a fading toast. */
+  app.post("/api/gmail-triage/:id/unresolve", requireAuth, async (req, res) => {
+    try {
+      const row = await storage.unresolveGmailTask(parseInt(req.params.id));
+      if (!row) return res.status(404).json({ message: "Nothing to undo." });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ─── Document field proposal review queue ──────────────────────────────────
   app.get("/api/field-proposals", requireAuth, async (req, res) => {
     try {

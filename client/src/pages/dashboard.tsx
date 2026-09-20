@@ -19,6 +19,7 @@ import {
 import { format, differenceInDays } from "date-fns";
 import { MONTHS } from "@/lib/constants";
 import CommunicationFeed from "@/components/communication-feed";
+import GmailTriageFeed from "@/components/gmail-triage-feed";
 import TodoList from "@/components/todo-list";
 
 const ISSUE_TYPE_LABELS: Record<string, { label: string; color: string }> = {
@@ -562,8 +563,14 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Triage: the feed and the to-do list sit above everything else, because
-            this is the screen the service desk works from first thing. */}
+        {/* Triage: AI-flagged mail from the Gmail-native pipeline, per owner.
+            This is the primary triage surface going forward — the legacy
+            communications feed below it only ever shrinks from here since
+            the Mailgun inbound webhook that fed it has been retired. */}
+        <div className="mb-6">
+          <GmailTriageFeed />
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div className="lg:col-span-2">
             <CommunicationFeed />

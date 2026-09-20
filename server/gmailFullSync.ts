@@ -392,6 +392,10 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
             const clientAssignments = existingClientIds.map((clientId) => ({ clientId, confidence: "medium" }));
             for (const item of processed.actionItems) {
               const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+              // Every extracted item is stored regardless of priority — the
+              // triage dashboard's tunable threshold (app_settings) filters
+              // at read time, so raising/lowering the bar later doesn't
+              // require re-running extraction against old mail.
               const created = await storage.createTaskWithClients({
                 communicationId: null,
                 gmailMessageId: msg.id,
@@ -399,6 +403,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
                 description: item.description,
                 dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
                 owner,
+                aiPriority: item.priority,
               } as any, clientAssignments);
               summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
               void created;

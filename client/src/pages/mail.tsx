@@ -248,7 +248,12 @@ export default function MailPage() {
   const [direction, setDirection] = useState<string>("");
   const [hasAttachment, setHasAttachment] = useState(false);
   const [includeQuoted, setIncludeQuoted] = useState(false);
-  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
+  // Deep link support: the per-owner triage dashboard links straight into a
+  // specific thread ("click opens the actual email") via ?threadId=123.
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("threadId");
+    return fromUrl ? parseInt(fromUrl, 10) : null;
+  });
 
   const { data: counts } = useQuery<{ matched: number; unassigned: number; notBusiness: number }>({
     queryKey: ["/api/gmail-inbox/counts"],

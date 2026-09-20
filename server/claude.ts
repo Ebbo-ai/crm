@@ -56,6 +56,13 @@ export interface MatchResult {
 export interface ActionItem {
   description: string;
   dueDate?: string | null;
+  /**
+   * HIGH | MEDIUM | LOW — how urgent/substantive this request is. Feeds the
+   * triage dashboard's tunable inclusion threshold (app_settings), which
+   * compares this against a stored setting rather than filtering here, so
+   * the bar can be raised or lowered later without re-running extraction.
+   */
+  priority: "HIGH" | "MEDIUM" | "LOW";
 }
 
 export interface EmailProcessResult {
@@ -252,6 +259,10 @@ ${emailText.slice(0, 6000)}${attachmentSection}
 Please provide:
 1. A concise 2-4 sentence SUMMARY of this email's main topic, any requests made, and any important details for the benefits team.
 2. A list of ACTION ITEMS — any follow-up tasks, deadlines, or requests that need attention.
+   For each one, rate its PRIORITY:
+   - HIGH: time-sensitive or consequential — a deadline, a renewal decision, a client escalation, money.
+   - MEDIUM: a real request that needs a reply or action, but nothing urgent or high-stakes.
+   - LOW: minor, routine, or easily batched (an FYI that technically implies a small follow-up, a courtesy acknowledgment).
 3. A judgement on whether this email is a FOLLOW-UP: the sender chasing something
    Simple Benefits already owed them and did not deliver.
 
@@ -275,7 +286,7 @@ Return ONLY valid JSON in this exact format:
 {
   "summary": "...",
   "actionItems": [
-    {"description": "...", "dueDate": "YYYY-MM-DD or null"}
+    {"description": "...", "dueDate": "YYYY-MM-DD or null", "priority": "HIGH" or "MEDIUM" or "LOW"}
   ],
   "isFollowUp": true or false,
   "followUpReason": "one short sentence naming the specific evidence, or null"
@@ -299,9 +310,15 @@ Return ONLY the JSON object, no other text.`;
     }
     const parsed = JSON.parse(jsonMatch[0]);
     const isFollowUp = parsed.isFollowUp === true;
+    const rawItems = Array.isArray(parsed.actionItems) ? parsed.actionItems : [];
+    const actionItems: ActionItem[] = rawItems.map((it: any) => ({
+      description: String(it?.description ?? "").trim(),
+      dueDate: it?.dueDate ?? null,
+      priority: (["HIGH", "MEDIUM", "LOW"].includes(it?.priority) ? it.priority : "MEDIUM") as ActionItem["priority"],
+    })).filter((it: ActionItem) => it.description.length > 0);
     return {
       summary: parsed.summary ?? "No summary generated.",
-      actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems : [],
+      actionItems,
       isFollowUp,
       // A reason without a flag is noise, so it is only kept when the flag is set.
       followUpReason: isFollowUp && typeof parsed.followUpReason === "string" && parsed.followUpReason.trim()
