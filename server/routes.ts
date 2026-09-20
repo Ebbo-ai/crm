@@ -1967,12 +1967,7 @@ export async function registerRoutes(
       if (!CONFIGURED_MAILBOXES.some(m => m.mailbox === mailbox)) {
         return res.status(400).json({ message: `${mailbox} is not one of the mailboxes this app authorizes.` });
       }
-      const redirectUri = redirectUriFor(req);
-      const url = buildAuthUrl(mailbox, redirectUri);
-      const cid = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
-      console.log(`[mail-accounts] connect ${mailbox} — redirect_uri=${redirectUri} host=${req.get("host")} protocol=${req.protocol}`);
-      console.log(`[mail-accounts] client_id length=${cid.length} startsWith=${JSON.stringify(cid.slice(0, 6))} endsWith=${JSON.stringify(cid.slice(-24))} hasWhitespace=${/\s/.test(cid)}`);
-      console.log(`[mail-accounts] full auth url=${url}`);
+      const url = buildAuthUrl(mailbox, redirectUriFor(req));
       res.redirect(url);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
