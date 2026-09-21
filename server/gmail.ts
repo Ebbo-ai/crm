@@ -13,17 +13,82 @@ import { getValidAccessToken } from "./googleOAuth";
  */
 const GMAIL_API_BASE = "https://gmail.googleapis.com";
 
+/**
+ * Every Gmail call in this app routes through gmailGet, so retry/backoff and
+ * pacing live here once rather than at each call site (label census,
+ * free-provider classify, the 5-minute rolling sync, attachment ingestion,
+ * and the future message-body import job all inherit this automatically).
+ */
+
+/** Spaces consecutive calls per-mailbox so a hot loop (e.g. label census) rarely hits Gmail's per-user-per-minute quota in the first place. */
+const MIN_CALL_SPACING_MS = 150;
+const MAX_RETRIES = 8;
+const BASE_BACKOFF_MS = 1500;
+const MAX_BACKOFF_MS = 60_000;
+
+const lastCallAt = new Map<string, number>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pace(mailbox: string): Promise<void> {
+  const last = lastCallAt.get(mailbox) || 0;
+  const wait = last + MIN_CALL_SPACING_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt.set(mailbox, Date.now());
+}
+
+/** Gmail's rate-limit errors come back as 429, or 403 with a JSON body naming reason rateLimitExceeded / userRateLimitExceeded — both are transient, everything else (400s, 404s, auth failures) is not. */
+function isRetryableGmailError(status: number, body: string): boolean {
+  if (status === 429) return true;
+  if (status === 403) return /rateLimitExceeded|userRateLimitExceeded/i.test(body);
+  return false;
+}
+
+/**
+ * Last-seen rate-limit pause, process-wide, so the (admin-only, browser-
+ * driven) label backfill page can poll and show "Rate limited by Gmail,
+ * waiting Ns" instead of the request just hanging silently. Cleared once a
+ * call succeeds without needing a retry.
+ */
+let lastRateLimitStatus: { message: string; mailbox: string; at: number } | null = null;
+
+export function getGmailRateLimitStatus(): { message: string; mailbox: string; at: number } | null {
+  return lastRateLimitStatus;
+}
+
 async function gmailGet<T>(mailbox: string, path: string): Promise<T> {
-  const token = await getValidAccessToken(mailbox);
-  const res = await fetch(`${GMAIL_API_BASE}${path}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
+  let attempt = 0;
+  for (;;) {
+    await pace(mailbox);
+    const token = await getValidAccessToken(mailbox);
+    const res = await fetch(`${GMAIL_API_BASE}${path}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      lastRateLimitStatus = null;
+      return res.json() as Promise<T>;
+    }
+
     const body = await res.text().catch(() => "");
+    if (isRetryableGmailError(res.status, body) && attempt < MAX_RETRIES) {
+      attempt++;
+      const retryAfterHeader = res.headers.get("Retry-After");
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
+      const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+      const jitter = Math.random() * backoff * 0.3;
+      const waitMs = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : backoff + jitter;
+      const message = `Rate limited by Gmail (${mailbox}), waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})`;
+      lastRateLimitStatus = { message, mailbox, at: Date.now() };
+      console.warn(`[gmail] ${message} — ${path}`);
+      await sleep(waitMs);
+      continue;
+    }
+
     throw new Error(`Gmail API ${path} failed for ${mailbox}: ${res.status} ${body.slice(0, 500)}`);
   }
-  return res.json() as Promise<T>;
 }
 
 export interface GmailProfile {

@@ -2116,6 +2116,16 @@ export async function registerRoutes(
     }
   });
 
+  /** Polled by the (browser-driven) backfill page while a batch call is in flight, so a Gmail rate-limit pause shows as a status line instead of the request just hanging. */
+  app.get("/api/gmail-backfill/rate-limit-status", requireAdmin, async (_req, res) => {
+    try {
+      const { getGmailRateLimitStatus } = await import("./gmail");
+      res.json(getGmailRateLimitStatus());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/gmail-backfill/consumer-review", requireAdmin, async (req, res) => {
     try {
       const mailbox = String(req.query.mailbox || "");

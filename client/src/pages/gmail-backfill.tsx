@@ -45,9 +45,32 @@ export default function GmailBackfillPage() {
   const [freeProviderTally, setFreeProviderTally] = useState<{ business: number; consumer: number } | null>(null);
   const [consumerReview, setConsumerReview] = useState<ConsumerDomainReviewRow[] | null>(null);
   const [running, setRunning] = useState(false);
+  const [rateLimitNotice, setRateLimitNotice] = useState<string | null>(null);
 
   function appendLog(line: string) {
     setLog((prev) => [...prev, line]);
+  }
+
+  /**
+   * Each batch call can take a while server-side if Gmail is rate-limiting
+   * it (retried there with backoff, not surfaced as an error) — poll this
+   * status endpoint while a batch is in flight so Steve sees "Rate limited
+   * by Gmail, waiting Ns" instead of the button just looking stuck.
+   */
+  function pollRateLimitStatus(): () => void {
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiRequest("GET", "/api/gmail-backfill/rate-limit-status");
+        const data = await res.json();
+        setRateLimitNotice(data ? data.message : null);
+      } catch {
+        // Polling is best-effort — a failed poll shouldn't interrupt the run itself.
+      }
+    }, 2000);
+    return () => {
+      clearInterval(interval);
+      setRateLimitNotice(null);
+    };
   }
 
   async function runAll() {
@@ -56,8 +79,13 @@ export default function GmailBackfillPage() {
     setReport(null);
     setFreeProviderTally(null);
     setConsumerReview(null);
+    const stopPolling = pollRateLimitStatus();
     try {
       // Phase 1: census — walk every message under the label, one row per thread.
+      // A page that hits Gmail's rate limit is retried with backoff inside the
+      // server call itself (server/gmail.ts) — it still returns normally once
+      // Gmail lets it through, it just takes longer. Only a genuinely
+      // non-retryable error (auth, 400, 404) throws here.
       setPhase("census");
       let censusDone = false;
       let totalCensused = 0;
@@ -106,12 +134,13 @@ export default function GmailBackfillPage() {
       setConsumerReview(await reviewRes.json());
 
       setPhase("done");
-      toast({ title: "Backfill complete", description: "Census, domain classification, and free-provider classification all finished." });
+      toast({ title: "Classification complete", description: "Census, domain classification, and free-provider classification all finished." });
     } catch (err: any) {
       setPhase("error");
       appendLog(`ERROR: ${err.message}`);
-      toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
+      toast({ title: "Classification failed", description: err.message, variant: "destructive" });
     } finally {
+      stopPolling();
       setRunning(false);
     }
   }
@@ -150,6 +179,11 @@ export default function GmailBackfillPage() {
             <PlayCircle className="w-4 h-4 mr-2" />
             {running ? `Running… (${phase})` : "Run classification (no import)"}
           </Button>
+          {rateLimitNotice && (
+            <p className="text-xs text-warning-strong font-mono" data-testid="text-rate-limit-notice">
+              {rateLimitNotice} — paused, not stuck.
+            </p>
+          )}
         </CardContent>
       </Card>
 
