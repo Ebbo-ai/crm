@@ -148,7 +148,7 @@ export default function GmailBackfillPage() {
           </div>
           <Button className="bg-brand hover:bg-brand-dark" disabled={running} onClick={runAll} data-testid="button-run-backfill">
             <PlayCircle className="w-4 h-4 mr-2" />
-            {running ? `Running… (${phase})` : "Run full backfill"}
+            {running ? `Running… (${phase})` : "Run classification (no import)"}
           </Button>
         </CardContent>
       </Card>
