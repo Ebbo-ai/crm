@@ -19,8 +19,14 @@ const FREE_PROVIDER_DOMAINS = new Set([
   "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com", "icloud.com",
 ]);
 
-/** simple.us is the CRM's own domain (Kim/Steve/clientservice@) — never a candidate as a generic "domain" rule; those three addresses are handled as exact matches instead. */
-const OWN_DOMAIN = "simple.us";
+/**
+ * Simple Benefits' own domains — never a candidate as a generic "domain"
+ * rule; the handful of addresses on them are handled as exact matches
+ * instead. simple.us is current; simple.dental is the earlier domain (from
+ * when the business was dental-only) that some contacts, including Missy,
+ * still use — still live and still ours, not a counterparty.
+ */
+const OWN_DOMAINS = new Set(["simple.us", "simple.dental"]);
 
 function domainOf(email: string): string | null {
   const at = email.lastIndexOf("@");
@@ -29,7 +35,12 @@ function domainOf(email: string): string | null {
 }
 
 function isEligibleDomain(domain: string | null): domain is string {
-  return !!domain && !FREE_PROVIDER_DOMAINS.has(domain) && domain !== OWN_DOMAIN;
+  return !!domain && !FREE_PROVIDER_DOMAINS.has(domain) && !OWN_DOMAINS.has(domain);
+}
+
+/** Exported so other modules (e.g. the label backfill's own-domain-aware counterparty extraction) share one definition instead of re-deriving it. */
+export function isOwnDomain(domain: string | null): boolean {
+  return !!domain && OWN_DOMAINS.has(domain);
 }
 
 /**

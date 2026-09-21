@@ -29,7 +29,9 @@ export interface RecipientGuardResult {
  */
 function internalAllowedDomains(): Set<string> {
   const ninetyDb = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
-  return new Set([ninetyDb, "simple.us"]);
+  // simple.dental is Simple Benefits' earlier domain (pre-dating the move to
+  // simple.us) — still live, still ours, so still internal for this guard.
+  return new Set([ninetyDb, "simple.us", "simple.dental"]);
 }
 
 /**

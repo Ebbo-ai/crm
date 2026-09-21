@@ -406,6 +406,46 @@ When genuinely unsure, return true.`;
   }
 }
 
+/**
+ * One call per unique counterparty domain (not per thread/message) — the
+ * verdict is then applied to every thread from that domain. Subjects are a
+ * handful of samples across that domain's threads, giving the model enough
+ * signal to tell a real business counterparty (employer, broker, TPA vendor)
+ * from consumer/newsletter/marketing traffic without reading any bodies.
+ */
+export async function classifyDomain(
+  domain: string,
+  sampleSubjects: string[],
+  usageCtx?: LlmUsageContext,
+): Promise<{ verdict: "BUSINESS" | "CONSUMER" }> {
+  if (!process.env.ANTHROPIC_API_KEY) return { verdict: "BUSINESS" };
+
+  const prompt = `You triage the sender domains found in a benefits broker's inbox. For the domain below, decide whether it represents a genuine business counterparty (an employer/client, an insurance broker, a TPA or benefits vendor, a carrier) or non-business traffic (a retailer, a newsletter, a subscription service, a consumer app, personal-interest mail).
+
+Domain: ${domain}
+
+Sample subject lines seen from this domain:
+${sampleSubjects.slice(0, 15).map((s) => `- ${s}`).join("\n") || "(no subjects available)"}
+
+Return ONLY JSON: {"verdict": "BUSINESS" or "CONSUMER"}
+When genuinely unsure, return "BUSINESS" — the cost of over-including is a thread staying unassigned for a person to look at; the cost of under-including is losing real correspondence.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 32,
+      messages: [{ role: "user", content: prompt }],
+    });
+    await logUsage(usageCtx, "classifyDomain", "claude-haiku-4-5", response);
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "{}";
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+    return { verdict: parsed.verdict === "CONSUMER" ? "CONSUMER" : "BUSINESS" };
+  } catch (err: any) {
+    console.error("[claude] classifyDomain error:", err?.message || String(err));
+    return { verdict: "BUSINESS" };
+  }
+}
+
 export interface ThreadSummaryResult {
   summary: string;
   oneLine: string;

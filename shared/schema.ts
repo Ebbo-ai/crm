@@ -920,6 +920,57 @@ export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: tru
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertGlobalDocumentSchema = createInsertSchema(globalDocuments).omit({ id: true, uploadedAt: true });
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
+/**
+ * One row per unique sender domain found while censusing a label for
+ * historical backfill (e.g. "90 Degree Benefits" on steve.schultz@) — never
+ * per-thread, since the whole point is one classification call per domain
+ * whose verdict then applies to every thread from it. PENDING until
+ * classifyDomain() runs; BUSINESS/CONSUMER after. Own domains (simple.us,
+ * simple.dental) and free-mail providers never get a row here — they're
+ * handled by gmailBackfillThreads directly.
+ */
+export const gmailBackfillDomains = pgTable("gmail_backfill_domains", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull(),
+  label: text("label").notNull(),
+  domain: text("domain").notNull(),
+  threadCount: integer("thread_count").notNull().default(0),
+  verdict: text("verdict").notNull().default("PENDING"), // PENDING | BUSINESS | CONSUMER
+  classifiedAt: timestamp("classified_at"),
+  model: text("model"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * One row per thread under the censused label, recording which
+ * counterparty domain (if any) it resolved to and whether it's been
+ * imported yet — the resumable unit for both the census pass (populated
+ * once, cheap) and the import pass (importedAt set once its messages are
+ * actually stored). category mirrors gmailBackfillDomains.verdict but adds
+ * the buckets a domain verdict alone can't capture: OWN_ONLY (every
+ * participant on simple.us/simple.dental — nothing external to file
+ * against), FREE_PROVIDER (gmail.com etc. — resolved by exact address, not
+ * domain), and NO_EXTERNAL_DOMAIN (no parseable non-own sender found).
+ */
+export const gmailBackfillThreads = pgTable("gmail_backfill_threads", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull(),
+  label: text("label").notNull(),
+  gmailThreadId: text("gmail_thread_id").notNull(),
+  domain: text("domain"),
+  category: text("category").notNull(), // DOMAIN_PENDING | BUSINESS | CONSUMER | OWN_ONLY | FREE_PROVIDER_RESOLVED | FREE_PROVIDER_UNRESOLVED | NO_EXTERNAL_DOMAIN
+  resolvedContactEmail: text("resolved_contact_email"),
+  importedAt: timestamp("imported_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertGmailBackfillDomainSchema = createInsertSchema(gmailBackfillDomains).omit({ id: true, createdAt: true });
+export const insertGmailBackfillThreadSchema = createInsertSchema(gmailBackfillThreads).omit({ id: true, createdAt: true });
+export type GmailBackfillDomain = typeof gmailBackfillDomains.$inferSelect;
+export type InsertGmailBackfillDomain = z.infer<typeof insertGmailBackfillDomainSchema>;
+export type GmailBackfillThread = typeof gmailBackfillThreads.$inferSelect;
+export type InsertGmailBackfillThread = z.infer<typeof insertGmailBackfillThreadSchema>;
+
 export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
 export const insertLlmUsageLogSchema = createInsertSchema(llmUsageLog).omit({ id: true, createdAt: true });
 export const insertAppSettingSchema = createInsertSchema(appSettings).omit({ id: true, updatedAt: true });

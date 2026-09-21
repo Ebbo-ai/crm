@@ -1504,6 +1504,34 @@ app.use((req, res, next) => {
         [d.domain, d.source, d.sourceLabel],
       );
     }
+    // ── Phase 24: label-scoped historical backfill — domain census + per-thread resolution ──
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gmail_backfill_domains (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        label TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        thread_count INTEGER NOT NULL DEFAULT 0,
+        verdict TEXT NOT NULL DEFAULT 'PENDING',
+        classified_at TIMESTAMP,
+        model TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_gmail_backfill_domains_unique ON gmail_backfill_domains (mailbox, label, domain);
+      CREATE TABLE IF NOT EXISTS gmail_backfill_threads (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        label TEXT NOT NULL,
+        gmail_thread_id TEXT NOT NULL,
+        domain TEXT,
+        category TEXT NOT NULL,
+        resolved_contact_email TEXT,
+        imported_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_gmail_backfill_threads_unique ON gmail_backfill_threads (mailbox, label, gmail_thread_id);
+      CREATE INDEX IF NOT EXISTS idx_gmail_backfill_threads_category ON gmail_backfill_threads (mailbox, label, category);
+    `);
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }

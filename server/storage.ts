@@ -6,12 +6,14 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
+  gmailBackfillDomains, gmailBackfillThreads,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
   type SendingIdentity, type InsertSendingIdentity,
   type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
   type GmailAccount, type InsertGmailAccount,
   type MailAllowlistDomain, type InsertMailAllowlistDomain,
+  type GmailBackfillDomain, type GmailBackfillThread,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
   type GmailThread, type InsertGmailThread,
@@ -703,6 +705,68 @@ export class DatabaseStorage implements IStorage {
   async reviewMailAllowlistDomain(id: number, approved: boolean, reviewedBy: string): Promise<MailAllowlistDomain | undefined> {
     const [row] = await db.update(mailAllowlistDomains).set({ approved, reviewedAt: new Date(), reviewedBy }).where(eq(mailAllowlistDomains.id, id)).returning();
     return row;
+  }
+
+  // ─── Label backfill: domain census + per-thread resolution (see gmailLabelBackfill.ts) ───
+
+  /** +1 to a domain's thread count, creating the PENDING row on first sight. Idempotent per thread — callers only call this once per (mailbox, label, thread). */
+  async incrementBackfillDomainCount(mailbox: string, label: string, domain: string): Promise<void> {
+    const [existing] = await db.select().from(gmailBackfillDomains)
+      .where(and(eq(gmailBackfillDomains.mailbox, mailbox), eq(gmailBackfillDomains.label, label), eq(gmailBackfillDomains.domain, domain)));
+    if (existing) {
+      await db.update(gmailBackfillDomains).set({ threadCount: existing.threadCount + 1 }).where(eq(gmailBackfillDomains.id, existing.id));
+    } else {
+      await db.insert(gmailBackfillDomains).values({ mailbox, label, domain, threadCount: 1, verdict: "PENDING" });
+    }
+  }
+
+  async getBackfillDomains(mailbox: string, label: string): Promise<GmailBackfillDomain[]> {
+    return db.select().from(gmailBackfillDomains)
+      .where(and(eq(gmailBackfillDomains.mailbox, mailbox), eq(gmailBackfillDomains.label, label)))
+      .orderBy(desc(gmailBackfillDomains.threadCount));
+  }
+
+  async getPendingBackfillDomains(mailbox: string, label: string): Promise<GmailBackfillDomain[]> {
+    return db.select().from(gmailBackfillDomains)
+      .where(and(eq(gmailBackfillDomains.mailbox, mailbox), eq(gmailBackfillDomains.label, label), eq(gmailBackfillDomains.verdict, "PENDING")));
+  }
+
+  async setBackfillDomainVerdict(id: number, verdict: "BUSINESS" | "CONSUMER", model: string): Promise<void> {
+    await db.update(gmailBackfillDomains).set({ verdict, classifiedAt: new Date(), model }).where(eq(gmailBackfillDomains.id, id));
+  }
+
+  /** Null when this thread hasn't been censused yet — lets the census pass skip threads it already recorded on a prior (interrupted) run. */
+  async getBackfillThread(mailbox: string, label: string, gmailThreadId: string): Promise<GmailBackfillThread | undefined> {
+    const [row] = await db.select().from(gmailBackfillThreads)
+      .where(and(eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.label, label), eq(gmailBackfillThreads.gmailThreadId, gmailThreadId)));
+    return row;
+  }
+
+  async createBackfillThread(row: { mailbox: string; label: string; gmailThreadId: string; domain: string | null; category: string; resolvedContactEmail?: string | null }): Promise<GmailBackfillThread> {
+    const [created] = await db.insert(gmailBackfillThreads).values(row).returning();
+    return created;
+  }
+
+  async updateBackfillThreadCategory(id: number, category: string): Promise<void> {
+    await db.update(gmailBackfillThreads).set({ category }).where(eq(gmailBackfillThreads.id, id));
+  }
+
+  async getBackfillThreadsByCategories(mailbox: string, label: string, categories: string[], onlyUnimported: boolean): Promise<GmailBackfillThread[]> {
+    const conditions = [eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.label, label), inArray(gmailBackfillThreads.category, categories)];
+    if (onlyUnimported) conditions.push(isNull(gmailBackfillThreads.importedAt));
+    return db.select().from(gmailBackfillThreads).where(and(...conditions));
+  }
+
+  async countBackfillThreadsByCategory(mailbox: string, label: string): Promise<{ category: string; count: number }[]> {
+    const rows = await db.select({ category: gmailBackfillThreads.category, count: sql<string>`COUNT(*)` })
+      .from(gmailBackfillThreads)
+      .where(and(eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.label, label)))
+      .groupBy(gmailBackfillThreads.category);
+    return rows.map(r => ({ category: r.category, count: Number(r.count) }));
+  }
+
+  async markBackfillThreadImported(id: number): Promise<void> {
+    await db.update(gmailBackfillThreads).set({ importedAt: new Date() }).where(eq(gmailBackfillThreads.id, id));
   }
 
   /** Attachments on this communication that have not yet been filed onto a client's documents tab. */

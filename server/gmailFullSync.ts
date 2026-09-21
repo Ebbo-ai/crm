@@ -335,7 +335,12 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
           } as any);
         }
       } catch (err: any) {
-        summary.errors.push(`message ${ref.id}: ${err?.message || String(err)}`);
+        const detail = `message ${ref.id}: ${err?.message || String(err)}`;
+        summary.errors.push(detail);
+        // Only the count survives into gmail_import_state/gmail_accounts summaries —
+        // logging the detail here is what makes a recurring per-run error explainable
+        // after the fact instead of just a number.
+        console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
       }
     }
     finalPageToken = page.nextPageToken; // undefined once the window is fully scanned
@@ -464,7 +469,9 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       else summary.unassigned++;
       if (filesToVendor) summary.filedToVendor++;
     } catch (err: any) {
-      summary.errors.push(`thread ${threadId} classify/summarize: ${err?.message || String(err)}`);
+      const detail = `thread ${threadId} classify/summarize: ${err?.message || String(err)}`;
+      summary.errors.push(detail);
+      console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
     }
   }
   summary.threadsTouched = touchedThreadIds.size;

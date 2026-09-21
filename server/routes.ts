@@ -2054,6 +2054,57 @@ export async function registerRoutes(
     }
   });
 
+  // ── Label-scoped historical backfill (see gmailLabelBackfill.ts) ──
+  // One-time, explicit-trigger only: never called by the poller or on
+  // restart. Each call processes one bounded batch (mirrors gmail-import/run
+  // and gmail-inbox/sync above) so a label with thousands of threads is
+  // walked by repeated clicks/calls rather than one long-running request.
+  app.post("/api/gmail-backfill/census/run", requireAdmin, async (req, res) => {
+    try {
+      const { mailbox, label } = req.body;
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { runDomainCensusBatch } = await import("./gmailLabelBackfill");
+      res.json(await runDomainCensusBatch(mailbox, label));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/gmail-backfill/classify/run", requireAdmin, async (req, res) => {
+    try {
+      const { mailbox, label } = req.body;
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { classifyDomainsBatch } = await import("./gmailLabelBackfill");
+      res.json(await classifyDomainsBatch(mailbox, label));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/gmail-backfill/feed-allowlist", requireAdmin, async (req, res) => {
+    try {
+      const { mailbox, label } = req.body;
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { feedBusinessDomainsToAllowlist } = await import("./gmailLabelBackfill");
+      const added = await feedBusinessDomainsToAllowlist(mailbox, label);
+      res.json({ added });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/gmail-backfill/report", requireAdmin, async (req, res) => {
+    try {
+      const mailbox = String(req.query.mailbox || "");
+      const label = String(req.query.label || "");
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { getBackfillReport } = await import("./gmailLabelBackfill");
+      res.json(await getBackfillReport(mailbox, label));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/gmail-inbox/counts", requireAuth, async (req, res) => {
     try {
       const isAdmin = (req.user as any).role === "ADMIN";

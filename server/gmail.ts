@@ -91,6 +91,23 @@ export async function getMessageFull(mailbox: string, messageId: string): Promis
   return gmailGet<GmailMessageFull>(mailbox, `/gmail/v1/users/me/messages/${messageId}?format=full`);
 }
 
+/** Headers only, no body/attachments — for passes that only need From/To/Cc/Subject (label domain census) and would otherwise pull megabytes of body text they never look at. */
+export async function getMessageMetadata(mailbox: string, messageId: string): Promise<GmailMessageFull> {
+  const params = new URLSearchParams({ format: "metadata" });
+  for (const h of ["From", "To", "Cc", "Subject"]) params.append("metadataHeaders", h);
+  return gmailGet<GmailMessageFull>(mailbox, `/gmail/v1/users/me/messages/${messageId}?${params.toString()}`);
+}
+
+/** Lists every Gmail message id carrying the given label (any mailbox folder), newest first — the entry point for the one-time label-scoped historical backfill. */
+export async function searchMessageIdsByLabel(
+  mailbox: string,
+  labelQuery: string,
+  pageToken?: string,
+  pageSize = 100,
+): Promise<GmailMessageListResult> {
+  return searchMessageIds(mailbox, labelQuery, pageToken, pageSize);
+}
+
 export interface GmailAttachmentRef {
   filename: string;
   mimeType: string;
