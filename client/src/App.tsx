@@ -25,6 +25,7 @@ import GmailImportPage from "@/pages/gmail-import";
 import FieldReviewPage from "@/pages/field-review";
 import MailPage from "@/pages/mail";
 import MailAccountsPage from "@/pages/mail-accounts";
+import GmailBackfillPage from "@/pages/gmail-backfill";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
@@ -81,6 +82,7 @@ function Router() {
       <Route path="/settings/data-reset">{() => <ProtectedRoute component={DataResetPage} adminOnly />}</Route>
       <Route path="/settings/gmail-import">{() => <ProtectedRoute component={GmailImportPage} adminOnly />}</Route>
       <Route path="/settings/mail-accounts">{() => <ProtectedRoute component={MailAccountsPage} adminOnly />}</Route>
+      <Route path="/settings/gmail-backfill">{() => <ProtectedRoute component={GmailBackfillPage} adminOnly />}</Route>
       <Route path="/field-review">{() => <ProtectedRoute component={FieldReviewPage} />}</Route>
       <Route path="/mail">{() => <ProtectedRoute component={MailPage} />}</Route>
       <Route>{() => <ProtectedRoute component={NotFound} />}</Route>
