@@ -2105,6 +2105,30 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/gmail-backfill/classify-free-provider/run", requireAdmin, async (req, res) => {
+    try {
+      const { mailbox, label } = req.body;
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { classifyFreeProviderThreadsBatch } = await import("./gmailLabelBackfill");
+      res.json(await classifyFreeProviderThreadsBatch(mailbox, label));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/gmail-backfill/consumer-review", requireAdmin, async (req, res) => {
+    try {
+      const mailbox = String(req.query.mailbox || "");
+      const label = String(req.query.label || "");
+      const minThreadCount = req.query.minThreadCount ? Number(req.query.minThreadCount) : 5;
+      if (!mailbox || !label) return res.status(400).json({ message: "mailbox and label are required" });
+      const { getConsumerDomainReviewReport } = await import("./gmailLabelBackfill");
+      res.json(await getConsumerDomainReviewReport(mailbox, label, minThreadCount));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/gmail-inbox/counts", requireAuth, async (req, res) => {
     try {
       const isAdmin = (req.user as any).role === "ADMIN";

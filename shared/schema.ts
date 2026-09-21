@@ -938,6 +938,11 @@ export const gmailBackfillDomains = pgTable("gmail_backfill_domains", {
   verdict: text("verdict").notNull().default("PENDING"), // PENDING | BUSINESS | CONSUMER
   classifiedAt: timestamp("classified_at"),
   model: text("model"),
+  /** One subject line captured while sampling for classification — carried forward so the consumer-domain human review list never needs a second Gmail round trip. */
+  sampleSubject: text("sample_subject"),
+  /** Earliest/latest sent date seen among the sampled messages for this domain — an approximation (from the sample, not a full scan) good enough for a reviewer to judge "is this really just noise". */
+  earliestSampleAt: timestamp("earliest_sample_at"),
+  latestSampleAt: timestamp("latest_sample_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -951,6 +956,13 @@ export const gmailBackfillDomains = pgTable("gmail_backfill_domains", {
  * participant on simple.us/simple.dental — nothing external to file
  * against), FREE_PROVIDER (gmail.com etc. — resolved by exact address, not
  * domain), and NO_EXTERNAL_DOMAIN (no parseable non-own sender found).
+ *
+ * permanentlyExcluded is set at census time for OWN_ONLY and
+ * NO_EXTERNAL_DOMAIN threads — internal/no-counterparty mail that must never
+ * reach the import phase, in any future run, not just the run that first
+ * saw it. The resumable "already seen" check already skips a re-classify,
+ * but this flag makes the exclusion an explicit, auditable fact about the
+ * row rather than an emergent property of category filtering.
  */
 export const gmailBackfillThreads = pgTable("gmail_backfill_threads", {
   id: serial("id").primaryKey(),
@@ -958,8 +970,12 @@ export const gmailBackfillThreads = pgTable("gmail_backfill_threads", {
   label: text("label").notNull(),
   gmailThreadId: text("gmail_thread_id").notNull(),
   domain: text("domain"),
-  category: text("category").notNull(), // DOMAIN_PENDING | BUSINESS | CONSUMER | OWN_ONLY | FREE_PROVIDER_RESOLVED | FREE_PROVIDER_UNRESOLVED | NO_EXTERNAL_DOMAIN
+  category: text("category").notNull(), // DOMAIN_PENDING | BUSINESS | CONSUMER | OWN_ONLY | FREE_PROVIDER_RESOLVED | FREE_PROVIDER_UNRESOLVED | FREE_PROVIDER_BUSINESS | FREE_PROVIDER_CONSUMER | NO_EXTERNAL_DOMAIN
   resolvedContactEmail: text("resolved_contact_email"),
+  /** For FREE_PROVIDER_UNRESOLVED threads: the free-mail counterparty address and one subject line, captured once at census time so the later per-thread classification pass needs zero extra Gmail calls. */
+  counterpartyEmail: text("counterparty_email"),
+  sampleSubject: text("sample_subject"),
+  permanentlyExcluded: boolean("permanently_excluded").notNull().default(false),
   importedAt: timestamp("imported_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

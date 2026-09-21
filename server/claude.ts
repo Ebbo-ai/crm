@@ -446,6 +446,44 @@ When genuinely unsure, return "BUSINESS" — the cost of over-including is a thr
   }
 }
 
+/**
+ * Per-thread classification for the free-mail-provider bucket (gmail.com,
+ * yahoo.com, etc.) where a domain rule would be meaningless — a free
+ * address can't be classified by who it's from, only by what the thread
+ * is about. One call per thread, not batched by domain, since each one is
+ * a different person.
+ */
+export async function classifyThread(
+  counterpartyEmail: string,
+  subject: string | null,
+  usageCtx?: LlmUsageContext,
+): Promise<{ verdict: "BUSINESS" | "CONSUMER" }> {
+  if (!process.env.ANTHROPIC_API_KEY) return { verdict: "BUSINESS" };
+
+  const prompt = `You triage one email thread from a benefits broker's inbox. The counterparty is on a free mail provider (gmail.com, yahoo.com, etc.), so their domain tells you nothing — judge only from the subject line whether this is a genuine business conversation (an employer contact, a broker, a vendor, a client using a personal address) or non-business traffic (a personal/social email, a consumer purchase, a newsletter that slipped through).
+
+Counterparty address: ${counterpartyEmail}
+Subject line: ${subject || "(no subject)"}
+
+Return ONLY JSON: {"verdict": "BUSINESS" or "CONSUMER"}
+When genuinely unsure, return "BUSINESS" — the cost of over-including is a thread staying unassigned for a person to look at; the cost of under-including is losing real correspondence.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 32,
+      messages: [{ role: "user", content: prompt }],
+    });
+    await logUsage(usageCtx, "classifyThread", "claude-haiku-4-5", response);
+    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "{}";
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
+    return { verdict: parsed.verdict === "CONSUMER" ? "CONSUMER" : "BUSINESS" };
+  } catch (err: any) {
+    console.error("[claude] classifyThread error:", err?.message || String(err));
+    return { verdict: "BUSINESS" };
+  }
+}
+
 export interface ThreadSummaryResult {
   summary: string;
   oneLine: string;

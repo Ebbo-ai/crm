@@ -1532,6 +1532,29 @@ app.use((req, res, next) => {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_gmail_backfill_threads_unique ON gmail_backfill_threads (mailbox, label, gmail_thread_id);
       CREATE INDEX IF NOT EXISTS idx_gmail_backfill_threads_category ON gmail_backfill_threads (mailbox, label, category);
     `);
+
+    // ── Phase 25: permanent OWN_ONLY exclusion, free-provider per-thread pass, consumer review sampling ──
+    await pool.query(`
+      ALTER TABLE gmail_backfill_domains ADD COLUMN IF NOT EXISTS sample_subject TEXT;
+      ALTER TABLE gmail_backfill_domains ADD COLUMN IF NOT EXISTS earliest_sample_at TIMESTAMP;
+      ALTER TABLE gmail_backfill_domains ADD COLUMN IF NOT EXISTS latest_sample_at TIMESTAMP;
+      ALTER TABLE gmail_backfill_threads ADD COLUMN IF NOT EXISTS counterparty_email TEXT;
+      ALTER TABLE gmail_backfill_threads ADD COLUMN IF NOT EXISTS sample_subject TEXT;
+      ALTER TABLE gmail_backfill_threads ADD COLUMN IF NOT EXISTS permanently_excluded BOOLEAN NOT NULL DEFAULT false;
+      UPDATE gmail_backfill_threads SET permanently_excluded = true WHERE category IN ('OWN_ONLY', 'NO_EXTERNAL_DOMAIN') AND permanently_excluded = false;
+    `);
+
+    // ── Phase 26: Steve's daily LLM spend ceiling decision, carried into every environment ──
+    // Same dev-vs-production gap as Phase 23's allow-list domains: the ceiling
+    // was only ever set in whichever database was connected when someone
+    // changed it. Steve decided $15/day; re-asserting it here (only when no
+    // row exists yet) means every environment picks it up on next boot
+    // without silently falling back to the $20 code default.
+    await pool.query(`
+      INSERT INTO app_settings (key, value, updated_by)
+      VALUES ('LLM_DAILY_CEILING_USD', '15', 'Steve Schultz')
+      ON CONFLICT (key) DO NOTHING
+    `);
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }

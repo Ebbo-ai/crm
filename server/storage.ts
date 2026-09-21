@@ -731,8 +731,32 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(gmailBackfillDomains.mailbox, mailbox), eq(gmailBackfillDomains.label, label), eq(gmailBackfillDomains.verdict, "PENDING")));
   }
 
-  async setBackfillDomainVerdict(id: number, verdict: "BUSINESS" | "CONSUMER", model: string): Promise<void> {
-    await db.update(gmailBackfillDomains).set({ verdict, classifiedAt: new Date(), model }).where(eq(gmailBackfillDomains.id, id));
+  async setBackfillDomainVerdict(
+    id: number,
+    verdict: "BUSINESS" | "CONSUMER",
+    model: string,
+    sample?: { sampleSubject?: string | null; earliestSampleAt?: Date | null; latestSampleAt?: Date | null },
+  ): Promise<void> {
+    await db.update(gmailBackfillDomains).set({
+      verdict,
+      classifiedAt: new Date(),
+      model,
+      sampleSubject: sample?.sampleSubject ?? null,
+      earliestSampleAt: sample?.earliestSampleAt ?? null,
+      latestSampleAt: sample?.latestSampleAt ?? null,
+    }).where(eq(gmailBackfillDomains.id, id));
+  }
+
+  /** Domains classified CONSUMER with more than `minThreadCount` threads — the human review list before import, per Steve's decision that a wrongly-classified consumer domain silently discards history. */
+  async getConsumerDomainsForReview(mailbox: string, label: string, minThreadCount: number): Promise<GmailBackfillDomain[]> {
+    return db.select().from(gmailBackfillDomains)
+      .where(and(
+        eq(gmailBackfillDomains.mailbox, mailbox),
+        eq(gmailBackfillDomains.label, label),
+        eq(gmailBackfillDomains.verdict, "CONSUMER"),
+        sql`${gmailBackfillDomains.threadCount} > ${minThreadCount}`,
+      ))
+      .orderBy(desc(gmailBackfillDomains.threadCount));
   }
 
   /** Null when this thread hasn't been censused yet — lets the census pass skip threads it already recorded on a prior (interrupted) run. */
@@ -742,13 +766,27 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async createBackfillThread(row: { mailbox: string; label: string; gmailThreadId: string; domain: string | null; category: string; resolvedContactEmail?: string | null }): Promise<GmailBackfillThread> {
-    const [created] = await db.insert(gmailBackfillThreads).values(row).returning();
+  async createBackfillThread(row: {
+    mailbox: string; label: string; gmailThreadId: string; domain: string | null; category: string;
+    resolvedContactEmail?: string | null; counterpartyEmail?: string | null; sampleSubject?: string | null;
+  }): Promise<GmailBackfillThread> {
+    // OWN_ONLY / NO_EXTERNAL_DOMAIN are terminal on arrival — internal or counterpartyless mail
+    // is flagged permanently excluded here, not deferred to the import phase, so no later pass
+    // (this run or any future one) can ever pick them back up.
+    const permanentlyExcluded = row.category === "OWN_ONLY" || row.category === "NO_EXTERNAL_DOMAIN";
+    const [created] = await db.insert(gmailBackfillThreads).values({ ...row, permanentlyExcluded }).returning();
     return created;
   }
 
   async updateBackfillThreadCategory(id: number, category: string): Promise<void> {
     await db.update(gmailBackfillThreads).set({ category }).where(eq(gmailBackfillThreads.id, id));
+  }
+
+  /** Threads still awaiting the free-provider per-thread classification pass (classifyFreeProviderThreadsBatch). */
+  async getFreeProviderUnresolvedThreads(mailbox: string, label: string, limit: number): Promise<GmailBackfillThread[]> {
+    return db.select().from(gmailBackfillThreads)
+      .where(and(eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.label, label), eq(gmailBackfillThreads.category, "FREE_PROVIDER_UNRESOLVED")))
+      .limit(limit);
   }
 
   async getBackfillThreadsByCategories(mailbox: string, label: string, categories: string[], onlyUnimported: boolean): Promise<GmailBackfillThread[]> {
