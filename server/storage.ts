@@ -8,6 +8,9 @@ import {
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
   gmailBackfillDomains, gmailBackfillThreads, gmailBackfillImportErrors,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
+  documentSends, unfiledAttachments,
+  type DocumentSend, type InsertDocumentSend,
+  type UnfiledAttachment, type InsertUnfiledAttachment,
   type SendingIdentity, type InsertSendingIdentity,
   type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
@@ -41,7 +44,7 @@ import {
   type PprImportBatch, type InsertPprImportBatch,
   type PprHeldRow, type InsertPprHeldRow,
   type AppSetting,
-  PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT,
+  PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT, GMAIL_HISTORICAL_IMPORT_PAUSED_KEY,
 } from "@shared/schema";
 import { countsAsActive, deriveClientState } from "@shared/client-state";
 import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
@@ -853,16 +856,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Categories that carry a "current version" concept — filing a new one
-   * supersedes the client's prior document of the same category, which is
-   * retained (never deleted) with isCurrent flipped to false. Categories
-   * outside this set (CLIENT_AGREEMENT, PROPOSAL, BROKER_* , OTHER, ...) have
-   * no such notion — a client can hold several at once — so they are left
-   * untouched.
+   * Categories that carry a "current version" concept purely by category —
+   * filing a new one supersedes the client's prior document of the same
+   * category, regardless of filename. Categories outside this set
+   * (CLIENT_AGREEMENT, PROPOSAL, BROKER_*, OTHER, ...) have no such notion —
+   * a client can hold several at once — so they are left untouched.
+   *
+   * RENEWAL_PROPOSAL, EMPLOYER_ACCEPTANCE, HANDOUT and SUPPLEMENT are
+   * deliberately NOT in this set: they use the finer-grained
+   * client+category+normalizedFileName grouping in VERSIONED_DOCUMENT_CATEGORIES
+   * below instead, so filing a 2027 Renewal Proposal does not mark a 2026
+   * Renewal Proposal (a different document, not a reissue) as superseded.
    */
   private static readonly SUPERSEDING_DOCUMENT_CATEGORIES = new Set([
-    "SPD", "PPR_REPORT", "HANDOUT", "RENEWAL_PROPOSAL", "RENEWAL_ACCEPTANCE",
-    "NEW_PROPOSAL", "RATE_NOTICE", "PLAN_TRANSMITTAL",
+    "SPD", "PPR_REPORT", "NEW_PROPOSAL", "RATE_NOTICE", "PLAN_TRANSMITTAL",
+  ]);
+
+  /**
+   * Categories versioned by client + category + normalizedFileName (see
+   * documents.normalizedFileName). A resend of the same document under a
+   * slightly different filename (" (1)", "_v2", "_REVISED") is a new version
+   * of the same document, ordered by sentAt (falling back to uploadedAt);
+   * a document with a different normalized filename in the same category
+   * (e.g. a different plan year) is an unrelated document, not a version.
+   */
+  static readonly VERSIONED_DOCUMENT_CATEGORIES = new Set([
+    "RENEWAL_PROPOSAL", "EMPLOYER_ACCEPTANCE", "HANDOUT", "SUPPLEMENT",
   ]);
 
   async createDocument(doc: InsertDocument): Promise<Document> {
@@ -871,7 +890,23 @@ export class DatabaseStorage implements IStorage {
         await tx.update(documents).set({ isCurrent: false })
           .where(and(eq(documents.clientId, doc.clientId), eq(documents.category, doc.category as any), eq(documents.isCurrent, true)));
       }
-      const [created] = await tx.insert(documents).values(doc).returning();
+      let version = doc.version ?? null;
+      let isCurrent = doc.isCurrent ?? true;
+      if (DatabaseStorage.VERSIONED_DOCUMENT_CATEGORIES.has(doc.category as string) && doc.normalizedFileName) {
+        const siblings = await tx.select().from(documents)
+          .where(and(
+            eq(documents.clientId, doc.clientId),
+            eq(documents.category, doc.category as any),
+            eq(documents.normalizedFileName, doc.normalizedFileName),
+          ));
+        version = siblings.length + 1;
+        isCurrent = true;
+        if (siblings.length > 0) {
+          await tx.update(documents).set({ isCurrent: false })
+            .where(inArray(documents.id, siblings.map(s => s.id)));
+        }
+      }
+      const [created] = await tx.insert(documents).values({ ...doc, version, isCurrent }).returning();
       return created;
     });
   }
@@ -885,6 +920,39 @@ export class DatabaseStorage implements IStorage {
     const [existing] = await db.select().from(documents)
       .where(and(eq(documents.clientId, clientId), eq(documents.contentHash, contentHash)));
     return existing;
+  }
+
+  /** Every recorded send date for a document — the original filing plus any identical-bytes resends. */
+  async getDocumentSends(documentId: number): Promise<DocumentSend[]> {
+    return db.select().from(documentSends).where(eq(documentSends.documentId, documentId)).orderBy(desc(documentSends.sentAt));
+  }
+
+  async createDocumentSend(send: InsertDocumentSend): Promise<DocumentSend> {
+    const [created] = await db.insert(documentSends).values(send).returning();
+    return created;
+  }
+
+  async createUnfiledAttachment(row: InsertUnfiledAttachment): Promise<UnfiledAttachment> {
+    const [created] = await db.insert(unfiledAttachments).values(row).returning();
+    return created;
+  }
+
+  async getUnfiledAttachmentsQueue(status: string = "PENDING"): Promise<UnfiledAttachment[]> {
+    return db.select().from(unfiledAttachments).where(eq(unfiledAttachments.status, status as any)).orderBy(desc(unfiledAttachments.createdAt));
+  }
+
+  async assignUnfiledAttachment(id: number, clientId: number, documentId: number, assignedBy: string): Promise<UnfiledAttachment | undefined> {
+    const [updated] = await db.update(unfiledAttachments)
+      .set({ status: "ASSIGNED", assignedClientId: clientId, assignedDocumentId: documentId, assignedAt: new Date(), assignedBy })
+      .where(eq(unfiledAttachments.id, id)).returning();
+    return updated;
+  }
+
+  async dismissUnfiledAttachment(id: number, assignedBy: string): Promise<UnfiledAttachment | undefined> {
+    const [updated] = await db.update(unfiledAttachments)
+      .set({ status: "DISMISSED", assignedAt: new Date(), assignedBy })
+      .where(eq(unfiledAttachments.id, id)).returning();
+    return updated;
   }
 
   /** Recognizes an attachment already pulled from this exact Gmail message, so a re-run of ingestion never re-downloads or re-bills Claude for it. */
@@ -1843,6 +1911,30 @@ export class DatabaseStorage implements IStorage {
     return row?.value ?? TRIAGE_MIN_PRIORITY_DEFAULT;
   }
 
+  /** Default un-paused so a fresh environment (no row yet) behaves like today until the startup seed writes the initial value. */
+  async getHistoricalImportPaused(): Promise<boolean> {
+    const row = await this.getAppSetting(GMAIL_HISTORICAL_IMPORT_PAUSED_KEY);
+    return row?.value === "true";
+  }
+
+  async setHistoricalImportPaused(paused: boolean, byUser: string): Promise<void> {
+    await this.setAppSetting(GMAIL_HISTORICAL_IMPORT_PAUSED_KEY, paused ? "true" : "false", byUser);
+  }
+
+  /**
+   * True once a thread has ever been in scope for the label-scoped historical
+   * backfill (census row exists for this mailbox+thread), whether or not the
+   * backfill has actually reached it yet. Used by the rolling sync to avoid
+   * treating a scoped thread's messages as brand-new live mail — see
+   * gmailMessages.isHistoricalImport for why this matters.
+   */
+  async isThreadInHistoricalBackfillScope(mailbox: string, gmailThreadId: string): Promise<boolean> {
+    const [row] = await db.select({ id: gmailBackfillThreads.id }).from(gmailBackfillThreads)
+      .where(and(eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.gmailThreadId, gmailThreadId)))
+      .limit(1);
+    return !!row;
+  }
+
   /**
    * The per-owner Gmail-native triage feed: AI-extracted action items whose
    * priority meets the tunable TRIAGE_MIN_PRIORITY setting, joined out to the
@@ -1860,6 +1952,10 @@ export class DatabaseStorage implements IStorage {
     const conditions = [
       sql`${communicationTasks.gmailMessageId} IS NOT NULL`,
       eq(communicationTasks.status, status),
+      // Backstop: exclude historical-import mail even if a task somehow
+      // exists for it (extraction should already have skipped it — this is
+      // the third, independent layer, not a substitute for that check).
+      eq(gmailMessages.isHistoricalImport, false),
     ];
     if (owner !== "ALL") conditions.push(eq(communicationTasks.owner, owner));
 

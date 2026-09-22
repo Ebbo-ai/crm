@@ -1,12 +1,15 @@
 import { storage } from "./storage";
 import { buildClientRefs } from "./client-context";
-import { matchEmailToClients, classifyMailRelevance, generateThreadSummary, processEmail } from "./claude";
+import { matchEmailToClients, classifyMailRelevance, generateThreadSummary, processEmail, extractDocumentFields } from "./claude";
 import { extractDocumentText, hashBuffer } from "./documentExtraction";
 import { uploadAttachmentBytes } from "./objectStorage";
 import { sanitizeEmailHtml, textToSafeHtml } from "./gmailSanitize";
 import { splitQuotedText } from "./gmailQuoteStrip";
 import { checkAllowlist, isVendorCorrespondence } from "./mailAllowlist";
 import { isEnrichmentPaused } from "./llmUsage";
+import { buildDeterministicLookup, matchDeterministically } from "./emailClientMatching";
+import { classifyDocumentType, normalizeDocumentFilename, looksSigned } from "./documentVersioning";
+import { resolveFieldMapping } from "./fieldMapping";
 import type { GmailMessage } from "@shared/schema";
 import {
   getGmailProfile,
@@ -26,6 +29,13 @@ const MAX_MESSAGES_PER_RUN = 250;
 const EMBEDDED_IMAGE_MAX_BYTES = 30_000;
 /** Threads shorter than this (combined body length) are self-evidently short — skip the AI summary. */
 const SUMMARY_MIN_CHARS = 400;
+/** How much of a message's body the client-matching prompt sees. From/To/Cc plus this much of the newest text is enough for a match without paying to send a whole thread. */
+const MATCH_PROMPT_BODY_CHARS = 1500;
+/** Filenames/subjects that suggest a document worth Claude's structured field extraction. */
+function looksLikeStructuredDocument(filename: string, subject: string): boolean {
+  const s = `${filename} ${subject}`.toLowerCase();
+  return /ppr|renewal|rate\s*sheet|rate\s*card|premium|proposal/.test(s);
+}
 
 /**
  * Steve's mailbox is the one mailbox that carries decades of personal
@@ -75,6 +85,8 @@ export interface GmailFullSyncSummary {
   attachmentsFiled: number;
   attachmentsSkippedEmbedded: number;
   attachmentsSkippedDuplicate: number;
+  attachmentsQueuedUnfiled: number;
+  fieldProposalsCreated: number;
   summariesGenerated: number;
   tasksCreated: number;
   /** True when the daily LLM cost ceiling was already hit at the start of this run — matching, classification, action-item extraction and summaries were all skipped, but message ingestion still ran in full. */
@@ -98,8 +110,18 @@ export interface GmailFullSyncSummary {
  * the only trace it leaves, a plain count with nothing identifying in it.
  *
  * State is tracked under `${mailbox}#full` in gmail_import_state, kept
- * separate from the original has:attachment-only importer's row so neither
- * overwrites the other's progress marker.
+ * separate from the retired has:attachment-only importer's row (this is now
+ * the only importer — see server/documentVersioning.ts and
+ * server/emailClientMatching.ts for the filing/matching logic it shares with
+ * the one-time historical backfill).
+ *
+ * Attachment matching, in order: (1) a deterministic group-number match
+ * (e.g. "S-379" in the subject or filename), (2) a deterministic address/
+ * domain match against known client and broker contacts, (3) only if
+ * neither hits, Claude — given From/To/Cc and a slice of the body, not From
+ * alone, since outbound renewal mail (Kim/Steve sending) makes the From
+ * header useless for matching. A matched document is filed to EVERY client
+ * the match identifies, not just the first.
  */
 export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSummary> {
   const profile = await getGmailProfile(mailbox);
@@ -122,6 +144,8 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
     attachmentsFiled: 0,
     attachmentsSkippedEmbedded: 0,
     attachmentsSkippedDuplicate: 0,
+    attachmentsQueuedUnfiled: 0,
+    fieldProposalsCreated: 0,
     summariesGenerated: 0,
     tasksCreated: 0,
     enrichmentPaused: false,
@@ -139,14 +163,21 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
   const usageCtx = { mailbox };
 
   const state = await storage.getGmailImportState(stateKey);
-  const backfillFloorEpoch = monthsAgoEpochSeconds(BACKFILL_MONTHS);
-  const afterEpoch = state?.backfillStartDate
+  // The backfill floor is set exactly once, the first time this mailbox is
+  // ever synced, and never recomputed after that. Recomputing "12 months
+  // before now" on every run (the original bug) crept the floor forward a
+  // little each day, quietly shrinking the retained window and eventually
+  // dropping mail that had never actually been synced yet.
+  const backfillFloorEpoch = state?.backfillStartDate
     ? Math.floor(new Date(state.backfillStartDate).getTime() / 1000)
-    : backfillFloorEpoch;
+    : monthsAgoEpochSeconds(BACKFILL_MONTHS);
+  const afterEpoch = backfillFloorEpoch;
 
   // No has:attachment restriction — every message, sent and received.
   const query = `after:${afterEpoch}`;
   const clientRefs = await buildClientRefs();
+  const deterministicLookup = buildDeterministicLookup(clientRefs);
+  const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
   const touchedThreadIds = new Set<number>();
   // Newly-created RECEIVED messages this run, grouped by thread, so the
   // classify pass below can extract AI action items/tasks against them once
@@ -224,6 +255,15 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
 
         // ── Thread bookkeeping ──
         let thread = await storage.getGmailThreadByGmailId(full.threadId);
+        // A thread the label-scoped historical backfill has ever put in
+        // scope is reference-only, never triaged — regardless of which
+        // pipeline reaches a given message first. The rolling sync runs
+        // every 5 minutes, far more often than the batch backfill, and can
+        // reach a scoped thread's older-but-recent messages before the
+        // backfill does; without this check those got filed as brand-new
+        // live mail and ran full task extraction on months-old
+        // correspondence. See gmailMessages.isHistoricalImport.
+        const isHistoricalScope = await storage.isThreadInHistoricalBackfillScope(mailbox, full.threadId);
         if (!thread) {
           thread = await storage.createGmailThread({
             gmailThreadId: full.threadId,
@@ -255,10 +295,14 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
           direction,
           hasAttachments: realAttachmentRefs.length > 0,
           messageIdHeader,
+          isHistoricalImport: isHistoricalScope,
         } as any);
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
-        if (direction === "RECEIVED") {
+        // Historical-scope messages are still filed (for search/reference)
+        // and count toward messagesNew, but never enter the action-item
+        // extraction pool — see the isHistoricalScope comment above.
+        if (direction === "RECEIVED" && !isHistoricalScope) {
           const bucket = newReceivedMessagesByThread.get(thread.id);
           if (bucket) bucket.push(message);
           else newReceivedMessagesByThread.set(thread.id, [message]);
@@ -286,41 +330,159 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
             continue;
           }
 
-          const matches = enrichmentGate.paused
-            ? []
-            : await matchEmailToClients(`From: ${fromHeader}\nSubject: ${subject}\n\n${bodyText.slice(0, 1000)}`, clientRefs, usageCtx);
-          const clientId = matches[0]?.clientId;
+          // Deterministic matching first (group number, then known contact
+          // address/domain) — only falls through to Claude when neither
+          // hits. To/Cc are included: outbound renewal mail (Kim or Steve
+          // sending) makes the From header useless on its own.
+          const deterministic = matchDeterministically(deterministicLookup, {
+            subject,
+            filename: attRef.filename,
+            fromEmail: fromParsed.email,
+            toEmails,
+            ccEmails,
+          });
+          let matchedClientIds: number[] = deterministic.clientIds;
+          if (matchedClientIds.length === 0 && !enrichmentGate.paused) {
+            const matches = await matchEmailToClients(
+              `From: ${fromHeader}\nTo: ${toEmails.join(", ")}\nCc: ${ccEmails.join(", ")}\nSubject: ${subject}\n\n${bodyText.slice(0, MATCH_PROMPT_BODY_CHARS)}`,
+              clientRefs,
+              usageCtx,
+            );
+            matchedClientIds = matches.map((m) => m.clientId);
+          }
 
-          let filedAsDocumentId: number | null = null;
-          if (clientId) {
+          if (matchedClientIds.length === 0) {
+            // Nothing matched even after Claude — queue it instead of
+            // silently dropping it. Bytes are downloaded and stored now so
+            // assignment later never needs to re-fetch from Gmail.
             const bytes = await getAttachmentBytes(mailbox, ref.id, attRef.attachmentId);
-            const contentHash = hashBuffer(bytes);
+            const objectKey = `unfiled-attachments/${ref.id}-${attRef.attachmentId}-${attRef.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+            await uploadAttachmentBytes(objectKey, bytes);
+            await storage.createUnfiledAttachment({
+              mailbox,
+              gmailMessageId: ref.id,
+              gmailAttachmentId: attRef.attachmentId,
+              filename: attRef.filename,
+              mimeType: attRef.mimeType,
+              sizeBytes: attRef.sizeBytes,
+              storagePath: objectKey,
+              subject,
+              fromEmail: fromParsed.email,
+              toEmails: [...toEmails, ...ccEmails].join(", "),
+              sentAt,
+              status: "PENDING",
+            } as any);
+            summary.attachmentsQueuedUnfiled++;
+            await storage.createGmailAttachment({
+              messageId: message.id,
+              gmailAttachmentId: attRef.attachmentId,
+              filename: attRef.filename,
+              mimeType: attRef.mimeType,
+              sizeBytes: attRef.sizeBytes,
+              isEmbeddedImage: false,
+              storagePath: null,
+              filedAsDocumentId: null,
+            } as any);
+            continue;
+          }
+
+          // File to every matched client, not just the first — a message can
+          // legitimately cover more than one group (a shared broker contact
+          // CC'd on several renewals, a multi-division account).
+          const bytes = await getAttachmentBytes(mailbox, ref.id, attRef.attachmentId);
+          const contentHash = hashBuffer(bytes);
+          const detectedCategory = classifyDocumentType(attRef.filename, subject);
+          const normalizedFileName = normalizeDocumentFilename(attRef.filename);
+          const sentToList = [...toEmails, ...ccEmails].join(", ");
+          let firstFiledDocumentId: number | null = null;
+
+          for (const clientId of matchedClientIds) {
             const existingDoc = await storage.findDocumentByContentHash(clientId, contentHash);
+            let filedDocumentId: number;
             if (existingDoc) {
-              filedAsDocumentId = existingDoc.id;
+              filedDocumentId = existingDoc.id;
               summary.attachmentsSkippedDuplicate++;
+              // Identical bytes sent again — a resend, not a new document.
+              // Record the new send date instead of filing a duplicate row.
+              await storage.createDocumentSend({
+                documentId: existingDoc.id,
+                sentAt,
+                sentTo: sentToList,
+                gmailMessageId: ref.id,
+              });
             } else {
               const { text: extractedText, ocrUsed } = await extractDocumentText(bytes, attRef.mimeType, attRef.filename);
               const objectKey = `gmail-attachments/${clientId}/${ref.id}-${attRef.attachmentId}-${attRef.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
               await uploadAttachmentBytes(objectKey, bytes);
+              const category = detectedCategory || "OTHER";
               const doc = await storage.createDocument({
                 clientId,
                 renewalId: null,
                 planId: null,
                 documentName: attRef.filename,
-                category: "OTHER",
+                category: category as any,
                 filePath: objectKey,
                 fileName: attRef.filename,
+                normalizedFileName,
                 notes: "Imported from Gmail inbox sync.",
                 uploadedBy: "Gmail sync",
                 extractedText: extractedText || null,
                 ocrUsed,
                 sourceGmailMessageId: ref.id,
                 contentHash,
+                sentAt,
+                sentBy: fromParsed.email,
+                sentTo: sentToList,
+                isSigned: category === "EMPLOYER_ACCEPTANCE" && looksSigned(attRef.filename),
               } as any);
-              filedAsDocumentId = doc.id;
+              filedDocumentId = doc.id;
               summary.attachmentsFiled++;
+              await storage.createDocumentSend({
+                documentId: doc.id,
+                sentAt,
+                sentTo: sentToList,
+                gmailMessageId: ref.id,
+              });
+
+              // Structured-document field extraction (PPR/renewal/rate
+              // sheet from an internal sender) — folded in from the retired
+              // has:attachment-only importer, which was the only place this
+              // ran before.
+              if (fromParsed.email.split("@")[1]?.toLowerCase() === internalDomain
+                && looksLikeStructuredDocument(attRef.filename, subject)
+                && extractedText && !enrichmentGate.paused) {
+                try {
+                  const client = clientRefs.find((c) => c.id === clientId);
+                  const fields = await extractDocumentFields(extractedText, "RENEWAL_PROPOSAL", client?.clientName || "");
+                  if (fields.length > 0) {
+                    await storage.createDocumentFieldProposals(
+                      fields.map((f) => {
+                        const mapping = resolveFieldMapping(f.fieldKey, f.proposedValue, "RENEWAL_PROPOSAL", clientId, doc.planId ?? null);
+                        return {
+                          documentId: doc.id,
+                          clientId,
+                          fieldKey: f.fieldKey,
+                          fieldLabel: f.fieldLabel,
+                          proposedValue: f.proposedValue,
+                          sourceLocation: f.sourceLocation,
+                          targetTable: mapping.targetTable,
+                          targetId: mapping.targetId,
+                          targetField: mapping.targetField,
+                          currentValue: null,
+                          mappingStatus: mapping.mappingStatus,
+                          confidence: mapping.confidence,
+                          isPlanDesignField: mapping.isPlanDesignField,
+                        };
+                      }),
+                    );
+                    summary.fieldProposalsCreated += fields.length;
+                  }
+                } catch (err: any) {
+                  summary.errors.push(`message ${ref.id} field extraction: ${err?.message || String(err)}`);
+                }
+              }
             }
+            if (firstFiledDocumentId === null) firstFiledDocumentId = filedDocumentId;
           }
 
           await storage.createGmailAttachment({
@@ -330,8 +492,8 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
             mimeType: attRef.mimeType,
             sizeBytes: attRef.sizeBytes,
             isEmbeddedImage: false,
-            storagePath: filedAsDocumentId ? `filed:${filedAsDocumentId}` : null,
-            filedAsDocumentId,
+            storagePath: firstFiledDocumentId ? `filed:${firstFiledDocumentId}` : null,
+            filedAsDocumentId: firstFiledDocumentId,
           } as any);
         }
       } catch (err: any) {
@@ -359,16 +521,25 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       let existingClientIds = await storage.getGmailThreadClientIds(threadId);
       let businessStatus = thread.businessStatus;
       if (existingClientIds.length === 0) {
-        const matches = enrichmentGate.paused
-          ? []
-          : await matchEmailToClients(
-              `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
-              clientRefs,
-              usageCtx,
-            );
-        if (matches.length > 0) {
-          await storage.setGmailThreadClients(threadId, matches.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
-          existingClientIds = matches.map((m) => m.clientId);
+        const latestForMatch = messages[messages.length - 1];
+        const deterministic = matchDeterministically(deterministicLookup, {
+          subject: thread.subject,
+          fromEmail: latestForMatch.fromEmail,
+          toEmails: (latestForMatch.toEmails as string[] | null) || [],
+          ccEmails: (latestForMatch.ccEmails as string[] | null) || [],
+        });
+        let matchedIds: { clientId: number; confidence: string }[] = deterministic.clientIds.map((id) => ({ clientId: id, confidence: "high" }));
+        if (matchedIds.length === 0 && !enrichmentGate.paused) {
+          const matches = await matchEmailToClients(
+            `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\nTo: ${((m.toEmails as string[] | null) || []).join(", ")}\nCc: ${((m.ccEmails as string[] | null) || []).join(", ")}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
+            clientRefs,
+            usageCtx,
+          );
+          matchedIds = matches;
+        }
+        if (matchedIds.length > 0) {
+          await storage.setGmailThreadClients(threadId, matchedIds.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
+          existingClientIds = matchedIds.map((m) => m.clientId);
           businessStatus = "MATCHED";
         }
       } else {
@@ -480,7 +651,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
     backfillStartDate: new Date(backfillFloorEpoch * 1000),
     lastProcessedInternalDate: finalPageToken || null,
     lastRunAt: new Date(),
-    lastRunSummary: `${summary.messagesScanned} scanned, ${summary.messagesNew} new${filterForAllowlist ? `, ${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)` : ""}, ${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates, ${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits), ${summary.attachmentsFiled} attachments filed, ${summary.errors.length} errors.`,
+    lastRunSummary: `${summary.messagesScanned} scanned, ${summary.messagesNew} new${filterForAllowlist ? `, ${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)` : ""}, ${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates, ${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits), ${summary.attachmentsFiled} attachments filed, ${summary.attachmentsQueuedUnfiled} queued unfiled, ${summary.errors.length} errors.`,
   });
   await storage.recordGmailAccountSync(mailbox, summary.errors.length ? `Completed with ${summary.errors.length} error(s)` : "Synced successfully");
 
@@ -500,7 +671,8 @@ export async function runGmailFullSyncAllMailboxes(): Promise<GmailFullSyncSumma
         mailbox: account.mailbox,
         messagesScanned: 0, messagesNew: 0, messagesSkippedNotAllowlisted: 0, messagesSkippedDuplicateAcrossMailboxes: 0,
         threadsTouched: 0, matched: 0, unassigned: 0, notBusiness: 0, filedToVendor: 0,
-        attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, summariesGenerated: 0,
+        attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, attachmentsQueuedUnfiled: 0,
+        fieldProposalsCreated: 0, summariesGenerated: 0,
         tasksCreated: 0, enrichmentPaused: false,
         errors: [err?.message || String(err)],
       });

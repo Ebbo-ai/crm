@@ -231,6 +231,7 @@ async function importOneThread(
       direction,
       hasAttachments: attachmentRefs.length > 0,
       messageIdHeader,
+      isHistoricalImport: true,
     } as any);
     newlyCreatedMessageIds.push(created.id);
     result.messagesImported++;
@@ -405,6 +406,19 @@ async function runHistoricalImportLoop(mailbox: string, label: string, stateKey:
   let batchNumber = 0;
 
   for (;;) {
+    // Re-checked every batch (not just at startup) so pausing mid-run takes
+    // effect within one batch instead of requiring a restart. State is left
+    // exactly where it is — nothing here touches importedAt on any thread,
+    // so resuming later picks up at the same not-yet-imported set.
+    if (await storage.getHistoricalImportPaused()) {
+      console.log(`[gmailHistoricalImport] ${mailbox}/${label}: paused — stopping cleanly. ${JSON.stringify(totals)} so far this run.`);
+      await storage.upsertGmailImportState(stateKey, {
+        lastRunAt: new Date(),
+        lastRunSummary: `PAUSED. ${JSON.stringify(totals)}. Resume by clearing the pause flag.`,
+      });
+      return;
+    }
+
     let batch: HistoricalImportBatchResult;
     try {
       batch = await runHistoricalImportBatch(mailbox, label);

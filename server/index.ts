@@ -1569,6 +1569,154 @@ app.use((req, res, next) => {
       VALUES ('LLM_DAILY_CEILING_USD', '15', 'Steve Schultz')
       ON CONFLICT (key) DO NOTHING
     `);
+
+    // ── Phase 27: renewal document versioning, send history, and the unfiled-attachments queue ──
+    // RENEWAL_ACCEPTANCE is dropped from document_category: it has zero rows
+    // in every environment and no code path ever created one —
+    // EMPLOYER_ACCEPTANCE is the sole acceptance category. Postgres can't
+    // drop an enum value in place, so the type is recreated; guarded so this
+    // only runs while the old value is still present, making it a no-op on
+    // every boot after the first.
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          WHERE t.typname = 'document_category' AND e.enumlabel = 'RENEWAL_ACCEPTANCE'
+        ) THEN
+          CREATE TYPE document_category_new AS ENUM (
+            'CLIENT_AGREEMENT', 'PROPOSAL', 'EMPLOYER_ACCEPTANCE', 'BROKER_COMPENSATION', 'BROKER_OF_RECORD',
+            'RENEWAL_PROPOSAL', 'PPR_REPORT', 'OTHER',
+            'SPD', 'HANDOUT', 'NEW_PROPOSAL', 'RATE_NOTICE',
+            'PLAN_TRANSMITTAL', 'SUPPLEMENT'
+          );
+          ALTER TABLE documents ALTER COLUMN category DROP DEFAULT;
+          ALTER TABLE documents ALTER COLUMN category TYPE document_category_new USING category::text::document_category_new;
+          DROP TYPE document_category;
+          ALTER TYPE document_category_new RENAME TO document_category;
+        ELSIF NOT EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          WHERE t.typname = 'document_category' AND e.enumlabel = 'SUPPLEMENT'
+        ) THEN
+          ALTER TYPE document_category ADD VALUE IF NOT EXISTS 'SUPPLEMENT';
+        END IF;
+      END $$;
+    `);
+    // documents.version has been text and 100% NULL in every environment —
+    // safe to retype to integer, which is what version numbers actually are.
+    // Guarded on the column's current type so a second boot (where it's
+    // already integer) doesn't re-run the USING cast against a column that
+    // no longer accepts a text-shaped NULLIF comparison.
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'version') = 'text' THEN
+          ALTER TABLE documents ALTER COLUMN version TYPE INTEGER USING NULLIF(version, '')::integer;
+        END IF;
+      END $$;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_file_name TEXT;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS sent_by TEXT;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS sent_to TEXT;
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_signed BOOLEAN NOT NULL DEFAULT false;
+      CREATE TABLE IF NOT EXISTS document_sends (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        sent_at TIMESTAMP NOT NULL,
+        sent_to TEXT,
+        gmail_message_id TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS document_sends_document_idx ON document_sends (document_id);
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'unfiled_attachment_status') THEN
+          CREATE TYPE unfiled_attachment_status AS ENUM ('PENDING', 'ASSIGNED', 'DISMISSED');
+        END IF;
+      END $$;
+      CREATE TABLE IF NOT EXISTS unfiled_attachments (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        gmail_message_id TEXT NOT NULL,
+        gmail_attachment_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        storage_path TEXT NOT NULL,
+        subject TEXT,
+        from_email TEXT,
+        to_emails TEXT,
+        sent_at TIMESTAMP,
+        status unfiled_attachment_status NOT NULL DEFAULT 'PENDING',
+        assigned_client_id INTEGER,
+        assigned_document_id INTEGER,
+        assigned_at TIMESTAMP,
+        assigned_by TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS unfiled_attachments_status_idx ON unfiled_attachments (status);
+    `);
+    log("Startup migration: renewal document versioning (sentAt/sentBy/sentTo/isSigned/normalizedFileName, integer version), document_sends, and unfiled_attachments queue ready");
+
+    // ── Phase 28: is_historical_import flag + one-time triage cleanup for the label-scoped backfill ──
+    // The rolling 5-min sync (gmailFullSync) runs far more often than the
+    // one-time batch backfill (gmailHistoricalImport) and was reaching a
+    // backfill-scoped thread's older-but-recent messages first, filing them
+    // as brand-new live mail and running full AI task extraction on them —
+    // flooding the triage feed with months-old correspondence that was
+    // always meant to be reference-only. This column plus the two steps
+    // below make that impossible going forward, independent of which
+    // pipeline creates a given message row.
+    await pool.query(`
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS is_historical_import BOOLEAN NOT NULL DEFAULT false;
+      CREATE INDEX IF NOT EXISTS gmail_messages_is_historical_import_idx ON gmail_messages (is_historical_import) WHERE is_historical_import = true;
+    `);
+    // Evergreen, not one-time: re-runs every boot so a thread that joins
+    // backfill scope later (a new census pass, or the label being applied to
+    // more mail) is still caught, not just what was in scope the day this
+    // shipped.
+    const flagResult = await pool.query(`
+      UPDATE gmail_messages gm
+      SET is_historical_import = true
+      FROM gmail_threads gt
+      JOIN gmail_backfill_threads gbt ON gbt.gmail_thread_id = gt.gmail_thread_id AND gbt.mailbox = gt.mailbox
+      WHERE gm.thread_id = gt.id AND gm.is_historical_import = false
+      RETURNING gm.id
+    `);
+    if (flagResult.rowCount) {
+      log(`Startup migration: flagged ${flagResult.rowCount} gmail_messages row(s) as historical-import scope (backfill-scoped thread, regardless of which pipeline created the row)`);
+    }
+    // One-time-in-effect bulk cleanup: delete (not resolve) every AI-origin
+    // triage task that traces back to a historical-import-scoped message.
+    // Naturally idempotent — once these rows are gone, this matches nothing
+    // on every later boot — so it doubles as a permanent backstop with no
+    // separate one-time marker needed.
+    const beforeCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
+    const cleanupResult = await pool.query(`
+      DELETE FROM communication_tasks
+      WHERE gmail_message_id IN (SELECT id FROM gmail_messages WHERE is_historical_import = true)
+      RETURNING id
+    `);
+    if (cleanupResult.rowCount) {
+      const afterCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
+      log(`Startup migration: bulk-removed ${cleanupResult.rowCount} historical-import triage task(s) — AI-origin tasks before: ${beforeCount.rows[0].count}, after: ${afterCount.rows[0].count}`);
+    }
+    // Pause the historical import by default on this deploy. Seeded once
+    // (ON CONFLICT DO NOTHING) so a later admin toggle to resume isn't
+    // silently overwritten on the next boot.
+    await pool.query(`
+      INSERT INTO app_settings (key, value, updated_by)
+      VALUES ('GMAIL_HISTORICAL_IMPORT_PAUSED', 'true', 'system: incident pause')
+      ON CONFLICT (key) DO NOTHING
+    `);
+    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied, import paused by default pending manual resume");
+
+    const retroTyping = await (await import("./documentRetroTyping")).runDocumentRetroTyping();
+    if (retroTyping.scanned > 0) {
+      log(`Startup migration: retro-typing pass scanned ${retroTyping.scanned} OTHER document(s) — reclassified ${retroTyping.reclassified.length}, left ${retroTyping.leftAsOther} as OTHER (ambiguous filename)`);
+    }
   } catch (err: any) {
     console.error("Startup migration error:", err.message);
   }
@@ -1613,6 +1761,10 @@ app.use((req, res, next) => {
   // this label's backfill completes it is a no-op on every future boot.
   (async () => {
     try {
+      if (await storage.getHistoricalImportPaused()) {
+        log(`Gmail historical import: paused (GMAIL_HISTORICAL_IMPORT_PAUSED app setting) — not starting.`);
+        return;
+      }
       const remaining = await storage.countImportEligibleRemaining("steve.schultz@simple.us", "90 Degree Benefits");
       if (remaining === 0) return;
       log(`Gmail historical import: ${remaining} thread(s) still pending for steve.schultz@simple.us / "90 Degree Benefits" — starting.`);

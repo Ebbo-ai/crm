@@ -256,7 +256,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
                 data-testid="nav-gmail-import"
               >
                 <Inbox className="w-4.5 h-4.5 flex-shrink-0" />
-                {!collapsed && <span>Gmail Import</span>}
+                {!collapsed && <span>Unfiled Attachments</span>}
               </div>
             </Link>
             <Link href="/settings/mail-accounts">

@@ -1708,6 +1708,16 @@ export async function registerRoutes(
     }
   });
 
+  /** Every recorded send date for a document — the original filing plus any identical-bytes resends. Used by the client detail page's Renewal documents group to expand a version's full send history. */
+  app.get("/api/documents/:docId/sends", requireAuth, async (req, res) => {
+    try {
+      const sends = await storage.getDocumentSends(parseInt(req.params.docId));
+      res.json(sends);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   /**
    * Bulk-friendly: accepts one file or many in the same request (field name
    * "files"), all filed under the same client/category/notes. Lets Kim drop a
@@ -1869,46 +1879,97 @@ export async function registerRoutes(
     }
   });
 
-  // ─── Gmail attachment ingestion ─────────────────────────────────────────────
-  app.get("/api/gmail-import/estimate", requireAdmin, async (req, res) => {
+  // ─── Unfiled attachments queue ───────────────────────────────────────────
+  // server/gmailFullSync.ts is now the only mail importer (the old
+  // has:attachment-only gmailIngestion.ts was retired — running two
+  // divergent importers side by side was the root cause of documents
+  // silently landing on the wrong client). Anything it can't match to a
+  // client, even after the Claude fallback, lands here instead of being
+  // dropped.
+  app.get("/api/unfiled-attachments", requireAdmin, async (req, res) => {
     try {
-      const { estimateGmailIngestionVolume } = await import("./gmailIngestion");
-      const estimate = await estimateGmailIngestionVolume();
-      res.json(estimate);
+      const status = (req.query.status as string) || "PENDING";
+      const rows = await storage.getUnfiledAttachmentsQueue(status);
+      res.json(rows);
     } catch (err: any) {
-      console.error("[gmail-import] estimate failed:", err?.message || err);
-      res.status(502).json({ message: err.message || "Failed to reach Gmail" });
+      res.status(500).json({ message: err.message });
     }
   });
 
-  app.get("/api/gmail-import/status", requireAdmin, async (req, res) => {
+  app.get("/api/unfiled-attachments/:id/download", requireAdmin, async (req, res) => {
     try {
-      const { getGmailProfile } = await import("./gmail");
-      const profile = await getGmailProfile("kim.anderson@simple.us");
-      const state = await storage.getGmailImportState(profile.emailAddress);
-      res.json({ mailbox: profile.emailAddress, state: state || null });
+      const rows = await storage.getUnfiledAttachmentsQueue("PENDING");
+      const all = [...rows, ...(await storage.getUnfiledAttachmentsQueue("ASSIGNED")), ...(await storage.getUnfiledAttachmentsQueue("DISMISSED"))];
+      const row = all.find((r) => r.id === parseInt(req.params.id));
+      if (!row) return res.status(404).json({ message: "Not found" });
+      const { downloadAttachmentBytes } = await import("./objectStorage");
+      const bytes = await downloadAttachmentBytes(row.storagePath);
+      res.setHeader("Content-Disposition", `attachment; filename="${row.filename}"`);
+      res.send(bytes);
     } catch (err: any) {
-      console.error("[gmail-import] status failed:", err?.message || err);
-      res.status(502).json({ message: err.message || "Failed to reach Gmail" });
+      res.status(500).json({ message: err.message });
     }
   });
 
-  app.post("/api/gmail-import/run", requireAdmin, async (req, res) => {
+  app.post("/api/unfiled-attachments/:id/assign", requireAdmin, async (req, res) => {
     try {
-      const { runGmailIngestion } = await import("./gmailIngestion");
-      const summary = await runGmailIngestion("kim.anderson@simple.us");
-      await storage.createAuditLog({
-        userId: (req.user as any).id,
-        userName: (req.user as any).fullName,
-        action: "ran",
-        entity: "gmail_import",
-        entityId: 0,
-        details: `Gmail ingestion for ${summary.mailbox}: ${summary.documentsFiled} document(s) filed, ${summary.attachmentsSkippedDuplicate} duplicate(s) skipped, ${summary.fieldProposalsCreated} field proposal(s) created.`,
-      });
-      res.json(summary);
+      const id = parseInt(req.params.id);
+      const clientId = parseInt(req.body.clientId);
+      const category = req.body.category || "OTHER";
+      const rows = await storage.getUnfiledAttachmentsQueue("PENDING");
+      const row = rows.find((r) => r.id === id);
+      if (!row) return res.status(404).json({ message: "Not found or already handled" });
+
+      const { downloadAttachmentBytes } = await import("./objectStorage");
+      const bytes = await downloadAttachmentBytes(row.storagePath);
+      const { hashBuffer, extractDocumentText } = await import("./documentExtraction");
+      const { normalizeDocumentFilename } = await import("./documentVersioning");
+      const { uploadAttachmentBytes: uploadBytes } = await import("./objectStorage");
+      const contentHash = hashBuffer(bytes);
+      const existingDoc = await storage.findDocumentByContentHash(clientId, contentHash);
+      let doc;
+      if (existingDoc) {
+        doc = existingDoc;
+        await storage.createDocumentSend({ documentId: existingDoc.id, sentAt: row.sentAt || new Date(), sentTo: row.toEmails, gmailMessageId: row.gmailMessageId });
+      } else {
+        const { text: extractedText, ocrUsed } = await extractDocumentText(bytes, row.mimeType || "application/octet-stream", row.filename);
+        const objectKey = `gmail-attachments/${clientId}/${row.gmailMessageId}-${row.gmailAttachmentId}-${row.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        await uploadBytes(objectKey, bytes);
+        doc = await storage.createDocument({
+          clientId,
+          renewalId: null,
+          planId: null,
+          documentName: row.filename,
+          category,
+          filePath: objectKey,
+          fileName: row.filename,
+          normalizedFileName: normalizeDocumentFilename(row.filename),
+          notes: "Assigned from the unfiled Gmail attachments queue.",
+          uploadedBy: (req.user as any).fullName,
+          extractedText: extractedText || null,
+          ocrUsed,
+          sourceGmailMessageId: row.gmailMessageId,
+          contentHash,
+          sentAt: row.sentAt,
+          sentBy: row.fromEmail,
+          sentTo: row.toEmails,
+        } as any);
+        await storage.createDocumentSend({ documentId: doc.id, sentAt: row.sentAt || new Date(), sentTo: row.toEmails, gmailMessageId: row.gmailMessageId });
+      }
+      const updated = await storage.assignUnfiledAttachment(id, clientId, doc.id, (req.user as any).fullName);
+      res.json(updated);
     } catch (err: any) {
-      console.error("[gmail-import] run failed:", err?.message || err);
-      res.status(502).json({ message: err.message || "Gmail ingestion failed" });
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/unfiled-attachments/:id/dismiss", requireAdmin, async (req, res) => {
+    try {
+      const updated = await storage.dismissUnfiledAttachment(parseInt(req.params.id), (req.user as any).fullName);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -2235,6 +2296,42 @@ export async function registerRoutes(
       const { isPrivate } = req.body;
       await storage.setGmailThreadPrivate(id, !!isPrivate);
       res.json({ message: "Updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Historical mail import pause control ──────────────────────────────────
+  // Lets an admin pause/resume the one-time label-scoped backfill
+  // (server/gmailHistoricalImport.ts) without a code change or redeploy.
+  // Pausing never touches the backfill's saved progress (gmail_backfill_threads
+  // .imported_at) — it just stops the loop from starting or continuing, and
+  // a later resume picks up at the same not-yet-imported set.
+  app.get("/api/gmail-historical-import/status", requireAuth, async (_req, res) => {
+    try {
+      const paused = await storage.getHistoricalImportPaused();
+      const remaining = await storage.countImportEligibleRemaining("steve.schultz@simple.us", "90 Degree Benefits");
+      res.json({ paused, remaining });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/gmail-historical-import/status", requireAdmin, async (req, res) => {
+    try {
+      const { paused } = req.body;
+      if (typeof paused !== "boolean") return res.status(400).json({ message: "paused must be a boolean" });
+      const user = (req.user as any)?.fullName ?? "Unknown";
+      await storage.setHistoricalImportPaused(paused, user);
+      if (!paused) {
+        // Kick the loop back off immediately rather than waiting for the
+        // next server restart to notice the flag flipped.
+        const { runHistoricalImportToCompletion } = await import("./gmailHistoricalImport");
+        runHistoricalImportToCompletion("steve.schultz@simple.us", "90 Degree Benefits").catch((err: any) =>
+          console.error("Gmail historical import error:", err?.message || err)
+        );
+      }
+      res.json({ paused });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -22,10 +22,16 @@ export const documentCategoryEnum = pgEnum("document_category", [
   "CLIENT_AGREEMENT", "PROPOSAL", "EMPLOYER_ACCEPTANCE", "BROKER_COMPENSATION", "BROKER_OF_RECORD",
   "RENEWAL_PROPOSAL", "PPR_REPORT", "OTHER",
   // Per-client variable document types (Requirement 2 groundwork — see replit.md "Document model").
-  "SPD", "HANDOUT", "RENEWAL_ACCEPTANCE", "NEW_PROPOSAL", "RATE_NOTICE",
+  // RENEWAL_ACCEPTANCE was never actually created by any code path (0 rows in
+  // dev or prod) — EMPLOYER_ACCEPTANCE is the one live acceptance category.
+  // Removed rather than kept as a second, indistinguishable acceptance value.
+  "SPD", "HANDOUT", "NEW_PROPOSAL", "RATE_NOTICE",
   // Internal-only: admin fee breakdown. Never attach to a client/broker-facing send —
   // enforced server-side in server/documentGuards.ts, not just a UI warning.
   "PLAN_TRANSMITTAL",
+  // Rate bridges, funding options, glide paths, signature pages — supplemental
+  // material accompanying a renewal proposal, distinct from the proposal itself.
+  "SUPPLEMENT",
 ]);
 export const heldRowStatusEnum = pgEnum("held_row_status", ["PENDING", "ACCEPTED", "DISCARDED"]);
 export const issueStatusEnum = pgEnum("issue_status", ["ACTIVE", "RESOLVED"]);
@@ -308,7 +314,24 @@ export const documents = pgTable("documents", {
   category: documentCategoryEnum("category").notNull(),
   filePath: text("file_path").notNull(),
   fileName: text("file_name").notNull(),
-  version: text("version"),
+  /**
+   * Ordered position of this document within its client + category +
+   * normalizedFileName group (1 = first sent, 2 = first reissue, ...). Was
+   * previously free text and never populated; computed now by
+   * server/documentVersioning.ts whenever a document lands in a versioned
+   * category (see VERSIONED_DOCUMENT_CATEGORIES). Null for categories not
+   * versioned this way.
+   */
+  version: integer("version"),
+  /**
+   * Filename with resend artifacts stripped (" (1)", "_v2", "_rev2",
+   * "_REVISED", extension) so "Loudon_Renewal_2027.pdf" and
+   * "Loudon_Renewal_2027 (1).pdf" group as versions of the same document
+   * rather than two unrelated files. Computed at filing time, not at read
+   * time, so version numbering is stable even if matching logic later
+   * changes how it would normalize a name.
+   */
+  normalizedFileName: text("normalized_file_name"),
   notes: text("notes"),
   uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
   uploadedBy: text("uploaded_by").notNull(),
@@ -342,6 +365,76 @@ export const documents = pgTable("documents", {
    * same clientId+category to false when a new one is filed.
    */
   isCurrent: boolean("is_current").notNull().default(true),
+  /**
+   * The email Date header of the message this document was attached to —
+   * "when Kim actually sent this to the client", distinct from uploadedAt
+   * (when the CRM happened to file it) and effectiveDate (what plan year the
+   * content describes). Null for manually-uploaded documents with no
+   * originating email. Steve: "we need a date indicator on when they were
+   * sent since often the client will ask for a revision or we will find an
+   * error and have to reissue."
+   */
+  sentAt: timestamp("sent_at"),
+  /** Email address from the message's From header, when sentAt is set. */
+  sentBy: text("sent_by"),
+  /** Comma-joined To/Cc recipient addresses from the message, when sentAt is set. */
+  sentTo: text("sent_to"),
+  /**
+   * True when this is a signed/executed copy (e.g. a scanned acceptance form
+   * the client mailed back), false for the unsigned original. A property of
+   * an EMPLOYER_ACCEPTANCE document, not a separate category — see the
+   * documentCategoryEnum comment on why SIGNED_ACCEPTANCE was rejected as a
+   * third acceptance value.
+   */
+  isSigned: boolean("is_signed").notNull().default(false),
+});
+
+/**
+ * Every date a given document was sent, kept even when a resend is the exact
+ * same bytes (no new documents row in that case — see
+ * server/documentVersioning.ts). Without this, resending the identical PDF a
+ * second time would either create a spurious duplicate document or silently
+ * lose the fact that it was sent again on a later date, which is exactly the
+ * "when did we last send this" question Steve asked for.
+ */
+export const documentSends = pgTable("document_sends", {
+  id: serial("id").primaryKey(),
+  documentId: integer("document_id").notNull(),
+  sentAt: timestamp("sent_at").notNull(),
+  sentTo: text("sent_to"),
+  /** Gmail message id this send was observed on, when known — lets a send be traced back to the exact email. */
+  gmailMessageId: text("gmail_message_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * A real attachment (not an embedded logo/icon) that Gmail sync could not
+ * match to any client, even after the Claude fallback — held here instead of
+ * being silently dropped, so Kim can review and assign it by hand. Bytes are
+ * downloaded and stored up front so assignment never needs to re-fetch from
+ * Gmail (a re-auth or token issue between now and assignment would otherwise
+ * lose the file).
+ */
+export const unfiledAttachmentStatusEnum = pgEnum("unfiled_attachment_status", ["PENDING", "ASSIGNED", "DISMISSED"]);
+export const unfiledAttachments = pgTable("unfiled_attachments", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull(),
+  gmailMessageId: text("gmail_message_id").notNull(),
+  gmailAttachmentId: text("gmail_attachment_id").notNull(),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  storagePath: text("storage_path").notNull(),
+  subject: text("subject"),
+  fromEmail: text("from_email"),
+  toEmails: text("to_emails"),
+  sentAt: timestamp("sent_at"),
+  status: unfiledAttachmentStatusEnum("status").notNull().default("PENDING"),
+  assignedClientId: integer("assigned_client_id"),
+  assignedDocumentId: integer("assigned_document_id"),
+  assignedAt: timestamp("assigned_at"),
+  assignedBy: text("assigned_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 /**
@@ -866,6 +959,21 @@ export const gmailMessages = pgTable("gmail_messages", {
   sentAt: timestamp("sent_at").notNull(),
   direction: gmailMessageDirectionEnum("direction").notNull(),
   hasAttachments: boolean("has_attachments").notNull().default(false),
+  /**
+   * True for any message belonging to a thread the label-scoped historical
+   * backfill (server/gmailHistoricalImport.ts) has ever put in scope —
+   * regardless of which pipeline actually wrote this row. The rolling 5-min
+   * sync (server/gmailFullSync.ts) runs far more often than the batch
+   * backfill and can reach a scoped thread's older-but-recent messages
+   * first; without this flag those got filed as if brand new and triggered
+   * AI task extraction, flooding the triage feed with mail that was always
+   * meant to be reference-only. Checked in three independent places (belt
+   * and braces, not reliant on any single path): the extractor skips
+   * flagged messages outright, the rolling sync never treats a flagged
+   * thread's messages as new, and the triage feed query excludes them even
+   * if a task exists anyway.
+   */
+  isHistoricalImport: boolean("is_historical_import").notNull().default(false),
   /** RFC822 Message-ID header — see communications.messageIdHeader for why this, not Gmail's per-mailbox id, is the cross-mailbox dedupe key. */
   messageIdHeader: text("message_id_header"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -919,6 +1027,12 @@ export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, creat
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
 export const insertGlobalDocumentSchema = createInsertSchema(globalDocuments).omit({ id: true, uploadedAt: true });
+export const insertDocumentSendSchema = createInsertSchema(documentSends).omit({ id: true, createdAt: true });
+export const insertUnfiledAttachmentSchema = createInsertSchema(unfiledAttachments).omit({ id: true, createdAt: true });
+export type DocumentSend = typeof documentSends.$inferSelect;
+export type InsertDocumentSend = z.infer<typeof insertDocumentSendSchema>;
+export type UnfiledAttachment = typeof unfiledAttachments.$inferSelect;
+export type InsertUnfiledAttachment = z.infer<typeof insertUnfiledAttachmentSchema>;
 export const insertVendorContactSchema = createInsertSchema(vendorContacts).omit({ id: true });
 /**
  * One row per unique sender domain found while censusing a label for
@@ -1077,6 +1191,8 @@ export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
 export const PRIORITY_RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
 export const TRIAGE_MIN_PRIORITY_KEY = "TRIAGE_MIN_PRIORITY";
 export const TRIAGE_MIN_PRIORITY_DEFAULT = "LOW";
+/** app_settings key that pauses the one-time historical-mail import (server/gmailHistoricalImport.ts) without touching its saved cursor. Checked at startup and re-checked every batch while a run is in progress, so flipping it takes effect within one batch instead of requiring a restart. */
+export const GMAIL_HISTORICAL_IMPORT_PAUSED_KEY = "GMAIL_HISTORICAL_IMPORT_PAUSED";
 
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;
