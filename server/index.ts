@@ -1676,13 +1676,18 @@ app.use((req, res, next) => {
     // Evergreen, not one-time: re-runs every boot so a thread that joins
     // backfill scope later (a new census pass, or the label being applied to
     // more mail) is still caught, not just what was in scope the day this
-    // shipped.
+    // shipped. Per-MESSAGE, not per-thread: only flags a message that
+    // existed AT OR BEFORE its thread's census timestamp. A message sent
+    // after the census — a genuine live reply on an old thread — is never
+    // flagged here, even though its thread appears in the census, so a real
+    // client/broker reply on a "90 Degree Benefits" thread is never
+    // silently muted.
     const flagResult = await pool.query(`
       UPDATE gmail_messages gm
       SET is_historical_import = true
       FROM gmail_threads gt
       JOIN gmail_backfill_threads gbt ON gbt.gmail_thread_id = gt.gmail_thread_id AND gbt.mailbox = gt.mailbox
-      WHERE gm.thread_id = gt.id AND gm.is_historical_import = false
+      WHERE gm.thread_id = gt.id AND gm.sent_at <= gbt.created_at AND gm.is_historical_import = false
       RETURNING gm.id
     `);
     if (flagResult.rowCount) {
@@ -1712,6 +1717,16 @@ app.use((req, res, next) => {
       ON CONFLICT (key) DO NOTHING
     `);
     log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied, import paused by default pending manual resume");
+
+    // One-time, bounded catch-up: messages sent after their thread's census
+    // timestamp (genuine live mail) that got skipped before the
+    // per-message isHistoricalImport fix existed. See
+    // storage.getUnextractedPostCensusMessages for the exact criteria.
+    const { runPostCensusCatchUpExtraction } = await import("./gmailFullSync");
+    const catchUp = await runPostCensusCatchUpExtraction();
+    if (catchUp.messagesChecked > 0) {
+      log(`Startup migration: post-census catch-up — checked ${catchUp.messagesChecked} previously-skipped live message(s), created ${catchUp.tasksCreated} triage task(s)`);
+    }
 
     const retroTyping = await (await import("./documentRetroTyping")).runDocumentRetroTyping();
     if (retroTyping.scanned > 0) {

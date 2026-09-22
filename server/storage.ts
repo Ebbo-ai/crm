@@ -1922,17 +1922,48 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * True once a thread has ever been in scope for the label-scoped historical
-   * backfill (census row exists for this mailbox+thread), whether or not the
-   * backfill has actually reached it yet. Used by the rolling sync to avoid
-   * treating a scoped thread's messages as brand-new live mail — see
-   * gmailMessages.isHistoricalImport for why this matters.
+   * The moment the label-scoped historical backfill's census discovered this
+   * thread (gmail_backfill_threads.created_at), or null if the thread was
+   * never in scope. This is a per-thread timestamp, not a per-thread
+   * boolean — a censused thread is not muted forever. Only messages that
+   * existed AT census time are historical; anything sent after is genuine
+   * live mail (a real reply on an old thread) and must go through normal
+   * extraction/triage even though its thread appears in the census. See
+   * gmailMessages.isHistoricalImport for how callers use this.
    */
-  async isThreadInHistoricalBackfillScope(mailbox: string, gmailThreadId: string): Promise<boolean> {
-    const [row] = await db.select({ id: gmailBackfillThreads.id }).from(gmailBackfillThreads)
+  async getBackfillCensusTimestamp(mailbox: string, gmailThreadId: string): Promise<Date | null> {
+    const [row] = await db.select({ createdAt: gmailBackfillThreads.createdAt }).from(gmailBackfillThreads)
       .where(and(eq(gmailBackfillThreads.mailbox, mailbox), eq(gmailBackfillThreads.gmailThreadId, gmailThreadId)))
       .limit(1);
-    return !!row;
+    return row?.createdAt ?? null;
+  }
+
+  /**
+   * Bounded, one-time catch-up set: RECEIVED messages that live on a
+   * backfill-censused thread, were sent AFTER that thread's census
+   * timestamp (so they're genuine live mail, not historical filler), and
+   * never got a triage task — because whichever pipeline captured them
+   * (before the per-message isHistoricalImport fix existed) treated the
+   * whole thread as historical and skipped extraction outright. Expected to
+   * match a small number of rows once, then nothing ever again as new mail
+   * always goes through the fixed per-message check at write time.
+   */
+  async getUnextractedPostCensusMessages(): Promise<GmailMessage[]> {
+    const rows = await db.select({ message: gmailMessages })
+      .from(gmailMessages)
+      .innerJoin(gmailThreads, eq(gmailThreads.id, gmailMessages.threadId))
+      .innerJoin(gmailBackfillThreads, and(
+        eq(gmailBackfillThreads.gmailThreadId, gmailThreads.gmailThreadId),
+        eq(gmailBackfillThreads.mailbox, gmailThreads.mailbox),
+      ))
+      .leftJoin(communicationTasks, eq(communicationTasks.gmailMessageId, gmailMessages.id))
+      .where(and(
+        eq(gmailMessages.isHistoricalImport, false),
+        eq(gmailMessages.direction, "RECEIVED"),
+        sql`${gmailMessages.sentAt} > ${gmailBackfillThreads.createdAt}`,
+        isNull(communicationTasks.id),
+      ));
+    return rows.map(r => r.message);
   }
 
   /**

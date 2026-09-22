@@ -51,8 +51,62 @@ const MAILBOX_OWNERS: Record<string, string> = {
   "clientservice@simple.us": "Kim Anderson",
   "steve.schultz@simple.us": "Steve Schultz",
 };
-function ownerForMailbox(mailbox: string): string {
+export function ownerForMailbox(mailbox: string): string {
   return MAILBOX_OWNERS[mailbox.toLowerCase()] || "Kim Anderson";
+}
+
+/**
+ * One-time, bounded catch-up: extracts action items for RECEIVED messages
+ * that were sent after their thread's historical-backfill census timestamp
+ * (genuine live mail) but got skipped before the per-message
+ * isHistoricalImport fix existed, because whichever pipeline captured them
+ * treated the whole thread as historical. See
+ * storage.getUnextractedPostCensusMessages for the exact bounded set.
+ * Idempotent — once every match has a task, this is a no-op forever.
+ */
+export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecked: number; tasksCreated: number }> {
+  const messages = await storage.getUnextractedPostCensusMessages();
+  const result = { messagesChecked: messages.length, tasksCreated: 0 };
+  if (messages.length === 0) return result;
+
+  const enrichmentGate = await isEnrichmentPaused();
+  if (enrichmentGate.paused) {
+    console.warn(`[gmailFullSync] Post-census catch-up: LLM enrichment paused, skipping ${messages.length} message(s) this boot — will retry next boot.`);
+    return result;
+  }
+
+  for (const msg of messages) {
+    try {
+      if (msg.messageIdHeader) {
+        const legacyDupe = await storage.getCommunicationByMessageIdHeader(msg.messageIdHeader);
+        if (legacyDupe) continue;
+      }
+      const usageCtx = { mailbox: `${msg.mailbox}:postCensusCatchUp` };
+      const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
+      const processed = await processEmail(fullText, [], usageCtx);
+      if (processed.actionItems.length === 0) continue;
+
+      const clientIds = await storage.getGmailThreadClientIds(msg.threadId);
+      const owner = ownerForMailbox(msg.mailbox);
+      const clientAssignments = clientIds.map((clientId) => ({ clientId, confidence: "medium" }));
+      for (const item of processed.actionItems) {
+        const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+        await storage.createTaskWithClients({
+          communicationId: null,
+          gmailMessageId: msg.id,
+          clientId: clientIds[0] ?? null,
+          description: item.description,
+          dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+          owner,
+          aiPriority: item.priority,
+        } as any, clientAssignments);
+        result.tasksCreated++;
+      }
+    } catch (err: any) {
+      console.error(`[gmailFullSync] Post-census catch-up: message ${msg.gmailMessageId} action-item extraction failed: ${err?.message || err}`);
+    }
+  }
+  return result;
 }
 
 function monthsAgoEpochSeconds(months: number): number {
@@ -256,14 +310,18 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
         // ── Thread bookkeeping ──
         let thread = await storage.getGmailThreadByGmailId(full.threadId);
         // A thread the label-scoped historical backfill has ever put in
-        // scope is reference-only, never triaged — regardless of which
-        // pipeline reaches a given message first. The rolling sync runs
-        // every 5 minutes, far more often than the batch backfill, and can
-        // reach a scoped thread's older-but-recent messages before the
-        // backfill does; without this check those got filed as brand-new
-        // live mail and ran full task extraction on months-old
-        // correspondence. See gmailMessages.isHistoricalImport.
-        const isHistoricalScope = await storage.isThreadInHistoricalBackfillScope(mailbox, full.threadId);
+        // census scope is reference-only for messages that existed AT
+        // census time — regardless of which pipeline reaches a given
+        // message first. The rolling sync runs every 5 minutes, far more
+        // often than the batch backfill, and can reach a scoped thread's
+        // older-but-recent messages before the backfill does; without this
+        // check those got filed as brand-new live mail and ran full task
+        // extraction on months-old correspondence. This is a per-MESSAGE
+        // check, not per-thread: a message sent after the census timestamp
+        // is a genuine new reply on that thread and must flow through
+        // extraction/triage normally, even though the thread itself was
+        // censused. See gmailMessages.isHistoricalImport.
+        const censusTimestamp = await storage.getBackfillCensusTimestamp(mailbox, full.threadId);
         if (!thread) {
           thread = await storage.createGmailThread({
             gmailThreadId: full.threadId,
@@ -295,14 +353,16 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
           direction,
           hasAttachments: realAttachmentRefs.length > 0,
           messageIdHeader,
-          isHistoricalImport: isHistoricalScope,
+          isHistoricalImport: censusTimestamp !== null && sentAt <= censusTimestamp,
         } as any);
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
-        // Historical-scope messages are still filed (for search/reference)
-        // and count toward messagesNew, but never enter the action-item
-        // extraction pool — see the isHistoricalScope comment above.
-        if (direction === "RECEIVED" && !isHistoricalScope) {
+        // Historical (pre-census) messages are still filed (for
+        // search/reference) and count toward messagesNew, but never enter
+        // the action-item extraction pool. A message sent AFTER the census
+        // timestamp is live mail even in a censused thread — see the
+        // censusTimestamp comment above.
+        if (direction === "RECEIVED" && message.isHistoricalImport === false) {
           const bucket = newReceivedMessagesByThread.get(thread.id);
           if (bucket) bucket.push(message);
           else newReceivedMessagesByThread.set(thread.id, [message]);

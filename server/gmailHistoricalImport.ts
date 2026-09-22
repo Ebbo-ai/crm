@@ -1,14 +1,15 @@
 import { storage } from "./storage";
 import { pool } from "./db";
 import { buildClientRefs } from "./client-context";
-import { matchEmailToClients, extractDocumentFields } from "./claude";
+import { matchEmailToClients, extractDocumentFields, processEmail } from "./claude";
 import { extractDocumentText, hashBuffer } from "./documentExtraction";
 import { resolveFieldMapping } from "./fieldMapping";
 import { uploadAttachmentBytes } from "./objectStorage";
 import { sanitizeEmailHtml, textToSafeHtml } from "./gmailSanitize";
 import { splitQuotedText } from "./gmailQuoteStrip";
 import { isVendorCorrespondence } from "./mailAllowlist";
-import { isEmbeddedImage } from "./gmailFullSync";
+import { isEmbeddedImage, ownerForMailbox } from "./gmailFullSync";
+import { isEnrichmentPaused } from "./llmUsage";
 import type { ClientRef } from "./claude";
 import type { GmailBackfillThread } from "@shared/schema";
 import {
@@ -29,11 +30,19 @@ import {
  *
  * Differences from both existing importers, all deliberate per Steve's
  * explicit sign-off for this run:
- *  - No LLM budget ceiling (isEnrichmentPaused is never checked) — this is a
- *    one-time backfill, not the daily rolling sync.
- *  - No thread summaries, no action-item extraction, no tasks created
- *    (generateThreadSummary/processEmail/classifyMailRelevance are never
- *    called) — historical mail is filed for reference, not triaged.
+ *  - No LLM budget ceiling on the import's own matching work
+ *    (isEnrichmentPaused is never checked there) — this is a one-time
+ *    backfill, not the daily rolling sync.
+ *  - No thread summaries, no action-item extraction on messages that existed
+ *    at census time (generateThreadSummary/classifyMailRelevance are never
+ *    called, processEmail is never called for them) — that mail is filed
+ *    for reference, not triaged. A message sent AFTER a thread's census
+ *    timestamp is different: it's a genuine live reply this batch happens
+ *    to be the first to reach, so it DOES go through processEmail/task
+ *    extraction (gated by isEnrichmentPaused like the rolling sync), same
+ *    as gmailFullSync would have done if it had gotten there first. See
+ *    gmailMessages.isHistoricalImport and importOneThread's per-message
+ *    isHistoricalMessage check.
  *  - Client resolution tries a deterministic address/domain lookup first
  *    (built once from clientRefs, no API call) and only falls back to one
  *    matchEmailToClients LLM call per thread when that comes up empty. The
@@ -171,6 +180,12 @@ async function importOneThread(
   const allMessages: { fromEmail: string; toEmails: string[]; ccEmails: string[]; bodyTextNew: string | null; bodyText: string | null; subject: string | null }[] = [];
   let latestMessageAt: Date | null = null;
   let firstSubject: string | null = null;
+  // Messages sent AFTER this thread's census timestamp are genuine live mail
+  // that happens to live on a censused thread (e.g. a client replied to an
+  // old thread before this batch got to it) — never mute those. Collected
+  // here and run through the same extraction as the rolling sync, once
+  // client resolution below determines who they belong to.
+  const newLiveReceivedMessages: { id: number; gmailMessageId: string; fromEmail: string; fromName: string | null; subject: string | null; bodyTextNew: string | null; bodyText: string | null; messageIdHeader: string | null }[] = [];
 
   for (const msg of full.messages || []) {
     const fromHeader = getHeader(msg.payload, "From") || "";
@@ -211,6 +226,11 @@ async function importOneThread(
     const bodyHtmlSafe = html ? sanitizeEmailHtml(html) : textToSafeHtml(bodyText || "(no content)");
     const quoteSplit = splitQuotedText(bodyText, subject);
     const attachmentRefs = extractAttachmentRefs(msg.payload);
+    // Per-MESSAGE, not per-thread: only messages that existed at census time
+    // are historical. A message sent after the census timestamp is live
+    // mail even though its thread was censused — see the field comment on
+    // gmailMessages.isHistoricalImport.
+    const isHistoricalMessage = sentAt <= backfillRow.createdAt;
 
     const created = await storage.createGmailMessage({
       gmailMessageId: msg.id,
@@ -231,11 +251,17 @@ async function importOneThread(
       direction,
       hasAttachments: attachmentRefs.length > 0,
       messageIdHeader,
-      isHistoricalImport: true,
+      isHistoricalImport: isHistoricalMessage,
     } as any);
     newlyCreatedMessageIds.push(created.id);
     result.messagesImported++;
     allMessages.push({ fromEmail: fromParsed.email, toEmails, ccEmails, bodyTextNew: quoteSplit.newText, bodyText, subject });
+    if (direction === "RECEIVED" && !isHistoricalMessage) {
+      newLiveReceivedMessages.push({
+        id: created.id, gmailMessageId: created.gmailMessageId, fromEmail: fromParsed.email, fromName: fromParsed.name,
+        subject, bodyTextNew: quoteSplit.newText, bodyText, messageIdHeader,
+      });
+    }
 
     // Attachments/document filing deferred until the thread's client is
     // resolved below — filed against whichever client the thread as a whole
@@ -290,6 +316,45 @@ async function importOneThread(
     subject: thread.subject || firstSubject,
     messageCount,
   } as any);
+
+  // ── AI action-item extraction for post-census (live) messages only ──
+  // Mirrors gmailFullSync's extraction exactly, run here because this batch
+  // is the one reaching these messages first. Historical (pre-census)
+  // messages never reach this — they're filed for reference only, per the
+  // module's original design intent.
+  if (newLiveReceivedMessages.length > 0) {
+    const enrichmentGate = await isEnrichmentPaused();
+    if (!enrichmentGate.paused) {
+      for (const msg of newLiveReceivedMessages) {
+        try {
+          if (msg.messageIdHeader) {
+            const legacyDupe = await storage.getCommunicationByMessageIdHeader(msg.messageIdHeader);
+            if (legacyDupe) continue;
+          }
+          const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
+          const processed = await processEmail(fullText, [], usageCtx);
+          if (processed.actionItems.length === 0) continue;
+
+          const owner = ownerForMailbox(mailbox);
+          const clientAssignments = clientIds.map((clientId) => ({ clientId, confidence: matchMethod === "LOOKUP" ? "high" : "medium" }));
+          for (const item of processed.actionItems) {
+            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+            await storage.createTaskWithClients({
+              communicationId: null,
+              gmailMessageId: msg.id,
+              clientId: clientIds[0] ?? null,
+              description: item.description,
+              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+              owner,
+              aiPriority: item.priority,
+            } as any, clientAssignments);
+          }
+        } catch (err: any) {
+          console.error(`[gmailHistoricalImport] ${mailbox}: post-census message ${msg.gmailMessageId} action-item extraction failed: ${err?.message || err}`);
+        }
+      }
+    }
+  }
 
   // ── File attachments + structured-document typing, only for messages we just created ──
   const primaryClientId = clientIds[0];
