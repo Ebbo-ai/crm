@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { pool } from "./db";
 import { buildClientRefs } from "./client-context";
 import { matchEmailToClients, extractDocumentFields } from "./claude";
 import { extractDocumentText, hashBuffer } from "./documentExtraction";
@@ -46,7 +47,9 @@ import {
  *    in-memory summary — a skipped thread is a visible, retryable row.
  */
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 25;
+/** How many threads within one batch are processed concurrently. Each thread's wall time is dominated by waiting on Gmail/LLM network round trips, not CPU, so overlapping them shortens a batch without changing what any single thread does. Gmail's own per-user quota is still enforced by the shared pace() spacing in gmail.ts, which every concurrent call routes through, so this cannot burst past it. */
+const THREAD_CONCURRENCY = 5;
 /** Circuit breaker: if this many consecutive batches produce zero successful imports, stop rather than spin forever re-trying the same broken threads. */
 const MAX_CONSECUTIVE_STALLED_BATCHES = 5;
 
@@ -123,20 +126,30 @@ export async function runHistoricalImportBatch(mailbox: string, label: string): 
   const usageCtx = { mailbox: `${mailbox}:historicalImport` };
   const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
 
-  for (const backfillRow of batch) {
-    result.threadsProcessed++;
-    try {
-      await importOneThread(backfillRow, mailbox, clientRefs, lookup, usageCtx, internalDomain, result);
-      result.threadsImported++;
-    } catch (err: any) {
-      result.threadsErrored++;
-      const message = err?.message || String(err);
-      console.error(`[gmailHistoricalImport] ${mailbox}/${label} thread ${backfillRow.gmailThreadId}: ${message}`);
-      await storage.createBackfillImportError({
-        mailbox, label, gmailThreadId: backfillRow.gmailThreadId, errorMessage: message.slice(0, 2000),
-      });
+  // Bounded concurrency: a shared cursor into `batch`, THREAD_CONCURRENCY
+  // workers each pull the next row and process it. Counters on `result` are
+  // plain increments from async callbacks with no `await` between the read
+  // and the write, so there is no interleaving hazard despite the shared object.
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const backfillRow = batch[cursor++];
+      if (!backfillRow) return;
+      result.threadsProcessed++;
+      try {
+        await importOneThread(backfillRow, mailbox, clientRefs, lookup, usageCtx, internalDomain, result);
+        result.threadsImported++;
+      } catch (err: any) {
+        result.threadsErrored++;
+        const message = err?.message || String(err);
+        console.error(`[gmailHistoricalImport] ${mailbox}/${label} thread ${backfillRow.gmailThreadId}: ${message}`);
+        await storage.createBackfillImportError({
+          mailbox, label, gmailThreadId: backfillRow.gmailThreadId, errorMessage: message.slice(0, 2000),
+        });
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(THREAD_CONCURRENCY, batch.length) }, () => worker()));
 
   result.remaining = await storage.countImportEligibleRemaining(mailbox, label);
   return result;
@@ -354,17 +367,58 @@ async function importOneThread(
  */
 export async function runHistoricalImportToCompletion(mailbox: string, label: string): Promise<void> {
   const stateKey = `${mailbox}#historicalImport:${label}`;
-  const existingState = await storage.getGmailImportState(stateKey);
-  if (!existingState) {
-    await storage.upsertGmailImportState(stateKey, { backfillStartDate: new Date(), lastRunAt: new Date(), lastRunSummary: "Started." });
+
+  // Session-level Postgres advisory lock, held on one checked-out client for
+  // the whole run. Autoscale can boot more than one instance of this process
+  // (a scale-out event, or the old and new instance overlapping briefly during
+  // a redeploy), and each one runs this same startup job independently — there
+  // was never a mechanism stopping two instances from both pulling the same
+  // "not yet imported" batch and doing the work twice. That duplication is
+  // confirmed in llm_usage_log: every matchEmailToClients call for this run
+  // appears exactly twice, seconds or milliseconds apart, with identical
+  // token counts. A DB-wide lock (not a mailbox in-memory flag, which
+  // wouldn't cross process boundaries) makes this job single-flight across
+  // however many instances are running, whatever the cause.
+  const lockClient = await pool.connect();
+  const lockKeyRes = await lockClient.query("SELECT pg_try_advisory_lock(hashtext($1)) AS acquired", [stateKey]);
+  if (!lockKeyRes.rows[0]?.acquired) {
+    console.log(`[gmailHistoricalImport] ${mailbox}/${label}: another instance already holds the import lock — skipping.`);
+    lockClient.release();
+    return;
   }
 
+  try {
+    const existingState = await storage.getGmailImportState(stateKey);
+    if (!existingState) {
+      await storage.upsertGmailImportState(stateKey, { backfillStartDate: new Date(), lastRunAt: new Date(), lastRunSummary: "Started." });
+    }
+    await runHistoricalImportLoop(mailbox, label, stateKey);
+  } finally {
+    await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [stateKey]).catch(() => {});
+    lockClient.release();
+  }
+}
+
+async function runHistoricalImportLoop(mailbox: string, label: string, stateKey: string): Promise<void> {
   let totals = { threadsImported: 0, threadsErrored: 0, messagesImported: 0, attachmentsFiled: 0, matchedByLookup: 0, matchedByLlm: 0, unmatched: 0, filedToVendor: 0 };
   let consecutiveStalledBatches = 0;
   let batchNumber = 0;
 
   for (;;) {
-    const batch = await runHistoricalImportBatch(mailbox, label);
+    let batch: HistoricalImportBatchResult;
+    try {
+      batch = await runHistoricalImportBatch(mailbox, label);
+    } catch (err: any) {
+      // A whole-batch failure (seen in production as "Authentication timed
+      // out" from a Gmail OAuth token refresh) used to propagate out of this
+      // loop, and the only caller (server/index.ts's startup IIFE) just logs
+      // and gives up — silently stopping a job meant to run unattended for
+      // hours. Log and retry after a short pause instead of dying; the next
+      // attempt re-reads the same not-yet-imported batch, so nothing is lost.
+      console.error(`[gmailHistoricalImport] ${mailbox}/${label}: batch failed (${err?.message || err}), retrying in 10s.`);
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      continue;
+    }
     batchNumber++;
     totals.threadsImported += batch.threadsImported;
     totals.threadsErrored += batch.threadsErrored;
