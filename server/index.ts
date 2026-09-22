@@ -9,6 +9,7 @@ import {
   stopRatingEngine,
 } from "./rating-engine";
 import { scheduleDailyDigest } from "./digest";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -1370,6 +1371,19 @@ app.use((req, res, next) => {
     `);
     log("Startup migration: Gmail inbox tables ready");
 
+    await pool.query(`
+      ALTER TABLE gmail_backfill_threads ADD COLUMN IF NOT EXISTS import_match_method TEXT;
+      CREATE TABLE IF NOT EXISTS gmail_backfill_import_errors (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        label TEXT NOT NULL,
+        gmail_thread_id TEXT NOT NULL,
+        error_message TEXT NOT NULL,
+        occurred_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    log("Startup migration: Gmail historical import match-method column + persisted error table ready");
+
     const imageCleanup = await storage.cleanupEmbeddedImageDocuments();
     if (imageCleanup.deleted > 0) {
       log(`Startup migration: removed ${imageCleanup.deleted} signature-logo/icon document(s) mistakenly filed by the original attachment backfill`);
@@ -1589,6 +1603,25 @@ app.use((req, res, next) => {
   }
   setTimeout(runGmailSyncSafely, 10_000);
   setInterval(runGmailSyncSafely, GMAIL_SYNC_INTERVAL_MS);
+
+  // One-time historical import: steve.schultz@'s "90 Degree Benefits" label,
+  // scoped to the threads the classification backfill already confirmed are
+  // business mail (BUSINESS + FREE_PROVIDER_BUSINESS). Runs in-process, not
+  // tied to any HTTP request or browser tab, so it can walk thousands of
+  // threads without depending on a page staying open. Idempotent: it checks
+  // for remaining unimported eligible threads before doing anything, so once
+  // this label's backfill completes it is a no-op on every future boot.
+  (async () => {
+    try {
+      const remaining = await storage.countImportEligibleRemaining("steve.schultz@simple.us", "90 Degree Benefits");
+      if (remaining === 0) return;
+      log(`Gmail historical import: ${remaining} thread(s) still pending for steve.schultz@simple.us / "90 Degree Benefits" — starting.`);
+      const { runHistoricalImportToCompletion } = await import("./gmailHistoricalImport");
+      await runHistoricalImportToCompletion("steve.schultz@simple.us", "90 Degree Benefits");
+    } catch (err: any) {
+      console.error("Gmail historical import error:", err?.message || err);
+    }
+  })();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

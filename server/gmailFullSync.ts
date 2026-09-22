@@ -51,7 +51,7 @@ function monthsAgoEpochSeconds(months: number): number {
   return Math.floor(d.getTime() / 1000);
 }
 
-function isEmbeddedImage(ref: { filename: string; mimeType: string; sizeBytes: number }): boolean {
+export function isEmbeddedImage(ref: { filename: string; mimeType: string; sizeBytes: number }): boolean {
   if (!ref.mimeType.startsWith("image/")) return false;
   if (ref.sizeBytes > 0 && ref.sizeBytes < EMBEDDED_IMAGE_MAX_BYTES) return true;
   return /^image\d*\.(png|jpe?g|gif)$/i.test(ref.filename)

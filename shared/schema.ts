@@ -977,15 +977,36 @@ export const gmailBackfillThreads = pgTable("gmail_backfill_threads", {
   sampleSubject: text("sample_subject"),
   permanentlyExcluded: boolean("permanently_excluded").notNull().default(false),
   importedAt: timestamp("imported_at"),
+  /** How the imported thread got its client link(s): LOOKUP (deterministic address/domain match, no LLM call) | LLM (matchEmailToClients fallback) | UNMATCHED (no client found — still imported, just unlinked). Null until the import pass touches this row. */
+  importMatchMethod: text("import_match_method"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * Persisted, per-thread failures from the historical import pass — unlike
+ * the census phase (whose errors only ever lived in an in-memory run
+ * summary), Steve required these survive the run so a skipped thread is a
+ * visible, inspectable row, not a silent gap. A thread with an error here
+ * keeps importedAt null, so the next run retries it automatically.
+ */
+export const gmailBackfillImportErrors = pgTable("gmail_backfill_import_errors", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull(),
+  label: text("label").notNull(),
+  gmailThreadId: text("gmail_thread_id").notNull(),
+  errorMessage: text("error_message").notNull(),
+  occurredAt: timestamp("occurred_at").notNull().defaultNow(),
 });
 
 export const insertGmailBackfillDomainSchema = createInsertSchema(gmailBackfillDomains).omit({ id: true, createdAt: true });
 export const insertGmailBackfillThreadSchema = createInsertSchema(gmailBackfillThreads).omit({ id: true, createdAt: true });
+export const insertGmailBackfillImportErrorSchema = createInsertSchema(gmailBackfillImportErrors).omit({ id: true, occurredAt: true });
 export type GmailBackfillDomain = typeof gmailBackfillDomains.$inferSelect;
 export type InsertGmailBackfillDomain = z.infer<typeof insertGmailBackfillDomainSchema>;
 export type GmailBackfillThread = typeof gmailBackfillThreads.$inferSelect;
 export type InsertGmailBackfillThread = z.infer<typeof insertGmailBackfillThreadSchema>;
+export type GmailBackfillImportError = typeof gmailBackfillImportErrors.$inferSelect;
+export type InsertGmailBackfillImportError = z.infer<typeof insertGmailBackfillImportErrorSchema>;
 
 export const insertGmailImportStateSchema = createInsertSchema(gmailImportState).omit({ id: true, createdAt: true });
 export const insertLlmUsageLogSchema = createInsertSchema(llmUsageLog).omit({ id: true, createdAt: true });

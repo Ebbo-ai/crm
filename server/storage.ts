@@ -6,14 +6,14 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
-  gmailBackfillDomains, gmailBackfillThreads,
+  gmailBackfillDomains, gmailBackfillThreads, gmailBackfillImportErrors,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
   type SendingIdentity, type InsertSendingIdentity,
   type UserSendingIdentity,
   type GmailImportState, type InsertGmailImportState,
   type GmailAccount, type InsertGmailAccount,
   type MailAllowlistDomain, type InsertMailAllowlistDomain,
-  type GmailBackfillDomain, type GmailBackfillThread,
+  type GmailBackfillDomain, type GmailBackfillThread, type GmailBackfillImportError,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
   type GmailThread, type InsertGmailThread,
@@ -803,8 +803,43 @@ export class DatabaseStorage implements IStorage {
     return rows.map(r => ({ category: r.category, count: Number(r.count) }));
   }
 
-  async markBackfillThreadImported(id: number): Promise<void> {
-    await db.update(gmailBackfillThreads).set({ importedAt: new Date() }).where(eq(gmailBackfillThreads.id, id));
+  async markBackfillThreadImported(id: number, matchMethod: "LOOKUP" | "LLM" | "UNMATCHED"): Promise<void> {
+    await db.update(gmailBackfillThreads).set({ importedAt: new Date(), importMatchMethod: matchMethod }).where(eq(gmailBackfillThreads.id, id));
+  }
+
+  /** Next batch of import-eligible threads (already censused BUSINESS/FREE_PROVIDER_BUSINESS, not yet imported), newest first. Gmail thread ids are monotonically increasing hex strings, so sorting by length then value approximates chronological order without an extra Gmail call per thread. */
+  async getImportEligibleThreadsBatch(mailbox: string, label: string, limit: number): Promise<GmailBackfillThread[]> {
+    return db.select().from(gmailBackfillThreads)
+      .where(and(
+        eq(gmailBackfillThreads.mailbox, mailbox),
+        eq(gmailBackfillThreads.label, label),
+        inArray(gmailBackfillThreads.category, ["BUSINESS", "FREE_PROVIDER_BUSINESS"]),
+        isNull(gmailBackfillThreads.importedAt),
+      ))
+      .orderBy(desc(sql`length(${gmailBackfillThreads.gmailThreadId})`), desc(gmailBackfillThreads.gmailThreadId))
+      .limit(limit);
+  }
+
+  async countImportEligibleRemaining(mailbox: string, label: string): Promise<number> {
+    const [row] = await db.select({ count: sql<string>`COUNT(*)` }).from(gmailBackfillThreads)
+      .where(and(
+        eq(gmailBackfillThreads.mailbox, mailbox),
+        eq(gmailBackfillThreads.label, label),
+        inArray(gmailBackfillThreads.category, ["BUSINESS", "FREE_PROVIDER_BUSINESS"]),
+        isNull(gmailBackfillThreads.importedAt),
+      ));
+    return Number(row?.count ?? 0);
+  }
+
+  async createBackfillImportError(row: { mailbox: string; label: string; gmailThreadId: string; errorMessage: string }): Promise<GmailBackfillImportError> {
+    const [created] = await db.insert(gmailBackfillImportErrors).values(row).returning();
+    return created;
+  }
+
+  async getBackfillImportErrors(mailbox: string, label: string): Promise<GmailBackfillImportError[]> {
+    return db.select().from(gmailBackfillImportErrors)
+      .where(and(eq(gmailBackfillImportErrors.mailbox, mailbox), eq(gmailBackfillImportErrors.label, label)))
+      .orderBy(desc(gmailBackfillImportErrors.occurredAt));
   }
 
   /** Attachments on this communication that have not yet been filed onto a client's documents tab. */

@@ -156,6 +156,17 @@ export async function getMessageFull(mailbox: string, messageId: string): Promis
   return gmailGet<GmailMessageFull>(mailbox, `/gmail/v1/users/me/messages/${messageId}?format=full`);
 }
 
+export interface GmailThreadFull {
+  id: string;
+  historyId?: string;
+  messages: GmailMessageFull[];
+}
+
+/** The whole thread — every message, full body/attachments — in one call. Used by the historical import, which already knows (from the census pass) that a thread is worth reading in full, unlike the rolling sync's one-message-at-a-time walk. */
+export async function getThreadFull(mailbox: string, threadId: string): Promise<GmailThreadFull> {
+  return gmailGet<GmailThreadFull>(mailbox, `/gmail/v1/users/me/threads/${threadId}?format=full`);
+}
+
 /** Headers only, no body/attachments — for passes that only need From/To/Cc/Subject (label domain census) and would otherwise pull megabytes of body text they never look at. */
 export async function getMessageMetadata(mailbox: string, messageId: string): Promise<GmailMessageFull> {
   const params = new URLSearchParams({ format: "metadata" });
