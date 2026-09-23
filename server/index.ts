@@ -1708,15 +1708,23 @@ app.use((req, res, next) => {
       const afterCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
       log(`Startup migration: bulk-removed ${cleanupResult.rowCount} historical-import triage task(s) — AI-origin tasks before: ${beforeCount.rows[0].count}, after: ${afterCount.rows[0].count}`);
     }
-    // Pause the historical import by default on this deploy. Seeded once
-    // (ON CONFLICT DO NOTHING) so a later admin toggle to resume isn't
-    // silently overwritten on the next boot.
+    // Force-pause the historical import on this deploy. Deliberately an
+    // unconditional UPSERT, not ON CONFLICT DO NOTHING: an earlier version of
+    // this migration used DO NOTHING, and because this app_settings row
+    // already existed (set to 'false' from before this incident), that
+    // migration silently never took effect — the import kept running in
+    // production straight through a deploy that was supposed to pause it.
+    // This is a one-time incident pause; once it has actually taken effect
+    // (confirm via GET /api/gmail-historical-import/status) it is safe to
+    // delete this block, since app_settings.updated_by preserves who paused
+    // it and PUT /api/gmail-historical-import/status is the normal way to
+    // resume from then on.
     await pool.query(`
       INSERT INTO app_settings (key, value, updated_by)
       VALUES ('GMAIL_HISTORICAL_IMPORT_PAUSED', 'true', 'system: incident pause')
-      ON CONFLICT (key) DO NOTHING
+      ON CONFLICT (key) DO UPDATE SET value = 'true', updated_by = 'system: incident pause', updated_at = now()
     `);
-    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied, import paused by default pending manual resume");
+    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied, import force-paused pending manual resume");
 
     // One-time, bounded catch-up: messages sent after their thread's census
     // timestamp (genuine live mail) that got skipped before the
@@ -1726,6 +1734,38 @@ app.use((req, res, next) => {
     const catchUp = await runPostCensusCatchUpExtraction();
     if (catchUp.messagesChecked > 0) {
       log(`Startup migration: post-census catch-up — checked ${catchUp.messagesChecked} previously-skipped live message(s), created ${catchUp.tasksCreated} triage task(s)`);
+    }
+
+    // One-time diagnostic: does a Gmail filter auto-apply the "90 Degree
+    // Benefits" label to new incoming mail, or was the label only ever
+    // applied by hand to historical mail? This changes how urgent the
+    // rolling-sync/backfill census-timestamp coordination is — if a filter
+    // is still live, brand-new threads keep joining the label every day,
+    // not just replies on already-labeled threads.
+    try {
+      const { CONFIGURED_MAILBOXES } = await import("./googleOAuth");
+      const { listGmailFilters, listGmailLabels } = await import("./gmail");
+      for (const { mailbox } of CONFIGURED_MAILBOXES) {
+        try {
+          const labels = await listGmailLabels(mailbox);
+          const targetLabel = labels.find((l) => l.name === "90 Degree Benefits");
+          if (!targetLabel) {
+            log(`Startup diagnostic: ${mailbox} has no "90 Degree Benefits" label at all.`);
+            continue;
+          }
+          const filters = await listGmailFilters(mailbox);
+          const matching = filters.filter((f) => f.action?.addLabelIds?.includes(targetLabel.id));
+          if (matching.length > 0) {
+            log(`Startup diagnostic: ${mailbox} HAS an active Gmail filter auto-applying "90 Degree Benefits" (label id ${targetLabel.id}) — criteria: ${JSON.stringify(matching.map((m) => m.criteria))}`);
+          } else {
+            log(`Startup diagnostic: ${mailbox} has NO active Gmail filter targeting "90 Degree Benefits" — label appears to be manually applied only.`);
+          }
+        } catch (err: any) {
+          log(`Startup diagnostic: ${mailbox} filter/label check failed: ${err?.message || err}`);
+        }
+      }
+    } catch (err: any) {
+      console.error("Startup diagnostic (Gmail filter check) error:", err.message);
     }
 
     const retroTyping = await (await import("./documentRetroTyping")).runDocumentRetroTyping();

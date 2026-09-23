@@ -97,6 +97,24 @@ export interface GmailProfile {
   threadsTotal: number;
 }
 
+export interface GmailFilter {
+  id: string;
+  criteria?: Record<string, unknown>;
+  action?: { addLabelIds?: string[]; removeLabelIds?: string[] };
+}
+
+/** Every user-configured Gmail filter (Settings → Filters and Blocked Addresses) for this mailbox — used to check whether a label is applied automatically to incoming mail rather than only ever set by hand. */
+export async function listGmailFilters(mailbox: string): Promise<GmailFilter[]> {
+  const res = await gmailGet<{ filter?: GmailFilter[] }>(mailbox, "/gmail/v1/users/me/settings/filters");
+  return res.filter || [];
+}
+
+/** Maps a Gmail labelId (as referenced by a filter's addLabelIds) back to its human-readable name, so a filter can be matched against a label name like "90 Degree Benefits". */
+export async function listGmailLabels(mailbox: string): Promise<{ id: string; name: string }[]> {
+  const res = await gmailGet<{ labels?: { id: string; name: string }[] }>(mailbox, "/gmail/v1/users/me/labels");
+  return res.labels || [];
+}
+
 export async function getGmailProfile(mailbox: string): Promise<GmailProfile> {
   return gmailGet<GmailProfile>(mailbox, "/gmail/v1/users/me/profile");
 }
