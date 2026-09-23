@@ -1604,18 +1604,17 @@ app.use((req, res, next) => {
         END IF;
       END $$;
     `);
-    // documents.version has been text and 100% NULL in every environment —
-    // safe to retype to integer, which is what version numbers actually are.
-    // Guarded on the column's current type so a second boot (where it's
-    // already integer) doesn't re-run the USING cast against a column that
-    // no longer accepts a text-shaped NULLIF comparison.
+    // The legacy free-text "version" column (100% empty string, never
+    // populated by any code path) is handled by Publish's own schema diff now
+    // — see shared/schema.ts, which binds the `version` property to a new
+    // physical column "revision_number" so Publish drops the old text column
+    // and adds a fresh integer one, instead of an in-place ALTER ... SET DATA
+    // TYPE that Postgres can't cast ('' is not a valid integer). Do not
+    // re-add an ALTER on documents.version here — startup DDL racing
+    // Publish's own diff is what caused that ALTER to fail in the first
+    // place (Publish validates and applies its diff before this code ever
+    // runs, so an app-level fixup for it can never actually take effect).
     await pool.query(`
-      DO $$
-      BEGIN
-        IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'version') = 'text' THEN
-          ALTER TABLE documents ALTER COLUMN version TYPE INTEGER USING NULLIF(version, '')::integer;
-        END IF;
-      END $$;
       ALTER TABLE documents ADD COLUMN IF NOT EXISTS normalized_file_name TEXT;
       ALTER TABLE documents ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP;
       ALTER TABLE documents ADD COLUMN IF NOT EXISTS sent_by TEXT;
@@ -1660,15 +1659,19 @@ app.use((req, res, next) => {
     `);
     log("Startup migration: renewal document versioning (sentAt/sentBy/sentTo/isSigned/normalizedFileName, integer version), document_sends, and unfiled_attachments queue ready");
 
-    // ── Phase 28: is_historical_import flag + one-time triage cleanup for the label-scoped backfill ──
-    // The rolling 5-min sync (gmailFullSync) runs far more often than the
-    // one-time batch backfill (gmailHistoricalImport) and was reaching a
-    // backfill-scoped thread's older-but-recent messages first, filing them
-    // as brand-new live mail and running full AI task extraction on them —
-    // flooding the triage feed with months-old correspondence that was
-    // always meant to be reference-only. This column plus the two steps
-    // below make that impossible going forward, independent of which
-    // pipeline creates a given message row.
+    // ── Phase 28: is_historical_import flag + ongoing triage cleanup for the label-scoped census ──
+    // The historical *importer* that used to walk this census data thread by
+    // thread has been removed (abandoned as a feature: a ~22% projected
+    // client-match rate on mail already searchable in Workspace wasn't worth
+    // the build time, LLM spend, or triage cleanup it kept generating). The
+    // flag and the guard below stay, because the risk they prevent is
+    // independent of the importer: the rolling 5-min sync (gmailFullSync)
+    // walks a 12-month window and, without this flag, would file a
+    // censused thread's older-but-recent messages as brand-new live mail and
+    // run full AI task extraction on them — flooding the triage feed with
+    // months-old correspondence that was always meant to be reference-only.
+    // Evergreen, re-run every boot so it also catches anything a future
+    // manual census pass adds to gmail_backfill_threads.
     await pool.query(`
       ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS is_historical_import BOOLEAN NOT NULL DEFAULT false;
       CREATE INDEX IF NOT EXISTS gmail_messages_is_historical_import_idx ON gmail_messages (is_historical_import) WHERE is_historical_import = true;
@@ -1708,23 +1711,7 @@ app.use((req, res, next) => {
       const afterCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
       log(`Startup migration: bulk-removed ${cleanupResult.rowCount} historical-import triage task(s) — AI-origin tasks before: ${beforeCount.rows[0].count}, after: ${afterCount.rows[0].count}`);
     }
-    // Force-pause the historical import on this deploy. Deliberately an
-    // unconditional UPSERT, not ON CONFLICT DO NOTHING: an earlier version of
-    // this migration used DO NOTHING, and because this app_settings row
-    // already existed (set to 'false' from before this incident), that
-    // migration silently never took effect — the import kept running in
-    // production straight through a deploy that was supposed to pause it.
-    // This is a one-time incident pause; once it has actually taken effect
-    // (confirm via GET /api/gmail-historical-import/status) it is safe to
-    // delete this block, since app_settings.updated_by preserves who paused
-    // it and PUT /api/gmail-historical-import/status is the normal way to
-    // resume from then on.
-    await pool.query(`
-      INSERT INTO app_settings (key, value, updated_by)
-      VALUES ('GMAIL_HISTORICAL_IMPORT_PAUSED', 'true', 'system: incident pause')
-      ON CONFLICT (key) DO UPDATE SET value = 'true', updated_by = 'system: incident pause', updated_at = now()
-    `);
-    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied, import force-paused pending manual resume");
+    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied");
 
     // One-time, bounded catch-up: messages sent after their thread's census
     // timestamp (genuine live mail) that got skipped before the
@@ -1806,29 +1793,6 @@ app.use((req, res, next) => {
   }
   setTimeout(runGmailSyncSafely, 10_000);
   setInterval(runGmailSyncSafely, GMAIL_SYNC_INTERVAL_MS);
-
-  // One-time historical import: steve.schultz@'s "90 Degree Benefits" label,
-  // scoped to the threads the classification backfill already confirmed are
-  // business mail (BUSINESS + FREE_PROVIDER_BUSINESS). Runs in-process, not
-  // tied to any HTTP request or browser tab, so it can walk thousands of
-  // threads without depending on a page staying open. Idempotent: it checks
-  // for remaining unimported eligible threads before doing anything, so once
-  // this label's backfill completes it is a no-op on every future boot.
-  (async () => {
-    try {
-      if (await storage.getHistoricalImportPaused()) {
-        log(`Gmail historical import: paused (GMAIL_HISTORICAL_IMPORT_PAUSED app setting) — not starting.`);
-        return;
-      }
-      const remaining = await storage.countImportEligibleRemaining("steve.schultz@simple.us", "90 Degree Benefits");
-      if (remaining === 0) return;
-      log(`Gmail historical import: ${remaining} thread(s) still pending for steve.schultz@simple.us / "90 Degree Benefits" — starting.`);
-      const { runHistoricalImportToCompletion } = await import("./gmailHistoricalImport");
-      await runHistoricalImportToCompletion("steve.schultz@simple.us", "90 Degree Benefits");
-    } catch (err: any) {
-      console.error("Gmail historical import error:", err?.message || err);
-    }
-  })();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

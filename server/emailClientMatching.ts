@@ -1,11 +1,9 @@
 import type { ClientRef } from "./claude";
 
 /**
- * Deterministic (no-LLM) client matching, shared by the rolling full sync
- * (server/gmailFullSync.ts) and the one-time historical backfill
- * (server/gmailHistoricalImport.ts) so both importers resolve a client from
- * a group number or a known contact address the same way, before ever
- * spending an LLM call on it.
+ * Deterministic (no-LLM) client matching used by the rolling full sync
+ * (server/gmailFullSync.ts) to resolve a client from a group number or a
+ * known contact address before ever spending an LLM call on it.
  */
 
 const FREE_PROVIDER_DOMAINS = new Set(["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com", "icloud.com"]);

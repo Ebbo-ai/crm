@@ -321,8 +321,19 @@ export const documents = pgTable("documents", {
    * server/documentVersioning.ts whenever a document lands in a versioned
    * category (see VERSIONED_DOCUMENT_CATEGORIES). Null for categories not
    * versioned this way.
+   *
+   * Bound to the physical column "revision_number", not "version":
+   * production still carries a legacy free-text "version" column (100% empty
+   * string, never populated by any code path) that Postgres cannot
+   * implicitly cast to integer, so publishing a same-named
+   * ALTER COLUMN ... SET DATA TYPE integer fails on that junk data. Renaming
+   * the *physical* column lets the publish diff treat this as
+   * drop-the-old-text-column + add-a-fresh-integer-column instead of an
+   * in-place cast — decline the "was this renamed?" prompt in the Publish UI
+   * so it takes that path. The `version` property name (and therefore every
+   * JS/JSON reference in this codebase) is unaffected.
    */
-  version: integer("version"),
+  version: integer("revision_number"),
   /**
    * Filename with resend artifacts stripped (" (1)", "_v2", "_rev2",
    * "_REVISED", extension) so "Loudon_Renewal_2027.pdf" and
@@ -961,17 +972,20 @@ export const gmailMessages = pgTable("gmail_messages", {
   hasAttachments: boolean("has_attachments").notNull().default(false),
   /**
    * True for any message belonging to a thread the label-scoped historical
-   * backfill (server/gmailHistoricalImport.ts) has ever put in scope —
-   * regardless of which pipeline actually wrote this row. The rolling 5-min
-   * sync (server/gmailFullSync.ts) runs far more often than the batch
-   * backfill and can reach a scoped thread's older-but-recent messages
-   * first; without this flag those got filed as if brand new and triggered
-   * AI task extraction, flooding the triage feed with mail that was always
-   * meant to be reference-only. Checked in three independent places (belt
-   * and braces, not reliant on any single path): the extractor skips
-   * flagged messages outright, the rolling sync never treats a flagged
-   * thread's messages as new, and the triage feed query excludes them even
-   * if a task exists anyway.
+   * census (server/gmailLabelBackfill.ts, gmail_backfill_threads) ever put
+   * in scope, sent at or before that thread's census timestamp. The
+   * historical *importer* that once consumed this census data was removed
+   * (abandoned as a feature — see decision below) but the flag and the
+   * census data it depends on stay: the rolling 5-min sync
+   * (server/gmailFullSync.ts) walks a 12-month window and, without this
+   * flag, would file a censused thread's older-but-recent messages as if
+   * brand new and trigger AI task extraction on months-old mail. A message
+   * sent AFTER its thread's census timestamp is genuine live mail and is
+   * never flagged here. Checked in three independent places (belt and
+   * braces, not reliant on any single path): the extractor skips flagged
+   * messages outright, the rolling sync never treats a flagged thread's
+   * messages as new, and the triage feed query excludes them even if a task
+   * exists anyway.
    */
   isHistoricalImport: boolean("is_historical_import").notNull().default(false),
   /** RFC822 Message-ID header — see communications.messageIdHeader for why this, not Gmail's per-mailbox id, is the cross-mailbox dedupe key. */
@@ -1191,8 +1205,6 @@ export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
 export const PRIORITY_RANK: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
 export const TRIAGE_MIN_PRIORITY_KEY = "TRIAGE_MIN_PRIORITY";
 export const TRIAGE_MIN_PRIORITY_DEFAULT = "LOW";
-/** app_settings key that pauses the one-time historical-mail import (server/gmailHistoricalImport.ts) without touching its saved cursor. Checked at startup and re-checked every batch while a run is in progress, so flipping it takes effect within one batch instead of requiring a restart. */
-export const GMAIL_HISTORICAL_IMPORT_PAUSED_KEY = "GMAIL_HISTORICAL_IMPORT_PAUSED";
 
 export const insertBrokerHistorySchema = createInsertSchema(brokerHistory).omit({ id: true, createdAt: true });
 export type BrokerHistory = typeof brokerHistory.$inferSelect;

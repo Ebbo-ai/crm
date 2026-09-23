@@ -2301,42 +2301,6 @@ export async function registerRoutes(
     }
   });
 
-  // ─── Historical mail import pause control ──────────────────────────────────
-  // Lets an admin pause/resume the one-time label-scoped backfill
-  // (server/gmailHistoricalImport.ts) without a code change or redeploy.
-  // Pausing never touches the backfill's saved progress (gmail_backfill_threads
-  // .imported_at) — it just stops the loop from starting or continuing, and
-  // a later resume picks up at the same not-yet-imported set.
-  app.get("/api/gmail-historical-import/status", requireAuth, async (_req, res) => {
-    try {
-      const paused = await storage.getHistoricalImportPaused();
-      const remaining = await storage.countImportEligibleRemaining("steve.schultz@simple.us", "90 Degree Benefits");
-      res.json({ paused, remaining });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.put("/api/gmail-historical-import/status", requireAdmin, async (req, res) => {
-    try {
-      const { paused } = req.body;
-      if (typeof paused !== "boolean") return res.status(400).json({ message: "paused must be a boolean" });
-      const user = (req.user as any)?.fullName ?? "Unknown";
-      await storage.setHistoricalImportPaused(paused, user);
-      if (!paused) {
-        // Kick the loop back off immediately rather than waiting for the
-        // next server restart to notice the flag flipped.
-        const { runHistoricalImportToCompletion } = await import("./gmailHistoricalImport");
-        runHistoricalImportToCompletion("steve.schultz@simple.us", "90 Degree Benefits").catch((err: any) =>
-          console.error("Gmail historical import error:", err?.message || err)
-        );
-      }
-      res.json({ paused });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
-    }
-  });
-
   // ─── Per-owner Gmail-native triage dashboard ───────────────────────────────
   // Reads only Gmail-native tables (gmail_messages joined through
   // communication_tasks) — this is the screen the dedup cutover is for.

@@ -6,7 +6,7 @@ import {
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
-  gmailBackfillDomains, gmailBackfillThreads, gmailBackfillImportErrors,
+  gmailBackfillDomains, gmailBackfillThreads,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
   documentSends, unfiledAttachments,
   type DocumentSend, type InsertDocumentSend,
@@ -16,7 +16,7 @@ import {
   type GmailImportState, type InsertGmailImportState,
   type GmailAccount, type InsertGmailAccount,
   type MailAllowlistDomain, type InsertMailAllowlistDomain,
-  type GmailBackfillDomain, type GmailBackfillThread, type GmailBackfillImportError,
+  type GmailBackfillDomain, type GmailBackfillThread,
   type DocumentFieldProposal, type InsertDocumentFieldProposal,
   type FieldChangeHistory,
   type GmailThread, type InsertGmailThread,
@@ -44,7 +44,7 @@ import {
   type PprImportBatch, type InsertPprImportBatch,
   type PprHeldRow, type InsertPprHeldRow,
   type AppSetting,
-  PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT, GMAIL_HISTORICAL_IMPORT_PAUSED_KEY,
+  PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT,
 } from "@shared/schema";
 import { countsAsActive, deriveClientState } from "@shared/client-state";
 import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
@@ -806,44 +806,6 @@ export class DatabaseStorage implements IStorage {
     return rows.map(r => ({ category: r.category, count: Number(r.count) }));
   }
 
-  async markBackfillThreadImported(id: number, matchMethod: "LOOKUP" | "LLM" | "UNMATCHED"): Promise<void> {
-    await db.update(gmailBackfillThreads).set({ importedAt: new Date(), importMatchMethod: matchMethod }).where(eq(gmailBackfillThreads.id, id));
-  }
-
-  /** Next batch of import-eligible threads (already censused BUSINESS/FREE_PROVIDER_BUSINESS, not yet imported), newest first. Gmail thread ids are monotonically increasing hex strings, so sorting by length then value approximates chronological order without an extra Gmail call per thread. */
-  async getImportEligibleThreadsBatch(mailbox: string, label: string, limit: number): Promise<GmailBackfillThread[]> {
-    return db.select().from(gmailBackfillThreads)
-      .where(and(
-        eq(gmailBackfillThreads.mailbox, mailbox),
-        eq(gmailBackfillThreads.label, label),
-        inArray(gmailBackfillThreads.category, ["BUSINESS", "FREE_PROVIDER_BUSINESS"]),
-        isNull(gmailBackfillThreads.importedAt),
-      ))
-      .orderBy(desc(sql`length(${gmailBackfillThreads.gmailThreadId})`), desc(gmailBackfillThreads.gmailThreadId))
-      .limit(limit);
-  }
-
-  async countImportEligibleRemaining(mailbox: string, label: string): Promise<number> {
-    const [row] = await db.select({ count: sql<string>`COUNT(*)` }).from(gmailBackfillThreads)
-      .where(and(
-        eq(gmailBackfillThreads.mailbox, mailbox),
-        eq(gmailBackfillThreads.label, label),
-        inArray(gmailBackfillThreads.category, ["BUSINESS", "FREE_PROVIDER_BUSINESS"]),
-        isNull(gmailBackfillThreads.importedAt),
-      ));
-    return Number(row?.count ?? 0);
-  }
-
-  async createBackfillImportError(row: { mailbox: string; label: string; gmailThreadId: string; errorMessage: string }): Promise<GmailBackfillImportError> {
-    const [created] = await db.insert(gmailBackfillImportErrors).values(row).returning();
-    return created;
-  }
-
-  async getBackfillImportErrors(mailbox: string, label: string): Promise<GmailBackfillImportError[]> {
-    return db.select().from(gmailBackfillImportErrors)
-      .where(and(eq(gmailBackfillImportErrors.mailbox, mailbox), eq(gmailBackfillImportErrors.label, label)))
-      .orderBy(desc(gmailBackfillImportErrors.occurredAt));
-  }
 
   /** Attachments on this communication that have not yet been filed onto a client's documents tab. */
   async getUnfiledAttachments(communicationId: number) {
@@ -1909,16 +1871,6 @@ export class DatabaseStorage implements IStorage {
   async getTriageMinPriority(): Promise<string> {
     const row = await this.getAppSetting(TRIAGE_MIN_PRIORITY_KEY);
     return row?.value ?? TRIAGE_MIN_PRIORITY_DEFAULT;
-  }
-
-  /** Default un-paused so a fresh environment (no row yet) behaves like today until the startup seed writes the initial value. */
-  async getHistoricalImportPaused(): Promise<boolean> {
-    const row = await this.getAppSetting(GMAIL_HISTORICAL_IMPORT_PAUSED_KEY);
-    return row?.value === "true";
-  }
-
-  async setHistoricalImportPaused(paused: boolean, byUser: string): Promise<void> {
-    await this.setAppSetting(GMAIL_HISTORICAL_IMPORT_PAUSED_KEY, paused ? "true" : "false", byUser);
   }
 
   /**
