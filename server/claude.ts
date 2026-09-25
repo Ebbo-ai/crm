@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmUsage";
+import { errorLabel } from "./logRedaction";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -167,7 +168,7 @@ Return ONLY the JSON array, no other text.`;
     }
     return result;
   } catch (err: any) {
-    console.error("[claude] matchEmailToClients error:", err?.message || String(err));
+    console.error(`[claude] matchEmailToClients error: ${errorLabel(err)}`);
     return [];
   }
 }
@@ -252,7 +253,7 @@ Return ONLY the JSON array, no other text.`;
     );
     return result;
   } catch (err: any) {
-    console.error("[claude] matchTextToClients error:", err?.message || String(err));
+    console.error(`[claude] matchTextToClients error: ${errorLabel(err)}`);
     return [];
   }
 }
@@ -353,7 +354,7 @@ Return ONLY the JSON object, no other text.`;
         : null,
     };
   } catch (err: any) {
-    console.error("[claude] processEmail error:", err?.message || String(err));
+    console.error(`[claude] processEmail error: ${errorLabel(err)}`);
     return { summary: "Error processing email with AI.", actionItems: [], isFollowUp: false, followUpReason: null };
   }
 }
@@ -401,7 +402,7 @@ When genuinely unsure, return true.`;
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
     return { isBusiness: parsed.isBusiness !== false };
   } catch (err: any) {
-    console.error("[claude] classifyMailRelevance error:", err?.message || String(err));
+    console.error(`[claude] classifyMailRelevance error: ${errorLabel(err)}`);
     return { isBusiness: true };
   }
 }
@@ -441,7 +442,7 @@ When genuinely unsure, return "BUSINESS" — the cost of over-including is a thr
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
     return { verdict: parsed.verdict === "CONSUMER" ? "CONSUMER" : "BUSINESS" };
   } catch (err: any) {
-    console.error("[claude] classifyDomain error:", err?.message || String(err));
+    console.error(`[claude] classifyDomain error: ${errorLabel(err)}`);
     return { verdict: "BUSINESS" };
   }
 }
@@ -479,7 +480,7 @@ When genuinely unsure, return "BUSINESS" — the cost of over-including is a thr
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
     return { verdict: parsed.verdict === "CONSUMER" ? "CONSUMER" : "BUSINESS" };
   } catch (err: any) {
-    console.error("[claude] classifyThread error:", err?.message || String(err));
+    console.error(`[claude] classifyThread error: ${errorLabel(err)}`);
     return { verdict: "BUSINESS" };
   }
 }
@@ -537,7 +538,7 @@ Return ONLY JSON:
     if (!parsed.summary) return null;
     return { summary: String(parsed.summary), oneLine: String(parsed.oneLine || parsed.summary).slice(0, 200) };
   } catch (err: any) {
-    console.error("[claude] generateThreadSummary error:", err?.message || String(err));
+    console.error(`[claude] generateThreadSummary error: ${errorLabel(err)}`);
     return null;
   }
 }
@@ -584,7 +585,7 @@ Return ONLY valid JSON: {"duplicateOf": <id> or null}`;
     if (typeof id === "number" && candidates.some(c => c.id === id)) return id;
     return null;
   } catch (err: any) {
-    console.error("[claude] findDuplicateTask error:", err?.message || String(err));
+    console.error(`[claude] findDuplicateTask error: ${errorLabel(err)}`);
     return null; // fail open — never block task creation on a dedup check
   }
 }
@@ -618,7 +619,7 @@ export async function ocrPageImage(pngBuffer: Buffer, pageLabel: string): Promis
     });
     return response.content[0].type === "text" ? response.content[0].text : "";
   } catch (err: any) {
-    console.error("[claude] ocrPageImage error:", err?.message || String(err));
+    console.error(`[claude] ocrPageImage error: ${errorLabel(err)}`);
     return "";
   }
 }
@@ -683,7 +684,7 @@ If nothing extractable is present, return {"fields": []}.`;
     if (!Array.isArray(parsed.fields)) return [];
     return parsed.fields.filter((f: any) => f?.fieldKey && f?.proposedValue);
   } catch (err: any) {
-    console.error("[claude] extractDocumentFields error:", err?.message || String(err));
+    console.error(`[claude] extractDocumentFields error: ${errorLabel(err)}`);
     return [];
   }
 }

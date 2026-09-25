@@ -2,6 +2,7 @@ import { db } from "./db";
 import { llmUsageLog } from "@shared/schema";
 import { and, gte, sql as dsql } from "drizzle-orm";
 import { storage } from "./storage";
+import { errorLabel } from "./logRedaction";
 
 /**
  * Approximate published list pricing, USD per token. These are estimates for
@@ -48,7 +49,7 @@ export async function recordLlmCall(params: {
     });
   } catch (err: any) {
     // Never let usage logging take down the actual LLM call it's tracking.
-    console.error("[llmUsage] failed to record call:", err?.message || String(err));
+    console.error(`[llmUsage] failed to record call: ${errorLabel(err)}`);
   }
 }
 

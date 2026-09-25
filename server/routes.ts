@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage, StaleOrderError, type BrokerContactInput } from "./storage";
 import { db } from "./db";
+import { errorLabel } from "./logRedaction";
 import { renewals, renewalPlanOptions, clients, plans, brokerContacts } from "@shared/schema";
 import {
   RUN_OUT_MONTHS,
@@ -779,7 +780,7 @@ async function autoFileAttachments(communicationId: number, clientId: number, up
       await storage.markAttachmentFiled(att.id, doc.id);
     }
   } catch (err: any) {
-    console.error("[auto-file] attachment filing failed:", err?.message || err);
+    console.error(`[auto-file] attachment filing failed: ${errorLabel(err)}`);
   }
 }
 
@@ -791,7 +792,7 @@ async function dedupAgainstOpenTasks(taskId: number, clientId: number | null | u
     const matchId = await findDuplicateTask(description, candidates);
     if (matchId) await storage.groupTaskWith(taskId, matchId);
   } catch (err: any) {
-    console.error("[dedup] task grouping check failed:", err?.message || err);
+    console.error(`[dedup] task grouping check failed: ${errorLabel(err)}`);
   }
 }
 
@@ -1991,8 +1992,70 @@ export async function registerRoutes(
       }
       res.json({ summaries });
     } catch (err: any) {
-      console.error("[gmail-inbox] sync failed:", err?.message || err);
+      console.error(`[gmail-inbox] sync failed: ${errorLabel(err)}`);
       res.status(502).json({ message: err.message || "Gmail sync failed" });
+    }
+  });
+
+  /**
+   * "Sync now" for Kim and Steve. Returns immediately rather than holding the
+   * request open: a run against a large mailbox takes many minutes, which no
+   * browser request should wait on. The button polls /sync-status for live
+   * progress, which is published from the run itself.
+   *
+   * Stacking is impossible by construction — the run claims the single-flight
+   * lock per mailbox, and a mailbox already syncing is skipped, so pressing
+   * the button during a scheduled run reports that run instead of starting a
+   * second one.
+   */
+  app.post("/api/gmail-inbox/sync-now", requireAuth, async (req, res) => {
+    const user = req.user as any;
+    void (async () => {
+      try {
+        const { runGmailFullSyncAllMailboxes } = await import("./gmailFullSync");
+        const summaries = await runGmailFullSyncAllMailboxes({ trigger: "MANUAL" });
+        for (const summary of summaries) {
+          if (summary.skipped) continue;
+          await storage.createAuditLog({
+            userId: user.id,
+            userName: user.fullName,
+            action: "ran",
+            entity: "gmail_inbox_sync",
+            entityId: 0,
+            details: `Manual mail sync for ${summary.mailbox}: ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.errors.length} error(s).`,
+          });
+        }
+      } catch (err: any) {
+        console.error(`[gmail-inbox] manual sync failed: ${errorLabel(err)}`);
+      }
+    })();
+    res.json({ started: true });
+  });
+
+  /** Live state of every mailbox sync — drives the button's spinner, counters and finished state. */
+  app.get("/api/gmail-inbox/sync-status", requireAuth, async (_req, res) => {
+    try {
+      const states = await storage.getGmailSyncRunStates();
+      res.json(
+        states
+          .filter((s) => s.mailbox.endsWith("#full"))
+          .map((s) => {
+            const progress = (s.runProgress || {}) as Record<string, number>;
+            return {
+              mailbox: s.mailbox.replace(/#full$/, ""),
+              running: s.runState === "RUNNING",
+              trigger: s.runTrigger,
+              startedAt: s.runStartedAt,
+              scanned: progress.scanned ?? 0,
+              newMessages: progress.new ?? 0,
+              errors: progress.errors ?? 0,
+              lastRunAt: s.lastRunAt,
+              lastRunSummary: s.lastRunSummary,
+            };
+          }),
+      );
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
@@ -2049,7 +2112,7 @@ export async function registerRoutes(
       await completeAuthorization(mailbox, code, redirectUriFor(req), (req.user as any)?.fullName || "admin");
       res.redirect("/settings/mail-accounts?connected=" + encodeURIComponent(mailbox));
     } catch (err: any) {
-      console.error("[gmail-oauth] callback failed:", err?.message || err);
+      console.error(`[gmail-oauth] callback failed: ${errorLabel(err)}`);
       res.redirect("/settings/mail-accounts?error=" + encodeURIComponent(err.message || "Authorization failed"));
     }
   });
@@ -2249,7 +2312,7 @@ export async function registerRoutes(
         threads: threads.map((t) => ({ ...t, clientIds: linkMap.get(t.id) || [] })),
       });
     } catch (err: any) {
-      console.error("[gmail-inbox] search failed:", err?.message || err);
+      console.error(`[gmail-inbox] search failed: ${errorLabel(err)}`);
       res.status(500).json({ message: err.message });
     }
   });

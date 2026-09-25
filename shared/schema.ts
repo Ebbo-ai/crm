@@ -692,6 +692,22 @@ export const gmailImportState = pgTable("gmail_import_state", {
   lastProcessedInternalDate: text("last_processed_internal_date"),
   lastRunAt: timestamp("last_run_at"),
   lastRunSummary: text("last_run_summary"),
+  /**
+   * Single-flight guard. The row itself is the lock: a run claims it with a
+   * conditional UPDATE, so two web instances (autoscale runs more than one)
+   * cannot both be syncing the same mailbox. An in-process boolean would only
+   * have covered one instance.
+   */
+  runState: text("run_state").notNull().default("IDLE"),
+  /** Which process holds the claim — only for diagnosis; the claim itself is runState + heartbeat. */
+  runOwner: text("run_owner"),
+  /** What started the in-flight run: POLLER, MANUAL or SCHEDULED. Shown on the manual sync button. */
+  runTrigger: text("run_trigger"),
+  runStartedAt: timestamp("run_started_at"),
+  /** Refreshed as the run works. A claim whose heartbeat has gone stale is considered abandoned (instance killed mid-run) and can be taken over. */
+  runHeartbeatAt: timestamp("run_heartbeat_at"),
+  /** Live counters for the in-flight run: { scanned, new, page } — what the manual sync button displays while it waits. */
+  runProgress: jsonb("run_progress").notNull().default({}),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

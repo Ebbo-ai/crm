@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { AppSidebar } from "./app-sidebar";
 import { QuickLogModal, useQuickLog } from "./quick-log-modal";
+import { MailSyncButton } from "./mail-sync-button";
 import { ArrowLeft, Menu, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -150,6 +151,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </Button>
 
           <div className="flex-1" />
+
+          {/* In the header rather than on the mail page: Kim and Steve both
+              need "is my mail current?" answerable from wherever they are. */}
+          <MailSyncButton />
 
           <Button
             onClick={() => openQuickLog()}

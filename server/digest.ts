@@ -10,6 +10,7 @@
  */
 import cron from "node-cron";
 import { storage } from "./storage";
+import { errorLabel } from "./logRedaction";
 import { sendEmail } from "./mailer";
 
 const DIGEST_FROM = "Simple Benefits CRM <notifications@mg.simple.us>";
@@ -54,7 +55,9 @@ export async function sendDigestFor(ownerFullName: string, ownerEmail: string): 
     text: lines.join("\n"),
   });
   if (!result.ok) {
-    console.error(`Digest email to ${ownerEmail} failed: ${result.error}`);
+    // Recipient addresses stay out of the log — the owner's name is enough to
+    // tell whose digest failed without writing an address into the log store.
+    console.error(`Digest email to ${ownerFullName} failed: ${errorLabel(result.error)}`);
   }
 }
 
@@ -64,7 +67,7 @@ export async function runDailyDigest(): Promise<void> {
     try {
       await sendDigestFor(user.fullName, user.email);
     } catch (err: any) {
-      console.error(`Digest run failed for ${user.email}:`, err.message ?? err);
+      console.error(`Digest run failed for user #${user.id}: ${errorLabel(err)}`);
     }
   }
 }
@@ -72,6 +75,6 @@ export async function runDailyDigest(): Promise<void> {
 /** Registers the 7:30 AM America/New_York cron job. Call once at server startup. */
 export function scheduleDailyDigest(): void {
   cron.schedule("30 7 * * *", () => {
-    runDailyDigest().catch(err => console.error("Daily digest run threw:", err));
+    runDailyDigest().catch(err => console.error(`Daily digest run threw: ${errorLabel(err)}`));
   }, { timezone: "America/New_York" });
 }

@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
+import { errorLabel } from "./logRedaction";
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL must be set");
@@ -21,7 +22,7 @@ export const pool = new pg.Pool({
  * connection on its own is correct here — pg.Pool already retries.
  */
 pool.on("error", (err) => {
-  console.error("[db] pool error (connection dropped, recovering):", err?.message || err);
+  console.error(`[db] pool error (connection dropped, recovering): ${errorLabel(err)}`);
 });
 
 export const db = drizzle(pool, { schema });

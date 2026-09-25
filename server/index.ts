@@ -10,6 +10,7 @@ import {
 } from "./rating-engine";
 import { scheduleDailyDigest } from "./digest";
 import { storage } from "./storage";
+import { errorLabel, redactEmails } from "./logRedaction";
 
 const app = express();
 const httpServer = createServer(app);
@@ -45,26 +46,22 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Request log: method, path, status and duration only.
+//
+// This deliberately does NOT capture the JSON response body. It used to, and
+// that single line was the largest source of protected health information in
+// the deployment logs — every mail list, thread detail and AI summary the UI
+// fetched was serialised in full into a log store that sits outside the
+// database's access controls. Counts and identifiers are enough to debug a
+// route; the payload is never worth the exposure.
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
 
@@ -1723,6 +1720,38 @@ app.use((req, res, next) => {
       log(`Startup migration: post-census catch-up — checked ${catchUp.messagesChecked} previously-skipped live message(s), created ${catchUp.tasksCreated} triage task(s)`);
     }
 
+    // ── Phase 29: single-flight guard + live progress for the mailbox sync ──
+    // The row in gmail_import_state IS the lock. An in-process boolean was not
+    // an option: this deploys to autoscale, which can run more than one web
+    // instance, and each one carries its own 5-minute timer. Before this,
+    // overlapping runs all read the same not-yet-advanced page cursor, walked
+    // the same Gmail pages, and raced each other into duplicate-key errors on
+    // gmail_messages.
+    await pool.query(`
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_state TEXT NOT NULL DEFAULT 'IDLE';
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_owner TEXT;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_trigger TEXT;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_started_at TIMESTAMP;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_heartbeat_at TIMESTAMP;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS run_progress JSONB NOT NULL DEFAULT '{}'::jsonb;
+    `);
+    // A process that was killed mid-run (a deploy, an autoscale instance being
+    // reclaimed) leaves its claim behind with no one to release it. Only
+    // claims that have stopped heartbeating are cleared: autoscale starts new
+    // instances while existing ones are still serving, so clearing every
+    // RUNNING claim at boot would hand a live run's mailbox to a second run —
+    // reintroducing the overlap this whole guard exists to prevent.
+    const staleClaims = await pool.query(`
+      UPDATE gmail_import_state SET run_state = 'IDLE', run_owner = NULL, run_trigger = NULL
+      WHERE run_state = 'RUNNING'
+        AND (run_heartbeat_at IS NULL OR run_heartbeat_at < now() - interval '15 minutes')
+      RETURNING mailbox
+    `);
+    if (staleClaims.rowCount) {
+      log(`Startup migration: cleared ${staleClaims.rowCount} abandoned mailbox sync claim(s) left by a previous process`);
+    }
+    log("Startup migration: mailbox sync single-flight guard ready");
+
     // One-time diagnostic: does a Gmail filter auto-apply the "90 Degree
     // Benefits" label to new incoming mail, or was the label only ever
     // applied by hand to historical mail? This changes how urgent the
@@ -1743,16 +1772,19 @@ app.use((req, res, next) => {
           const filters = await listGmailFilters(mailbox);
           const matching = filters.filter((f) => f.action?.addLabelIds?.includes(targetLabel.id));
           if (matching.length > 0) {
-            log(`Startup diagnostic: ${mailbox} HAS an active Gmail filter auto-applying "90 Degree Benefits" (label id ${targetLabel.id}) — criteria: ${JSON.stringify(matching.map((m) => m.criteria))}`);
+            // Criteria are not logged: a Gmail filter's criteria are addresses
+            // and subject fragments, i.e. client identities. The count and the
+            // label id answer the diagnostic question on their own.
+            log(`Startup diagnostic: ${mailbox} HAS ${matching.length} active Gmail filter(s) auto-applying "90 Degree Benefits" (label id ${targetLabel.id}).`);
           } else {
             log(`Startup diagnostic: ${mailbox} has NO active Gmail filter targeting "90 Degree Benefits" — label appears to be manually applied only.`);
           }
         } catch (err: any) {
-          log(`Startup diagnostic: ${mailbox} filter/label check failed: ${err?.message || err}`);
+          log(`Startup diagnostic: ${mailbox} filter/label check failed: ${errorLabel(err)}`);
         }
       }
     } catch (err: any) {
-      console.error("Startup diagnostic (Gmail filter check) error:", err.message);
+      console.error(`Startup diagnostic (Gmail filter check) error: ${errorLabel(err)}`);
     }
 
     const retroTyping = await (await import("./documentRetroTyping")).runDocumentRetroTyping();
@@ -1760,11 +1792,11 @@ app.use((req, res, next) => {
       log(`Startup migration: retro-typing pass scanned ${retroTyping.scanned} OTHER document(s) — reclassified ${retroTyping.reclassified.length}, left ${retroTyping.leftAsOther} as OTHER (ambiguous filename)`);
     }
   } catch (err: any) {
-    console.error("Startup migration error:", err.message);
+    console.error(`Startup migration error: ${errorLabel(err)}`);
   }
 
   await registerRoutes(httpServer, app);
-  await seedDatabase().catch((err) => console.error("Seed error:", err));
+  await seedDatabase().catch((err) => console.error(`Seed error: ${errorLabel(err)}`));
 
   // Daily 7:30 AM America/New_York task digest — each owner gets their own
   // open/overdue items by email instead of the list only being visible if
@@ -1781,14 +1813,18 @@ app.use((req, res, next) => {
   async function runGmailSyncSafely() {
     try {
       const { runGmailFullSyncAllMailboxes } = await import("./gmailFullSync");
-      const summaries = await runGmailFullSyncAllMailboxes();
+      const summaries = await runGmailFullSyncAllMailboxes({ trigger: "POLLER" });
       for (const summary of summaries) {
+        // A skipped mailbox is the single-flight guard doing its job (a run was
+        // already in flight), not a failure — it is not worth a log line every
+        // five minutes.
+        if (summary.skipped) continue;
         if (summary.messagesNew > 0 || summary.errors.length > 0) {
           log(`Gmail inbox sync (${summary.mailbox}): ${summary.messagesNew} new message(s), ${summary.threadsTouched} thread(s) touched, ${summary.errors.length} error(s)`);
         }
       }
     } catch (err: any) {
-      console.error("Gmail inbox sync error:", err?.message || err);
+      console.error(`Gmail inbox sync error: ${errorLabel(err)}`);
     }
   }
   setTimeout(runGmailSyncSafely, 10_000);
@@ -1798,7 +1834,14 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    // The error object is not logged whole: an express error can carry the
+    // request body that caused it, which on this app means client mail. Class,
+    // status, method and path are what actually locate the fault; the stack is
+    // kept because it names our own code, not the payload.
+    console.error(`Internal Server Error: ${_req.method} ${_req.path} ${status} — ${errorLabel(err)}`);
+    if (err instanceof Error && err.stack) {
+      console.error(redactEmails(err.stack.split("\n").slice(1, 6).join("\n")));
+    }
 
     if (res.headersSent) {
       return next(err);

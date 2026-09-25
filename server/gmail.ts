@@ -82,7 +82,9 @@ async function gmailGet<T>(mailbox: string, path: string): Promise<T> {
       const waitMs = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : backoff + jitter;
       const message = `Rate limited by Gmail (${mailbox}), waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})`;
       lastRateLimitStatus = { message, mailbox, at: Date.now() };
-      console.warn(`[gmail] ${message} — ${path}`);
+      // Endpoint only, never the query string: a search path carries the
+      // typed query, which on this app is client and member names.
+      console.warn(`[gmail] ${message} — ${path.split("?")[0]}`);
       await sleep(waitMs);
       continue;
     }

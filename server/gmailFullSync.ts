@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { storage } from "./storage";
 import { buildClientRefs } from "./client-context";
 import { matchEmailToClients, classifyMailRelevance, generateThreadSummary, processEmail, extractDocumentFields } from "./claude";
@@ -10,6 +11,7 @@ import { isEnrichmentPaused } from "./llmUsage";
 import { buildDeterministicLookup, matchDeterministically } from "./emailClientMatching";
 import { classifyDocumentType, normalizeDocumentFilename, looksSigned } from "./documentVersioning";
 import { resolveFieldMapping } from "./fieldMapping";
+import { errorLabel, errorClass, formatErrorClassTally } from "./logRedaction";
 import type { GmailMessage } from "@shared/schema";
 import {
   getGmailProfile,
@@ -103,7 +105,7 @@ export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecke
         result.tasksCreated++;
       }
     } catch (err: any) {
-      console.error(`[gmailFullSync] Post-census catch-up: message ${msg.gmailMessageId} action-item extraction failed: ${err?.message || err}`);
+      console.error(`[gmailFullSync] Post-census catch-up: message ${msg.gmailMessageId} action-item extraction failed: ${errorLabel(err)}`);
     }
   }
   return result;
@@ -146,6 +148,99 @@ export interface GmailFullSyncSummary {
   /** True when the daily LLM cost ceiling was already hit at the start of this run — matching, classification, action-item extraction and summaries were all skipped, but message ingestion still ran in full. */
   enrichmentPaused: boolean;
   errors: string[];
+  /** One content-free class per error above (AuthTimeout, RateLimit, …), so a recurring upstream failure can be read as a rate rather than hunted for line by line. */
+  errorClasses: string[];
+  /** True when this call did no work because a run for the same mailbox was already in flight. Not an error — the point of the guard. */
+  skipped: boolean;
+}
+
+/** What started a sync run. Recorded on the state row so the UI can say "a scheduled sync is already running" rather than just "busy". */
+export type GmailSyncTrigger = "POLLER" | "MANUAL" | "SCHEDULED";
+
+/**
+ * Identifies this process when claiming a mailbox. Autoscale may run several
+ * instances; the claim has to be attributable to one of them so a run can only
+ * release or heartbeat its own claim.
+ */
+const INSTANCE_ID = `${process.pid}-${randomUUID().slice(0, 8)}`;
+
+function emptySummary(mailbox: string): GmailFullSyncSummary {
+  return {
+    mailbox,
+    messagesScanned: 0,
+    messagesNew: 0,
+    messagesSkippedNotAllowlisted: 0,
+    messagesSkippedDuplicateAcrossMailboxes: 0,
+    threadsTouched: 0,
+    matched: 0,
+    unassigned: 0,
+    notBusiness: 0,
+    filedToVendor: 0,
+    attachmentsFiled: 0,
+    attachmentsSkippedEmbedded: 0,
+    attachmentsSkippedDuplicate: 0,
+    attachmentsQueuedUnfiled: 0,
+    fieldProposalsCreated: 0,
+    summariesGenerated: 0,
+    tasksCreated: 0,
+    enrichmentPaused: false,
+    errors: [],
+    errorClasses: [],
+    skipped: false,
+  };
+}
+
+/**
+ * Raised when this run's claim is no longer its own — taken over as stale, or
+ * cleared while the process was blocked. The run stops immediately rather than
+ * continuing to walk a mailbox that another run now owns.
+ */
+class SyncClaimLostError extends Error {
+  constructor(mailbox: string) {
+    super(`Lost the sync claim on ${mailbox} — another run has taken it over`);
+    this.name = "SyncClaimLostError";
+  }
+}
+
+/**
+ * Renews the claim and publishes live counters. Called often enough that a
+ * slow stretch (a big page, a long enrichment pass, a rate-limit backoff) can
+ * never look abandoned — the takeover window only exists for a process that
+ * has actually died.
+ */
+async function publishProgress(
+  mailbox: string,
+  stateKey: string,
+  runToken: string,
+  summary: GmailFullSyncSummary,
+  phase: string,
+  pages: number,
+): Promise<void> {
+  const held = await storage.heartbeatGmailSyncRun(stateKey, runToken, {
+    scanned: summary.messagesScanned,
+    new: summary.messagesNew,
+    pages,
+    errors: summary.errors.length,
+    phase,
+  });
+  if (!held) throw new SyncClaimLostError(mailbox);
+}
+
+/** How many messages (or threads) pass between heartbeats. Small enough to stay well inside the takeover window, large enough not to add a write per message. */
+const HEARTBEAT_EVERY = 20;
+
+/** The one-line, content-free description of a run that gets persisted and shown in the UI. */
+function describeRun(summary: GmailFullSyncSummary, filterForAllowlist: boolean, interrupted: boolean): string {
+  return [
+    `${summary.messagesScanned} scanned`,
+    `${summary.messagesNew} new`,
+    ...(filterForAllowlist ? [`${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)`] : []),
+    `${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates`,
+    `${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits)`,
+    `${summary.attachmentsFiled} attachments filed`,
+    `${summary.attachmentsQueuedUnfiled} queued unfiled`,
+    `${summary.errors.length} errors (${formatErrorClassTally(summary.errorClasses)})`,
+  ].join(", ") + (interrupted ? " — INTERRUPTED before the run finished." : ".");
 }
 
 /**
@@ -177,34 +272,68 @@ export interface GmailFullSyncSummary {
  * header useless for matching. A matched document is filed to EVERY client
  * the match identifies, not just the first.
  */
-export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSummary> {
+export async function runGmailFullSync(
+  mailbox: string,
+  options: { trigger?: GmailSyncTrigger } = {},
+): Promise<GmailFullSyncSummary> {
+  const stateKey = `${mailbox}#full`;
+  const trigger = options.trigger ?? "POLLER";
+  // Per run, not per process: two runs in one process (a manual sync racing
+  // the poller) must not be able to release or overwrite each other's claim.
+  const runToken = `${INSTANCE_ID}:${randomUUID().slice(0, 8)}`;
+
+  // ── Single-flight guard ──
+  // Claimed before anything else, including the profile check, because the
+  // point is to do no Gmail work at all when a run is already in flight.
+  // Autoscale can run several web instances, each with its own 5-minute
+  // timer, so the claim lives in the database rather than in this process.
+  const claimed = await storage.claimGmailSyncRun(stateKey, runToken, trigger);
+  if (!claimed) {
+    const skipped = emptySummary(mailbox);
+    skipped.skipped = true;
+    return skipped;
+  }
+
+  const summary = emptySummary(mailbox);
+  try {
+    return await runGmailFullSyncClaimed(mailbox, stateKey, runToken, summary);
+  } catch (err: any) {
+    if (err instanceof SyncClaimLostError) {
+      // Not a failure: another run owns this mailbox now. Write nothing —
+      // every state write is owner-guarded anyway — and report it as skipped.
+      console.warn(`[gmailFullSync] ${mailbox}: claim taken over mid-run after ${summary.messagesScanned} message(s); stopping so the owning run can finish.`);
+      summary.skipped = true;
+      return summary;
+    }
+    // A run that throws still persists what it managed to do. Previously only
+    // a run that reached the end wrote its summary, so a mailbox that kept
+    // failing mid-run showed "0 errors" from its last successful run and the
+    // failures were invisible in the UI.
+    summary.errors.push(errorLabel(err));
+    summary.errorClasses.push(errorClass(err));
+    const filterForAllowlist = ALLOWLIST_FILTERED_MAILBOXES.has(mailbox.toLowerCase());
+    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, {
+      lastRunAt: new Date(),
+      lastRunSummary: describeRun(summary, filterForAllowlist, true),
+    });
+    await storage.recordGmailAccountSync(mailbox, `Interrupted after ${summary.messagesScanned} message(s): ${errorLabel(err)}`);
+    throw err;
+  } finally {
+    await storage.releaseGmailSyncRun(stateKey, runToken);
+  }
+}
+
+async function runGmailFullSyncClaimed(
+  mailbox: string,
+  stateKey: string,
+  runToken: string,
+  summary: GmailFullSyncSummary,
+): Promise<GmailFullSyncSummary> {
   const profile = await getGmailProfile(mailbox);
   if (profile.emailAddress.toLowerCase() !== mailbox.toLowerCase()) {
     throw new Error(`Connected account for ${mailbox} authenticates as ${profile.emailAddress} — refusing to sync under a mismatched identity.`);
   }
   const filterForAllowlist = ALLOWLIST_FILTERED_MAILBOXES.has(mailbox.toLowerCase());
-  const stateKey = `${mailbox}#full`;
-  const summary: GmailFullSyncSummary = {
-    mailbox,
-    messagesScanned: 0,
-    messagesNew: 0,
-    messagesSkippedNotAllowlisted: 0,
-    messagesSkippedDuplicateAcrossMailboxes: 0,
-    threadsTouched: 0,
-    matched: 0,
-    unassigned: 0,
-    notBusiness: 0,
-    filedToVendor: 0,
-    attachmentsFiled: 0,
-    attachmentsSkippedEmbedded: 0,
-    attachmentsSkippedDuplicate: 0,
-    attachmentsQueuedUnfiled: 0,
-    fieldProposalsCreated: 0,
-    summariesGenerated: 0,
-    tasksCreated: 0,
-    enrichmentPaused: false,
-    errors: [],
-  };
 
   // Checked once per run, not once per call: cheap, and stable behaviour
   // across a single sync rather than flipping mid-run. Only gates the four
@@ -250,6 +379,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
   // undefined so the next run starts a fresh pass to pick up brand-new mail.
   let pageToken: string | undefined = state?.lastProcessedInternalDate || undefined;
   let finalPageToken: string | undefined = pageToken;
+  let pagesCompleted = 0;
   do {
     // Every page fetched is processed in full before the cap is checked
     // again — stopping mid-page would permanently skip whatever's left in
@@ -259,6 +389,13 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
     const page = await searchMessageIds(mailbox, query, pageToken, 100);
     for (const ref of page.messages || []) {
       summary.messagesScanned++;
+      // Renewed inside the page, not just between pages: a page of 100
+      // messages with attachments to download, OCR and match can easily run
+      // past the takeover window, and a run that stops heartbeating looks
+      // dead to every other instance.
+      if (summary.messagesScanned % HEARTBEAT_EVERY === 0) {
+        await publishProgress(mailbox, stateKey, runToken, summary, "reading mail", pagesCompleted);
+      }
 
       try {
         const already = await storage.getGmailMessageByGmailId(ref.id);
@@ -323,7 +460,7 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
         // censused. See gmailMessages.isHistoricalImport.
         const censusTimestamp = await storage.getBackfillCensusTimestamp(mailbox, full.threadId);
         if (!thread) {
-          thread = await storage.createGmailThread({
+          thread = await storage.createGmailThreadTolerant({
             gmailThreadId: full.threadId,
             mailbox,
             subject,
@@ -334,27 +471,41 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
           } as any);
         }
 
-        const message = await storage.createGmailMessage({
-          gmailMessageId: ref.id,
-          threadId: thread.id,
-          mailbox,
-          fromEmail: fromParsed.email,
-          fromName: fromParsed.name,
-          toEmails,
-          ccEmails,
-          subject,
-          bodyText,
-          bodyHtmlSafe,
-          bodyTextNew: quoteSplit.newText,
-          hasQuotedText: quoteSplit.hasQuotedText,
-          isForward: quoteSplit.isForward,
-          snippet: (quoteSplit.newText || bodyText).slice(0, 200),
-          sentAt,
-          direction,
-          hasAttachments: realAttachmentRefs.length > 0,
-          messageIdHeader,
-          isHistoricalImport: censusTimestamp !== null && sentAt <= censusTimestamp,
-        } as any);
+        // Insert is conflict-tolerant (see storage.createGmailMessage). The
+        // cross-mailbox case is a duplicate, not an error, so it is counted
+        // and skipped rather than logged as a failure.
+        let message: GmailMessage;
+        try {
+          const inserted = await storage.createGmailMessage({
+            gmailMessageId: ref.id,
+            threadId: thread.id,
+            mailbox,
+            fromEmail: fromParsed.email,
+            fromName: fromParsed.name,
+            toEmails,
+            ccEmails,
+            subject,
+            bodyText,
+            bodyHtmlSafe,
+            bodyTextNew: quoteSplit.newText,
+            hasQuotedText: quoteSplit.hasQuotedText,
+            isForward: quoteSplit.isForward,
+            snippet: (quoteSplit.newText || bodyText).slice(0, 200),
+            sentAt,
+            direction,
+            hasAttachments: realAttachmentRefs.length > 0,
+            messageIdHeader,
+            isHistoricalImport: censusTimestamp !== null && sentAt <= censusTimestamp,
+          } as any);
+          if (!inserted.created) continue; // another run stored it first; it owns the filing and extraction
+          message = inserted.message;
+        } catch (err: any) {
+          if (err?.name === "DuplicateMessageHeaderError") {
+            summary.messagesSkippedDuplicateAcrossMailboxes++;
+            continue;
+          }
+          throw err;
+        }
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
         // Historical (pre-census) messages are still filed (for
@@ -538,7 +689,8 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
                     summary.fieldProposalsCreated += fields.length;
                   }
                 } catch (err: any) {
-                  summary.errors.push(`message ${ref.id} field extraction: ${err?.message || String(err)}`);
+                  summary.errors.push(`message ${ref.id} field extraction: ${errorLabel(err)}`);
+                  summary.errorClasses.push(errorClass(err));
                 }
               }
             }
@@ -557,21 +709,45 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
           } as any);
         }
       } catch (err: any) {
-        const detail = `message ${ref.id}: ${err?.message || String(err)}`;
+        // Gmail's message id and the error's class only. The error text is
+        // routed through errorLabel because an upstream failure will happily
+        // quote the payload that caused it, and that payload is client mail.
+        const detail = `message ${ref.id}: ${errorLabel(err)}`;
         summary.errors.push(detail);
-        // Only the count survives into gmail_import_state/gmail_accounts summaries —
-        // logging the detail here is what makes a recurring per-run error explainable
-        // after the fact instead of just a number.
+        summary.errorClasses.push(errorClass(err));
         console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
       }
     }
     finalPageToken = page.nextPageToken; // undefined once the window is fully scanned
     pageToken = page.nextPageToken;
+
+    // Cursor advances per page, not once at the end of the run. A run that
+    // takes over an hour used to lose its entire position if it was cut short
+    // (deploy, instance reclaimed, crash), so the next run re-walked pages it
+    // had already ingested. Whatever pages completed are now banked.
+    //
+    // The same write carries the heartbeat and the live counters the sync
+    // button polls, so progress and liveness cost no extra round trip.
+    //
+    // Owner-guarded: a run that has already lost its claim must not write a
+    // cursor over the run that took it, which would send that run back across
+    // pages it had finished.
+    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, { lastProcessedInternalDate: finalPageToken || null });
+    pagesCompleted++;
+    await publishProgress(mailbox, stateKey, runToken, summary, "reading mail", pagesCompleted);
+
     if (summary.messagesScanned >= MAX_MESSAGES_PER_RUN) break;
   } while (pageToken);
 
   // ── Classify and (re)summarize every thread touched this run ──
+  let threadsProcessed = 0;
   for (const threadId of Array.from(touchedThreadIds)) {
+    // This pass is LLM-heavy and can run for many minutes on a big page's
+    // worth of threads, so it heartbeats too — otherwise a healthy run looks
+    // abandoned here and gets taken over.
+    if (threadsProcessed++ % HEARTBEAT_EVERY === 0) {
+      await publishProgress(mailbox, stateKey, runToken, summary, "sorting threads", pagesCompleted);
+    }
     try {
       const thread = await storage.getGmailThread(threadId);
       if (!thread) continue;
@@ -666,7 +842,8 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
               void created;
             }
           } catch (err: any) {
-            summary.errors.push(`message ${msg.gmailMessageId} action-item extraction: ${err?.message || String(err)}`);
+            summary.errors.push(`message ${msg.gmailMessageId} action-item extraction: ${errorLabel(err)}`);
+            summary.errorClasses.push(errorClass(err));
           }
         }
       }
@@ -700,18 +877,19 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
       else summary.unassigned++;
       if (filesToVendor) summary.filedToVendor++;
     } catch (err: any) {
-      const detail = `thread ${threadId} classify/summarize: ${err?.message || String(err)}`;
+      const detail = `thread ${threadId} classify/summarize: ${errorLabel(err)}`;
       summary.errors.push(detail);
+      summary.errorClasses.push(errorClass(err));
       console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
     }
   }
   summary.threadsTouched = touchedThreadIds.size;
 
-  await storage.upsertGmailImportState(stateKey, {
+  await storage.updateGmailSyncStateIfOwner(stateKey, runToken, {
     backfillStartDate: new Date(backfillFloorEpoch * 1000),
     lastProcessedInternalDate: finalPageToken || null,
     lastRunAt: new Date(),
-    lastRunSummary: `${summary.messagesScanned} scanned, ${summary.messagesNew} new${filterForAllowlist ? `, ${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)` : ""}, ${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates, ${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits), ${summary.attachmentsFiled} attachments filed, ${summary.attachmentsQueuedUnfiled} queued unfiled, ${summary.errors.length} errors.`,
+    lastRunSummary: describeRun(summary, filterForAllowlist, false),
   });
   await storage.recordGmailAccountSync(mailbox, summary.errors.length ? `Completed with ${summary.errors.length} error(s)` : "Synced successfully");
 
@@ -719,23 +897,20 @@ export async function runGmailFullSync(mailbox: string): Promise<GmailFullSyncSu
 }
 
 /** Runs the sync for every currently-connected mailbox, one after another. A failure on one mailbox (e.g. NEEDS_REAUTH) is recorded and does not stop the others. */
-export async function runGmailFullSyncAllMailboxes(): Promise<GmailFullSyncSummary[]> {
+export async function runGmailFullSyncAllMailboxes(
+  options: { trigger?: GmailSyncTrigger } = {},
+): Promise<GmailFullSyncSummary[]> {
   const accounts = await storage.getGmailAccounts();
   const results: GmailFullSyncSummary[] = [];
   for (const account of accounts) {
     if (account.status !== "CONNECTED") continue;
     try {
-      results.push(await runGmailFullSync(account.mailbox));
+      results.push(await runGmailFullSync(account.mailbox, options));
     } catch (err: any) {
-      results.push({
-        mailbox: account.mailbox,
-        messagesScanned: 0, messagesNew: 0, messagesSkippedNotAllowlisted: 0, messagesSkippedDuplicateAcrossMailboxes: 0,
-        threadsTouched: 0, matched: 0, unassigned: 0, notBusiness: 0, filedToVendor: 0,
-        attachmentsFiled: 0, attachmentsSkippedEmbedded: 0, attachmentsSkippedDuplicate: 0, attachmentsQueuedUnfiled: 0,
-        fieldProposalsCreated: 0, summariesGenerated: 0,
-        tasksCreated: 0, enrichmentPaused: false,
-        errors: [err?.message || String(err)],
-      });
+      const failed = emptySummary(account.mailbox);
+      failed.errors.push(errorLabel(err));
+      failed.errorClasses.push(errorClass(err));
+      results.push(failed);
     }
   }
   return results;

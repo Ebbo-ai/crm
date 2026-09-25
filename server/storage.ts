@@ -47,6 +47,22 @@ import {
   PRIORITY_RANK, TRIAGE_MIN_PRIORITY_KEY, TRIAGE_MIN_PRIORITY_DEFAULT,
 } from "@shared/schema";
 import { countsAsActive, deriveClientState } from "@shared/client-state";
+
+/**
+ * How long a mailbox sync claim can go without a heartbeat before another run
+ * may take it over. Generous on purpose: a genuinely slow run (a big Gmail
+ * page, a rate-limit backoff) must never lose its claim to the next poll tick,
+ * and the only cost of waiting is a delayed retry after a hard crash.
+ */
+const SYNC_CLAIM_STALE_MINUTES = 15;
+
+/** Raised when a message insert loses to the cross-mailbox Message-ID unique index — a duplicate, not a failure. */
+export class DuplicateMessageHeaderError extends Error {
+  constructor(gmailMessageId: string) {
+    super(`Gmail message ${gmailMessageId} is a cross-mailbox duplicate of a message already stored`);
+    this.name = "DuplicateMessageHeaderError";
+  }
+}
 import { compareTodos, UNDO_WINDOW_MS } from "@shared/communication-state";
 
 /**
@@ -930,6 +946,93 @@ export class DatabaseStorage implements IStorage {
   async getGmailImportState(mailbox: string): Promise<GmailImportState | undefined> {
     const [state] = await db.select().from(gmailImportState).where(eq(gmailImportState.mailbox, mailbox));
     return state;
+  }
+
+  /**
+   * Claims the single-flight lock for one mailbox's sync, returning false when
+   * a run is already in flight.
+   *
+   * The claim is a conditional UPDATE on the state row rather than an
+   * in-process flag, because autoscale can run several web instances and each
+   * carries its own poll timer — a boolean would only have guarded one of
+   * them. A claim whose heartbeat has gone quiet for longer than
+   * SYNC_CLAIM_STALE_MINUTES is treated as abandoned (the instance holding it
+   * was killed mid-run) and can be taken over, so a crash can never wedge a
+   * mailbox permanently.
+   */
+  async claimGmailSyncRun(stateKey: string, owner: string, trigger: string): Promise<boolean> {
+    await db.insert(gmailImportState).values({ mailbox: stateKey } as any).onConflictDoNothing();
+    const result: any = await db.execute(sql`
+      UPDATE gmail_import_state
+      SET run_state = 'RUNNING',
+          run_owner = ${owner},
+          run_trigger = ${trigger},
+          run_started_at = now(),
+          run_heartbeat_at = now(),
+          run_progress = '{}'::jsonb
+      WHERE mailbox = ${stateKey}
+        AND (run_state <> 'RUNNING'
+             OR run_heartbeat_at IS NULL
+             OR run_heartbeat_at < now() - make_interval(mins => ${SYNC_CLAIM_STALE_MINUTES}))
+      RETURNING id
+    `);
+    return (result?.rowCount ?? result?.rows?.length ?? 0) > 0;
+  }
+
+  /**
+   * Refreshes the claim and publishes live counters for the sync button.
+   * Returns false when this run no longer holds the claim — it was taken over
+   * as stale, or cleared at boot. The caller must stop when that happens:
+   * two runs walking the same mailbox is the exact failure this guards.
+   */
+  async heartbeatGmailSyncRun(stateKey: string, owner: string, progress: Record<string, unknown>): Promise<boolean> {
+    const result: any = await db.execute(sql`
+      UPDATE gmail_import_state
+      SET run_heartbeat_at = now(), run_progress = ${JSON.stringify(progress)}::jsonb
+      WHERE mailbox = ${stateKey} AND run_owner = ${owner} AND run_state = 'RUNNING'
+      RETURNING id
+    `);
+    return (result?.rowCount ?? result?.rows?.length ?? 0) > 0;
+  }
+
+  /**
+   * Cursor and run-summary writes, refused unless this run still holds the
+   * claim. Without the owner check a displaced run could overwrite the cursor
+   * of the run that replaced it, sending the new run back over pages that were
+   * already ingested.
+   */
+  async updateGmailSyncStateIfOwner(
+    stateKey: string,
+    owner: string,
+    fields: { lastProcessedInternalDate?: string | null; lastRunAt?: Date; lastRunSummary?: string; backfillStartDate?: Date },
+  ): Promise<boolean> {
+    const sets = [
+      fields.lastProcessedInternalDate !== undefined ? sql`last_processed_internal_date = ${fields.lastProcessedInternalDate}` : null,
+      fields.lastRunAt !== undefined ? sql`last_run_at = ${fields.lastRunAt}` : null,
+      fields.lastRunSummary !== undefined ? sql`last_run_summary = ${fields.lastRunSummary}` : null,
+      fields.backfillStartDate !== undefined ? sql`backfill_start_date = ${fields.backfillStartDate}` : null,
+    ].filter(Boolean) as any[];
+    if (sets.length === 0) return true;
+    const result: any = await db.execute(sql`
+      UPDATE gmail_import_state SET ${sql.join(sets, sql`, `)}
+      WHERE mailbox = ${stateKey} AND run_owner = ${owner}
+      RETURNING id
+    `);
+    return (result?.rowCount ?? result?.rows?.length ?? 0) > 0;
+  }
+
+  /** Releases the claim. Scoped to the owner so a run that was already taken over as stale cannot clear someone else's claim. */
+  async releaseGmailSyncRun(stateKey: string, owner: string): Promise<void> {
+    await db.execute(sql`
+      UPDATE gmail_import_state
+      SET run_state = 'IDLE', run_owner = NULL, run_trigger = NULL
+      WHERE mailbox = ${stateKey} AND run_owner = ${owner}
+    `);
+  }
+
+  /** Every mailbox's sync state, in-flight or not — what the manual sync button polls. */
+  async getGmailSyncRunStates(): Promise<GmailImportState[]> {
+    return db.select().from(gmailImportState).orderBy(asc(gmailImportState.mailbox));
   }
 
   async upsertGmailImportState(mailbox: string, fields: Partial<InsertGmailImportState>): Promise<GmailImportState> {
@@ -3083,6 +3186,15 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  /** Same race as createGmailMessage: two runs can reach a brand-new thread's first message together, so losing the insert returns the winner's row. */
+  async createGmailThreadTolerant(data: InsertGmailThread): Promise<GmailThread> {
+    const [row] = await db.insert(gmailThreads).values(data as any).onConflictDoNothing().returning();
+    if (row) return row;
+    const existing = await this.getGmailThreadByGmailId((data as any).gmailThreadId);
+    if (existing) return existing;
+    throw new Error(`Gmail thread ${(data as any).gmailThreadId} could not be inserted and does not exist`);
+  }
+
   async createGmailThread(data: InsertGmailThread): Promise<GmailThread> {
     const [row] = await db.insert(gmailThreads).values(data).returning();
     return row;
@@ -3109,9 +3221,34 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async createGmailMessage(data: InsertGmailMessage): Promise<GmailMessage> {
-    const [row] = await db.insert(gmailMessages).values(data).returning();
-    return row;
+  /**
+   * Conflict-tolerant insert. The sync checks getGmailMessageByGmailId before
+   * calling this, and that check is still the primary dedupe — but a
+   * check-then-insert cannot survive two runs working the same page at once,
+   * which is exactly what produced the duplicate-key errors in production.
+   * The single-flight guard is the fix; this is the safety net, so a race
+   * returns the existing row instead of throwing.
+   */
+  async createGmailMessage(data: InsertGmailMessage): Promise<{ message: GmailMessage; created: boolean }> {
+    const [row] = await db.insert(gmailMessages).values(data).onConflictDoNothing().returning();
+    if (row) return { message: row, created: true };
+    // Lost the race on the Gmail id: another run stored this exact message
+    // moments ago. The caller must not treat it as new — filing, extraction
+    // and counting have already happened (or are happening) on that run.
+    const existing = await this.getGmailMessageByGmailId((data as any).gmailMessageId);
+    if (existing) return { message: existing, created: false };
+    // Lost to the partial unique index on message_id_header instead: the same
+    // email reached two connected mailboxes and the other copy won the race.
+    // The sync already has a counter for that case, so it is signalled rather
+    // than reported as an error.
+    const header = (data as any).messageIdHeader;
+    if (header) {
+      const crossMailbox = await this.getGmailMessageByMessageIdHeader(header);
+      if (crossMailbox) throw new DuplicateMessageHeaderError((data as any).gmailMessageId);
+    }
+    // No row inserted and none found: a constraint other than the id keys
+    // rejected this, and swallowing that would hide a real data problem.
+    throw new Error(`Gmail message ${(data as any).gmailMessageId} could not be inserted and does not exist`);
   }
 
   async getGmailMessagesForThread(threadId: number): Promise<GmailMessage[]> {

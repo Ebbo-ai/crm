@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { ocrPageImage } from "./claude";
+import { errorLabel } from "./logRedaction";
 
 const execFileAsync = promisify(execFile);
 
@@ -109,7 +110,10 @@ export async function extractDocumentText(
       return { text: buffer.toString("utf8").slice(0, 30000), ocrUsed: false };
     }
   } catch (err: any) {
-    console.error(`[documentExtraction] failed for ${filename}:`, err?.message || String(err));
+    // No filename: attachment names on this system routinely carry a member's
+    // name ("Smith, Jane - enrollment.pdf"). The mime type and size identify
+    // the failure shape well enough to reproduce it from the stored document.
+    console.error(`[documentExtraction] failed for ${mimeType || "unknown type"} (${buffer?.length ?? 0} bytes): ${errorLabel(err)}`);
   }
   return { text: "", ocrUsed: false };
 }
