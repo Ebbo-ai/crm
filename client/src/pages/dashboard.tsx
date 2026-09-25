@@ -96,7 +96,7 @@ function BatchImportDialog({ open, onClose }: { open: boolean; onClose: () => vo
     onSuccess: (data) => {
       setResults(data);
       queryClient.invalidateQueries({ queryKey: ["/api/ppr-metrics/summary"] });
-      toast({ title: `Import complete: ${data.imported} client${data.imported !== 1 ? "s" : ""} updated` });
+      toast({ title: `Import complete: ${data.filed ?? 0} file${(data.filed ?? 0) !== 1 ? "s" : ""} filed, ${data.metricsUpdated ?? 0} client${(data.metricsUpdated ?? 0) !== 1 ? "s" : ""} updated` });
     },
     onError: (err: any) => toast({ title: "Import failed", description: err.message, variant: "destructive" }),
   });
@@ -125,6 +125,9 @@ function BatchImportDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 <p className="text-xs text-muted-foreground">Errors</p>
               </div>
             </div>
+            <p className="text-xs text-muted-foreground text-center" data-testid="text-import-breakdown">
+              {results.filed ?? 0} file{(results.filed ?? 0) !== 1 ? "s" : ""} filed to client PPR tabs · {results.metricsUpdated ?? 0} spreadsheet{(results.metricsUpdated ?? 0) !== 1 ? "s" : ""} read for loss ratios
+            </p>
             {results.results?.filter((r: any) => r.status !== "imported").length > 0 && (
               <div className="max-h-48 overflow-y-auto space-y-1">
                 {results.results.filter((r: any) => r.status !== "imported").map((r: any, i: number) => (
@@ -139,7 +142,7 @@ function BatchImportDialog({ open, onClose }: { open: boolean; onClose: () => vo
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">Upload the monthly ZIP file containing all client PPR Excel files. The app will automatically extract loss ratios and plan position figures.</p>
+            <p className="text-sm text-muted-foreground">Upload the monthly ZIP file containing the client PPRs. Spreadsheets have their loss ratios and plan position figures read out, and every PDF and spreadsheet is filed to its client's PPR tab. Single files for one client are uploaded from that client's PPR tab instead.</p>
             <div
               className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${dragOver ? "border-brand bg-brand/5" : "border-border hover:border-brand"}`}
               onClick={() => fileRef.current?.click()}

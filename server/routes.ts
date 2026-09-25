@@ -41,6 +41,7 @@ import path from "path";
 import fs from "fs";
 import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
 import { callRatingEngine, sendRatingEngineError } from "./rating-engine";
+import { savePprFile, readPprFile, removePprFile } from "./pprStorage";
 
 const uploadDir = path.join(process.cwd(), "uploads");
 
@@ -2691,7 +2692,7 @@ export async function registerRoutes(
     const m = filename.match(/^s(\d+)/i);
     return m ? `S-${m[1]}` : null;
   }
-  // Upsert PPR (replace old file on disk + update DB, or insert new)
+  // Upsert PPR (replace the stored file + update DB, or insert new)
   async function upsertPprFile(
     clientId: number, reportMonth: number, reportYear: number,
     fileType: "PDF"|"EXCEL", newFilePath: string, fileName: string,
@@ -2699,12 +2700,16 @@ export async function registerRoutes(
   ) {
     const existing = await storage.findPprUploadByType(clientId, reportMonth, reportYear, fileType);
     if (existing) {
-      // Only delete the old file if it's at a different path than the new file
-      // (renameSync/writeFileSync already overwrites when paths are equal)
+      // Point the row at the new file first. Retiring the old object before the
+      // row is updated would leave the record aimed at a file that is gone if
+      // that update then failed.
+      const updated = await storage.updatePprUpload(existing.id, { filePath: newFilePath, fileName, notes: notes ?? existing.notes, uploadedBy, uploadedAt: new Date() } as any);
+      // Only remove the old file when it was stored under a different key — an
+      // upload to the same key has already overwritten it.
       if (existing.filePath !== newFilePath) {
-        try { fs.unlinkSync(existing.filePath); } catch {}
+        await removePprFile(existing.filePath);
       }
-      return await storage.updatePprUpload(existing.id, { filePath: newFilePath, fileName, notes: notes ?? existing.notes, uploadedBy, uploadedAt: new Date() } as any);
+      return updated;
     }
     return await storage.createPprUpload({ clientId, reportMonth, reportYear, fileType, filePath: newFilePath, fileName, notes, uploadedBy });
   }
@@ -2721,10 +2726,7 @@ export async function registerRoutes(
   // Single-client upload: POST /api/clients/:id/ppr
   // Accepts fields: reportMonth, reportYear, fileType (PDF|EXCEL), notes
   // Files: "pdf" and/or "excel"
-  app.post("/api/clients/:id/ppr", requireAuth, (req, res, next) => {
-    (req as any).uploadSubDir = "ppr";
-    next();
-  }, upload.fields([{ name: "pdf", maxCount: 1 }, { name: "excel", maxCount: 1 }, { name: "file", maxCount: 1 }]), async (req, res) => {
+  app.post("/api/clients/:id/ppr", requireAuth, memUpload.fields([{ name: "pdf", maxCount: 1 }, { name: "excel", maxCount: 1 }, { name: "file", maxCount: 1 }]), async (req, res) => {
     try {
       const clientId = parseInt(req.params.id);
       const reportMonth = parseInt(req.body.reportMonth);
@@ -2739,9 +2741,8 @@ export async function registerRoutes(
 
       const processFile = async (f: Express.Multer.File, ft: "PDF"|"EXCEL") => {
         const newName = autoFileName(client.clientCode || "", client.clientName || "", reportMonth, reportYear, ft);
-        const newPath = path.join(path.dirname(f.path), newName);
-        fs.renameSync(f.path, newPath);
-        const ppr = await upsertPprFile(clientId, reportMonth, reportYear, ft, newPath, newName, notes, uploadedBy);
+        const key = await savePprFile(clientId, newName, f.buffer);
+        const ppr = await upsertPprFile(clientId, reportMonth, reportYear, ft, key, newName, notes, uploadedBy);
         saved.push(ppr);
       };
 
@@ -2774,7 +2775,9 @@ export async function registerRoutes(
     try {
       const ppr = await storage.getPprUpload(parseInt(req.params.pprId));
       if (!ppr) return res.status(404).json({ message: "PPR not found" });
-      res.download(ppr.filePath, ppr.fileName);
+      const bytes = await readPprFile(ppr.filePath);
+      res.setHeader("Content-Disposition", `attachment; filename="${ppr.fileName}"`);
+      res.send(bytes);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2789,9 +2792,10 @@ export async function registerRoutes(
       const mime = ext === ".pdf"
         ? "application/pdf"
         : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const bytes = await readPprFile(ppr.filePath);
       res.setHeader("Content-Type", mime);
       res.setHeader("Content-Disposition", `inline; filename="${ppr.fileName}"`);
-      res.sendFile(path.resolve(ppr.filePath));
+      res.send(bytes);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2805,7 +2809,7 @@ export async function registerRoutes(
       const ext = path.extname(ppr.fileName).toLowerCase();
       if (ext === ".pdf") return res.status(400).json({ message: "Use /inline for PDF files" });
       const XLSX = (await import("xlsx")).default;
-      const workbook = XLSX.readFile(ppr.filePath);
+      const workbook = XLSX.read(await readPprFile(ppr.filePath), { type: "buffer" });
       const sheets = workbook.SheetNames.map(name => ({
         name,
         rows: XLSX.utils.sheet_to_json<(string | number | null)[]>(
@@ -2822,7 +2826,7 @@ export async function registerRoutes(
     try {
       const ppr = await storage.getPprUpload(parseInt(req.params.pprId));
       if (!ppr) return res.status(404).json({ message: "PPR not found" });
-      try { fs.unlinkSync(ppr.filePath); } catch {}
+      await removePprFile(ppr.filePath);
       await storage.deletePprUpload(ppr.id);
       res.json({ message: "PPR deleted" });
     } catch (err: any) {
@@ -2903,13 +2907,8 @@ export async function registerRoutes(
           const ft = pprFileType(name);
           const newName = autoFileName(client.clientCode || "", client.clientName || "", reportMonth, reportYear, ft);
 
-          // Save buffer to disk
-          const dir = path.join(uploadDir, "ppr", String(client.id));
-          fs.mkdirSync(dir, { recursive: true });
-          const filePath = path.join(dir, newName);
-          fs.writeFileSync(filePath, buffer);
-
-          const saved = await upsertPprFile(client.id, reportMonth, reportYear, ft, filePath, newName, null, uploadedBy);
+          const key = await savePprFile(client.id, newName, buffer);
+          const saved = await upsertPprFile(client.id, reportMonth, reportYear, ft, key, newName, null, uploadedBy);
           results.push({ file: name, status: "imported", clientCode: rawCode, clientName: client.clientName, fileType: ft, reportMonth, reportYear, pprId: saved.id });
 
           // Accumulate byClient
@@ -2939,19 +2938,50 @@ export async function registerRoutes(
     }
   });
 
-  // PPR Metrics — batch import via ZIP
+  /**
+   * Monthly ZIP import (Dashboard → Import Monthly PPRs). Does two things per
+   * file, not one: reads the loss-ratio figures out of each spreadsheet AND
+   * files every PDF/Excel in the zip onto its client's PPR tab. It used to do
+   * only the first, so a whole month's upload reported "imported" while no
+   * document ever reached a client record, and PDFs in the zip were dropped
+   * before they were even counted.
+   *
+   * A PDF carries no report period inside it, so its period comes from the
+   * filename convention (S29_Gainesville_Jun2026.pdf) when present, otherwise
+   * from the period its client's spreadsheet in this same zip resolved to.
+   */
   app.post("/api/ppr/batch-import", requireAuth, memUpload.single("file"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ message: "ZIP file is required" });
       const AdmZip = (await import("adm-zip")).default;
       const XLSX = (await import("xlsx")).default;
+      const uploadedBy = (req.user as any).fullName;
       const zip = new AdmZip(req.file.buffer);
-      const entries = zip.getEntries().filter(e => /\.(xlsx|xls)$/i.test(e.entryName));
+      const allEntries = zip.getEntries().filter((e: any) => !e.isDirectory && /\.(pdf|xlsx|xls)$/i.test(path.basename(e.entryName)));
+      const entries = allEntries.filter((e: any) => /\.(xlsx|xls)$/i.test(path.basename(e.entryName)));
+      const pdfEntries = allEntries.filter((e: any) => /\.pdf$/i.test(path.basename(e.entryName)));
 
-      const results: { file: string; status: string; clientCode?: string; error?: string }[] = [];
+      const results: { file: string; status: string; clientCode?: string; filed?: boolean; error?: string }[] = [];
+      let filed = 0;
+      let metricsUpdated = 0;
+      // Period each client's spreadsheet resolved to, so a PDF for the same
+      // client files under the same month rather than guessing. A client whose
+      // spreadsheets in this zip landed on more than one period is ambiguous —
+      // an undated PDF for it is skipped rather than filed under a coin flip.
+      const periodByClientCode = new Map<string, { reportMonth: number; reportYear: number }>();
+      const ambiguousPeriodCodes = new Set<string>();
+
+      /** Files one zip entry onto the client's PPR tab (Object Storage + ppr_uploads). */
+      const filePprDocument = async (clientId: number, clientCode: string, clientName: string, sourceName: string, buffer: Buffer, reportMonth: number, reportYear: number) => {
+        const ft = pprFileType(sourceName);
+        const newName = autoFileName(clientCode, clientName, reportMonth, reportYear, ft);
+        const key = await savePprFile(clientId, newName, buffer);
+        await upsertPprFile(clientId, reportMonth, reportYear, ft, key, newName, null, uploadedBy);
+        filed++;
+      };
 
       for (const entry of entries) {
-        const filename = entry.entryName;
+        const filename = path.basename(entry.entryName);
         try {
           const buf = entry.getData();
           const wb = XLSX.read(buf, { type: "buffer" });
@@ -3047,10 +3077,43 @@ export async function registerRoutes(
             ytdLossRatio: ytdLossRatio != null ? String(ytdLossRatio.toFixed(4)) : null,
             ytdSurplusDeficit: ytdSurplusDeficit != null ? String(ytdSurplusDeficit.toFixed(2)) : null,
             sourceFile: filename,
-            importedBy: (req.user as any).fullName,
+            importedBy: uploadedBy,
           });
+          metricsUpdated++;
+          const seenPeriod = periodByClientCode.get(clientCode);
+          if (seenPeriod && (seenPeriod.reportMonth !== reportMonth || seenPeriod.reportYear !== reportYear)) {
+            ambiguousPeriodCodes.add(clientCode);
+          }
+          periodByClientCode.set(clientCode, { reportMonth, reportYear });
 
-          results.push({ file: filename, status: "imported", clientCode });
+          await filePprDocument(client.id, client.clientCode || clientCode, client.clientName || "", filename, buf, reportMonth, reportYear);
+          results.push({ file: filename, status: "imported", clientCode, filed: true });
+        } catch (e: any) {
+          results.push({ file: filename, status: "error", error: e.message });
+        }
+      }
+
+      // PDFs carry no figures — they're filed to the client's PPR tab only.
+      for (const entry of pdfEntries) {
+        const filename = path.basename(entry.entryName);
+        try {
+          const clientCode = parseClientCode(filename);
+          if (!clientCode) { results.push({ file: filename, status: "skipped", error: "Could not determine client code" }); continue; }
+          const client = await storage.getClientByCode(clientCode);
+          if (!client) { results.push({ file: filename, clientCode, status: "skipped", error: `Client ${clientCode} not found in database` }); continue; }
+
+          const period = parseNewConvention(filename)
+            ?? (ambiguousPeriodCodes.has(clientCode) ? undefined : periodByClientCode.get(clientCode));
+          if (!period) {
+            const reason = ambiguousPeriodCodes.has(clientCode)
+              ? "Could not determine report month/year — this client has spreadsheets for more than one period in this zip, so add the month to the filename (e.g. S29_Name_Jun2026.pdf)"
+              : "Could not determine report month/year (no matching spreadsheet in this zip and no month in the filename)";
+            results.push({ file: filename, clientCode, status: "skipped", error: reason });
+            continue;
+          }
+
+          await filePprDocument(client.id, client.clientCode || clientCode, client.clientName || "", filename, entry.getData(), period.reportMonth, period.reportYear);
+          results.push({ file: filename, status: "imported", clientCode, filed: true });
         } catch (e: any) {
           results.push({ file: filename, status: "error", error: e.message });
         }
@@ -3061,12 +3124,12 @@ export async function registerRoutes(
       const errors   = results.filter(r => r.status === "error").length;
       await storage.createAuditLog({
         userId: (req.user as any).id,
-        userName: (req.user as any).fullName,
+        userName: uploadedBy,
         action: "imported",
         entity: "ppr_metrics",
-        details: `Batch PPR import: ${imported} imported, ${skipped} skipped, ${errors} errors`,
+        details: `Batch PPR import: ${imported} imported (${filed} filed to client records, ${metricsUpdated} metric rows), ${skipped} skipped, ${errors} errors`,
       });
-      res.json({ imported, skipped, errors, results });
+      res.json({ imported, skipped, errors, filed, metricsUpdated, results });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
