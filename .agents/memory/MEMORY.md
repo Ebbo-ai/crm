@@ -23,4 +23,5 @@
 - [Per-user sending identities](sending-identities.md) — From-address permissions are a data table, not code; Reply-To/BCC covers Mailgun's no-Gmail-Sent-copy gap but doesn't stitch Gmail threading.
 - [Gmail API bulk/analytical calls](gmail-api-bulk-calls.md) — real endpoints vs a stale code comment; concurrent per-thread calls throttle hard, need low concurrency + retry/backoff or results silently undercount.
 - [PPR file storage](ppr-file-storage.md) — uploads/ is wiped every deploy so PPR files live in Object Storage; the monthly zip must file documents AND read metrics, not just metrics.
+- [Background timers on autoscale](background-jobs-on-autoscale.md) — idle instances stop the poller (repeating self-clearing gaps, not a hang); an unconditional interval overlaps runs, and a dup-key error proves concurrency.
 - [Production data fixes vs schema](prod-data-fixes.md) — executeSql production is read-only; a data fix (not schema) that must reach prod goes in as an idempotent app-startup seed, applied on next deploy.
