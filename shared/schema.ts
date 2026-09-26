@@ -690,6 +690,33 @@ export const gmailImportState = pgTable("gmail_import_state", {
   backfillStartDate: timestamp("backfill_start_date"),
   /** Internal date (ms since epoch, as Gmail returns it) of the newest message already processed. */
   lastProcessedInternalDate: text("last_processed_internal_date"),
+  /**
+   * When this mailbox last finished walking its whole window in one run —
+   * the moment catch-up completed. Null means it never has, and runs keep
+   * working backwards from the newest mail toward backfillStartDate.
+   *
+   * Once set, a run stops re-walking the entire window every time and asks
+   * Gmail only for mail since this point (less a small overlap), which is the
+   * difference between a run that takes seconds and one that grinds through
+   * thousands of already-stored messages forever.
+   */
+  caughtUpAt: timestamp("caught_up_at"),
+  /**
+   * When the walk currently in progress started. A walk spans however many
+   * runs it takes, and the caught-up mark must be stamped with its START, not
+   * the finishing run's: mail that arrived while a multi-run walk was working
+   * is newer than the pages that walk already read, so a mark taken at the end
+   * would place it outside every future request.
+   */
+  walkStartedAt: timestamp("walk_started_at"),
+  /**
+   * Messages the current walk was offered by Gmail and failed to store, summed
+   * across every run the walk spans. The count has to outlive the run that hit
+   * the failure: otherwise a later run finishes the walk cleanly, declares the
+   * mailbox caught up, and the earlier failure falls behind the window with
+   * nothing left pointing at it. Reset to zero when a fresh walk starts.
+   */
+  walkFailures: integer("walk_failures").notNull().default(0),
   lastRunAt: timestamp("last_run_at"),
   lastRunSummary: text("last_run_summary"),
   /**
@@ -942,6 +969,17 @@ export const gmailThreads = pgTable("gmail_threads", {
   isPrivate: boolean("is_private").notNull().default(false),
   /** Same meaning as communications.filesToVendor: general 90 Degree Benefits correspondence that never resolved to a specific client. */
   filesToVendor: boolean("files_to_vendor").notNull().default(false),
+  /**
+   * "Stored" and "sorted" are separate facts. Storing a message sets this;
+   * finishing the thread's sorting pass (client matching, 90DB filing,
+   * business classification, action-item extraction) clears it. Without it,
+   * a sync killed between the two left the thread matched to nobody, in no
+   * one's triage, and never revisited — the messages already existed, so
+   * every later run skipped them. See server/gmailFullSync.ts.
+   */
+  needsSorting: boolean("needs_sorting").notNull().default(false),
+  /** When the thread last completed a full sorting pass. Null means it never has. */
+  sortedAt: timestamp("sorted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -1006,6 +1044,36 @@ export const gmailMessages = pgTable("gmail_messages", {
   isHistoricalImport: boolean("is_historical_import").notNull().default(false),
   /** RFC822 Message-ID header — see communications.messageIdHeader for why this, not Gmail's per-mailbox id, is the cross-mailbox dedupe key. */
   messageIdHeader: text("message_id_header"),
+  /**
+   * When action-item extraction made its decision about this message —
+   * whether it produced tasks or deliberately produced none. Null means the
+   * decision has not been made yet, so a sorting pass that is interrupted or
+   * runs while LLM enrichment is paused can be resumed from the database
+   * instead of from a list held in the dead run's memory. Every message that
+   * existed before this column was introduced is stamped, so a year of
+   * already-synced mail can never be re-extracted into today's triage.
+   */
+  triageExtractedAt: timestamp("triage_extracted_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * Messages the sync looked at and deliberately did not store — today only mail
+ * on steve.schultz@ whose counterparties are not on the business allow-list.
+ *
+ * Nothing about the message is kept beyond Gmail's own id: no sender, no
+ * subject, no body. The row exists so a later pass over the same window knows
+ * it has already judged this id and can skip it with one indexed lookup,
+ * instead of downloading the message again to reach the same conclusion. That
+ * is the difference between a re-walk costing thousands of Gmail fetches and
+ * costing nothing.
+ */
+export const gmailSkippedMessages = pgTable("gmail_skipped_messages", {
+  id: serial("id").primaryKey(),
+  mailbox: text("mailbox").notNull(),
+  gmailMessageId: text("gmail_message_id").notNull().unique(),
+  /** Why it was skipped, so a future rule change can find the rows it invalidates. */
+  reason: text("reason").notNull().default("NOT_ALLOWLISTED"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

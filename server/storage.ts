@@ -5,7 +5,7 @@ import {
   communications, communicationClients, communicationAttachments, communicationTasks, taskClients, brokerHistory, brokerContacts,
   renewalProgress, prospectProgress, planPerformanceFacts, pprImportBatches, pprHeldRows,
   gmailImportState, documentFieldProposals, fieldChangeHistory,
-  gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments,
+  gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments, gmailSkippedMessages,
   gmailBackfillDomains, gmailBackfillThreads,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
   documentSends, unfiledAttachments,
@@ -1004,13 +1004,16 @@ export class DatabaseStorage implements IStorage {
   async updateGmailSyncStateIfOwner(
     stateKey: string,
     owner: string,
-    fields: { lastProcessedInternalDate?: string | null; lastRunAt?: Date; lastRunSummary?: string; backfillStartDate?: Date },
+    fields: { lastProcessedInternalDate?: string | null; lastRunAt?: Date; lastRunSummary?: string; backfillStartDate?: Date; caughtUpAt?: Date; walkStartedAt?: Date; walkFailures?: number },
   ): Promise<boolean> {
     const sets = [
       fields.lastProcessedInternalDate !== undefined ? sql`last_processed_internal_date = ${fields.lastProcessedInternalDate}` : null,
       fields.lastRunAt !== undefined ? sql`last_run_at = ${fields.lastRunAt}` : null,
       fields.lastRunSummary !== undefined ? sql`last_run_summary = ${fields.lastRunSummary}` : null,
       fields.backfillStartDate !== undefined ? sql`backfill_start_date = ${fields.backfillStartDate}` : null,
+      fields.caughtUpAt !== undefined ? sql`caught_up_at = ${fields.caughtUpAt}` : null,
+      fields.walkStartedAt !== undefined ? sql`walk_started_at = ${fields.walkStartedAt}` : null,
+      fields.walkFailures !== undefined ? sql`walk_failures = ${fields.walkFailures}` : null,
     ].filter(Boolean) as any[];
     if (sets.length === 0) return true;
     const result: any = await db.execute(sql`
@@ -3210,6 +3213,43 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  /** True when a previous pass already looked at this Gmail id and decided not to store it (allow-list). One indexed lookup instead of downloading the message again to reach the same verdict. */
+  async isGmailMessageSkipped(gmailMessageId: string): Promise<boolean> {
+    const [row] = await db.select({ id: gmailSkippedMessages.id }).from(gmailSkippedMessages)
+      .where(eq(gmailSkippedMessages.gmailMessageId, gmailMessageId));
+    return !!row;
+  }
+
+  /** Records a skip. ON CONFLICT DO NOTHING because two mailboxes' runs can reach the same id, and a re-walk can reach it again before the first row is visible. */
+  async recordSkippedGmailMessage(mailbox: string, gmailMessageId: string, reason = "NOT_ALLOWLISTED"): Promise<void> {
+    await db.execute(sql`
+      INSERT INTO gmail_skipped_messages (mailbox, gmail_message_id, reason)
+      VALUES (${mailbox}, ${gmailMessageId}, ${reason})
+      ON CONFLICT (gmail_message_id) DO NOTHING
+    `);
+  }
+
+  /**
+   * Forgets every recorded skip and sends the mailboxes back for a fresh walk.
+   *
+   * Called when the allow-list changes: a skip is a verdict reached under the
+   * old rules, and a newly approved domain has to be able to pull in mail that
+   * was previously passed over. The next walk re-downloads those messages once
+   * to judge them again, which is the price of the rules having changed.
+   */
+  async forgetGmailSkipsAndRewalk(): Promise<{ skipsCleared: number; mailboxesReset: number }> {
+    const cleared: any = await db.execute(sql`DELETE FROM gmail_skipped_messages`);
+    const reset: any = await db.execute(sql`
+      UPDATE gmail_import_state
+         SET caught_up_at = NULL, walk_started_at = NULL, last_processed_internal_date = NULL, walk_failures = 0
+       WHERE mailbox LIKE '%#full' AND run_state <> 'RUNNING'
+    `);
+    return {
+      skipsCleared: cleared?.rowCount ?? 0,
+      mailboxesReset: reset?.rowCount ?? 0,
+    };
+  }
+
   /** Cross-mailbox dedupe: the same email seen via two connected mailboxes (Steve CCs clientservice@, or a message lands in both Kim's and clientservice@'s mailbox) has two different Gmail message ids but one Message-ID header. */
   async getGmailMessageByMessageIdHeader(messageIdHeader: string): Promise<GmailMessage | undefined> {
     const [row] = await db.select().from(gmailMessages).where(eq(gmailMessages.messageIdHeader, messageIdHeader));
@@ -3253,6 +3293,76 @@ export class DatabaseStorage implements IStorage {
 
   async getGmailMessagesForThread(threadId: number): Promise<GmailMessage[]> {
     return db.select().from(gmailMessages).where(eq(gmailMessages.threadId, threadId)).orderBy(asc(gmailMessages.sentAt));
+  }
+
+  // ── Stored vs sorted ────────────────────────────────────────────────────────
+  // Storing a message and sorting its thread are two separate facts, tracked
+  // separately, because a run that dies between them used to leave the thread
+  // unsorted forever: the messages existed, so every later run skipped them.
+
+  /** Marks a thread as having new mail that has not been through the sorting pass. Called as each message is stored. */
+  async markGmailThreadNeedsSorting(threadId: number): Promise<void> {
+    await db.update(gmailThreads).set({ needsSorting: true } as any).where(eq(gmailThreads.id, threadId));
+  }
+
+  /**
+   * Clears the flag, but only if every message on the thread that needs an
+   * action-item decision has one. The condition is evaluated in the database,
+   * in the same statement, which is what makes it safe against the two ways
+   * the flag could otherwise be cleared over unsorted mail: a message whose
+   * extraction failed mid-pass, and new mail stored by another run while this
+   * pass was working the thread. Either leaves the thread queued.
+   *
+   * Returns false when the thread stayed flagged.
+   */
+  async markGmailThreadSortedIfComplete(threadId: number): Promise<boolean> {
+    const result: any = await db.execute(sql`
+      UPDATE gmail_threads SET needs_sorting = false, sorted_at = now()
+      WHERE id = ${threadId}
+        AND NOT EXISTS (
+          SELECT 1 FROM gmail_messages m
+          WHERE m.thread_id = ${threadId}
+            AND m.direction = 'RECEIVED'
+            AND m.is_historical_import = false
+            AND m.triage_extracted_at IS NULL
+        )
+      RETURNING id
+    `);
+    return (result.rowCount ?? result.rows?.length ?? 0) > 0;
+  }
+
+  /** Threads carrying stored-but-unsorted mail, newest first so recent (operationally relevant) mail is recovered before a year-old backlog. */
+  async getThreadsNeedingSorting(limit: number, mailbox?: string): Promise<GmailThread[]> {
+    const where = mailbox
+      ? and(eq(gmailThreads.needsSorting, true), eq(gmailThreads.mailbox, mailbox))
+      : eq(gmailThreads.needsSorting, true);
+    return db.select().from(gmailThreads).where(where).orderBy(desc(gmailThreads.latestMessageAt)).limit(limit);
+  }
+
+  async countThreadsNeedingSorting(mailbox?: string): Promise<number> {
+    const where = mailbox
+      ? and(eq(gmailThreads.needsSorting, true), eq(gmailThreads.mailbox, mailbox))
+      : eq(gmailThreads.needsSorting, true);
+    const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(gmailThreads).where(where);
+    return row?.n ?? 0;
+  }
+
+  /** Received, non-historical messages on a thread whose action-item extraction decision has not been made yet. Survives an interrupted run; the in-memory list did not. */
+  async getMessagesAwaitingExtraction(threadId: number): Promise<GmailMessage[]> {
+    return db.select().from(gmailMessages)
+      .where(and(
+        eq(gmailMessages.threadId, threadId),
+        eq(gmailMessages.direction, "RECEIVED"),
+        eq(gmailMessages.isHistoricalImport, false),
+        isNull(gmailMessages.triageExtractedAt),
+      ))
+      .orderBy(asc(gmailMessages.sentAt));
+  }
+
+  /** Records that extraction has made its decision about these messages — tasks created or deliberately none. */
+  async markMessagesTriageExtracted(messageIds: number[]): Promise<void> {
+    if (messageIds.length === 0) return;
+    await db.update(gmailMessages).set({ triageExtractedAt: new Date() } as any).where(inArray(gmailMessages.id, messageIds));
   }
 
   async setGmailThreadClients(threadId: number, matches: { clientId: number; confidence: string }[]): Promise<void> {

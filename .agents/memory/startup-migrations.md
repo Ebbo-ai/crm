@@ -27,6 +27,18 @@ future re-added column can't survive by being recreated after the drop.
 still gone after the second boot. A single restart passes even when the ordering is
 wrong.
 
+## A phase that ADDs a column must precede any ORM query touching that table
+
+Drizzle selects every column the schema file declares, so the moment a new column
+exists in the schema, any `db.select()` on that table fails until the ALTER has run.
+A phase that runs an ORM-backed helper (a backfill, a catch-up pass) placed above the
+ALTER throws `column ... does not exist`, and because the whole chain sits in one
+try/catch, every later phase — including the ALTER itself — silently never runs.
+
+**How to apply:** put DDL for a new column above every phase that reads that table
+through the ORM, not merely above the code that uses the new column. Raw `pool.query`
+with explicit column lists is unaffected; the ORM is the trap.
+
 ## Uniqueness belongs in the database
 
 Where records are auto-created as a side effect of GET requests, concurrent page loads

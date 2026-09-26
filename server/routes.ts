@@ -2173,6 +2173,14 @@ export async function registerRoutes(
       const approved = !!req.body.approved;
       const row = await storage.reviewMailAllowlistDomain(Number(req.params.id), approved, (req.user as any)?.fullName || "admin");
       if (!row) return res.status(404).json({ message: "Domain not found" });
+      if (approved) {
+        // Approving a domain changes the verdict the sync reached on mail it
+        // previously passed over. Those skips are forgotten and the mailboxes
+        // re-walk their window so the newly approved correspondence is picked
+        // up, instead of the approval only ever applying to future mail.
+        const { skipsCleared, mailboxesReset } = await storage.forgetGmailSkipsAndRewalk();
+        console.log(`[mail-allowlist] ${row.domain} approved — ${skipsCleared} previous skip(s) forgotten, ${mailboxesReset} mailbox(es) queued for a fresh walk.`);
+      }
       res.json(row);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

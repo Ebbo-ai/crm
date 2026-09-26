@@ -61,15 +61,40 @@ export async function sendDigestFor(ownerFullName: string, ownerEmail: string): 
   }
 }
 
-export async function runDailyDigest(): Promise<void> {
+/** Today's date in Eastern time, which is the day the digest is "for" — not the server's UTC day, which rolls over mid-evening here. */
+function easternDateKey(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+/**
+ * Runs the digest for every active owner.
+ *
+ * Send-once-per-day is enforced in the database, not by trusting that only one
+ * scheduler exists: the scheduled deployment and the web process's own cron
+ * both aim at 7:30 AM, and a web instance that happens to be awake then would
+ * otherwise send Kim and Steve a second copy of the same list.
+ */
+export async function runDailyDigest(): Promise<{ sent: number; skipped: number; failed: number }> {
+  const today = easternDateKey();
   const users = await storage.getAllUsers();
+  let sent = 0, skipped = 0, failed = 0;
   for (const user of users.filter(u => u.isActive && u.fullName !== "System Administrator")) {
+    const key = `digest:lastSentDate:${user.id}`;
     try {
+      const last = await storage.getAppSetting(key);
+      if (last?.value === today) { skipped++; continue; }
+      // Claimed before sending: two schedulers racing here both read "not
+      // today", and the loser's write is a no-op, but the claim makes the
+      // window a fraction of a second instead of the length of a send.
+      await storage.setAppSetting(key, today, "system");
       await sendDigestFor(user.fullName, user.email);
+      sent++;
     } catch (err: any) {
+      failed++;
       console.error(`Digest run failed for user #${user.id}: ${errorLabel(err)}`);
     }
   }
+  return { sent, skipped, failed };
 }
 
 /** Registers the 7:30 AM America/New_York cron job. Call once at server startup. */

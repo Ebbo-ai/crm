@@ -24,7 +24,31 @@ import {
   extractMessageBody,
 } from "./gmail";
 
-const BACKFILL_MONTHS = 12;
+/**
+ * How far back a mailbox's rolling sync is allowed to reach, set once per
+ * mailbox and then pinned (see backfillStartDate below).
+ *
+ * Six months, not twelve: the business runs on renewals, and correspondence
+ * older than roughly six months before a client's anniversary has no
+ * operational value. Anything older is still in Google Workspace and reachable
+ * by searching there — the same decision that cancelled the historical import.
+ * A twelve-month rolling window was that import in a different hat, and it is
+ * what had steve.schultz@ grinding backwards for days.
+ */
+const BACKFILL_MONTHS = 6;
+/**
+ * Once a mailbox's whole window has been walked, later runs look only at mail
+ * since the last completed walk, less this much overlap. Gmail search is by
+ * internal date, and a message can land with an older one (delayed delivery,
+ * mail imported into the account), so the overlap is what stops a fast run
+ * from stepping over it. Re-scanning known mail costs one indexed lookup each.
+ *
+ * One day, not several: the overlap has to stay comfortably under
+ * MAX_MESSAGES_PER_RUN or a steady-state run would cap out on overlap alone
+ * and stop advancing the caught-up mark. Against a five-minute poll, a day of
+ * slack is already generous.
+ */
+const STEADY_STATE_OVERLAP_DAYS = 1;
 /** Bounds one sync call so a first run against a year of mail (and the recurring poll) both have a predictable cost — call again to continue. */
 const MAX_MESSAGES_PER_RUN = 250;
 /** Below this, a signature logo / tracking icon / inline bullet graphic — never downloaded or filed. */
@@ -132,8 +156,16 @@ export interface GmailFullSyncSummary {
   messagesScanned: number;
   messagesNew: number;
   messagesSkippedNotAllowlisted: number;
+  /** Messages Gmail listed that this run failed to store (fetch/auth/parse). Blocks the caught-up mark so the next walk sees them again. */
+  messagesFailedToIngest: number;
   messagesSkippedDuplicateAcrossMailboxes: number;
   threadsTouched: number;
+  /** Threads that completed a full sorting pass this run — client matching, 90DB filing, classification, extraction. */
+  threadsSorted: number;
+  /** Threads sorted this run that were left stored-but-unsorted by an earlier, interrupted run. */
+  threadsRecovered: number;
+  /** Threads still carrying stored-but-unsorted mail for this mailbox when the run ended. Zero is the healthy state. */
+  threadsPendingSort: number;
   matched: number;
   unassigned: number;
   notBusiness: number;
@@ -152,6 +184,10 @@ export interface GmailFullSyncSummary {
   errorClasses: string[];
   /** True when this call did no work because a run for the same mailbox was already in flight. Not an error — the point of the guard. */
   skipped: boolean;
+  /** True when the run stopped at its own time budget (scheduled job) rather than because the mailbox was exhausted. Everything done up to that point is banked. */
+  stoppedAtDeadline: boolean;
+  /** True once this mailbox has walked its whole window at least once; from then on runs only look at mail since the last completed walk. */
+  caughtUp: boolean;
 }
 
 /** What started a sync run. Recorded on the state row so the UI can say "a scheduled sync is already running" rather than just "busy". */
@@ -170,8 +206,12 @@ function emptySummary(mailbox: string): GmailFullSyncSummary {
     messagesScanned: 0,
     messagesNew: 0,
     messagesSkippedNotAllowlisted: 0,
+    messagesFailedToIngest: 0,
     messagesSkippedDuplicateAcrossMailboxes: 0,
     threadsTouched: 0,
+    threadsSorted: 0,
+    threadsRecovered: 0,
+    threadsPendingSort: 0,
     matched: 0,
     unassigned: 0,
     notBusiness: 0,
@@ -187,6 +227,8 @@ function emptySummary(mailbox: string): GmailFullSyncSummary {
     errors: [],
     errorClasses: [],
     skipped: false,
+    stoppedAtDeadline: false,
+    caughtUp: false,
   };
 }
 
@@ -237,10 +279,277 @@ function describeRun(summary: GmailFullSyncSummary, filterForAllowlist: boolean,
     ...(filterForAllowlist ? [`${summary.messagesSkippedNotAllowlisted} skipped (not on allow-list)`] : []),
     `${summary.messagesSkippedDuplicateAcrossMailboxes} cross-mailbox duplicates`,
     `${summary.threadsTouched} threads touched (${summary.matched} matched, ${summary.unassigned} unassigned, ${summary.notBusiness} not business, ${summary.filedToVendor} filed to 90 Degree Benefits)`,
+    `${summary.threadsSorted} sorted${summary.threadsRecovered ? ` (${summary.threadsRecovered} recovered from an earlier run)` : ""}`,
+    `${summary.threadsPendingSort} still awaiting sorting`,
     `${summary.attachmentsFiled} attachments filed`,
     `${summary.attachmentsQueuedUnfiled} queued unfiled`,
     `${summary.errors.length} errors (${formatErrorClassTally(summary.errorClasses)})`,
-  ].join(", ") + (interrupted ? " — INTERRUPTED before the run finished." : ".");
+    ...(summary.messagesFailedToIngest ? [`${summary.messagesFailedToIngest} message(s) Gmail offered but could not be stored`] : []),
+  ].join(", ")
+    + (interrupted ? " — INTERRUPTED before the run finished." : ".")
+    + (summary.stoppedAtDeadline ? " Stopped at the job's time limit with the cursor banked; the next run continues from there." : "")
+    + (summary.caughtUp ? " Caught up: only mail since the last completed pass is read from here." : " Still catching up on this mailbox's window.");
+}
+
+/** Shared state one sorting pass needs. Built once per run (or per sweep) rather than per thread — client refs and the deterministic lookup are the expensive parts. */
+interface SortContext {
+  mailbox: string;
+  clientRefs: Awaited<ReturnType<typeof buildClientRefs>>;
+  deterministicLookup: ReturnType<typeof buildDeterministicLookup>;
+  /** When true the LLM steps are skipped, the thread is left flagged, and nothing is stamped as decided — so it is all retried once the daily ceiling resets. */
+  enrichmentPaused: boolean;
+  usageCtx: { mailbox: string };
+  summary: GmailFullSyncSummary;
+  /** Summaries are the most expensive part of sorting and nothing depends on them being immediate, so the recovery sweep over an old backlog skips them. */
+  generateSummaries: boolean;
+}
+
+/**
+ * Sorts one thread: client matching, 90 Degree Benefits filing, business
+ * classification, action-item extraction on inbound mail, and (optionally) the
+ * thread summary. Clears the thread's needsSorting flag only when the pass
+ * completes in full, so an interruption or a paused enrichment budget leaves
+ * the thread queued rather than silently finished.
+ *
+ * Messages awaiting extraction are read from the database, not from a list
+ * held in the running process: that list died with the run that built it, and
+ * a message stored by a dead run would never have been extracted again.
+ */
+async function sortThread(threadId: number, ctx: SortContext): Promise<boolean> {
+  const { mailbox, summary, usageCtx } = ctx;
+  try {
+    const thread = await storage.getGmailThread(threadId);
+    if (!thread) return false;
+    const messages = await storage.getGmailMessagesForThread(threadId);
+    if (messages.length === 0) return false;
+
+    let existingClientIds = await storage.getGmailThreadClientIds(threadId);
+    let businessStatus = thread.businessStatus;
+    if (existingClientIds.length === 0) {
+      const latestForMatch = messages[messages.length - 1];
+      const deterministic = matchDeterministically(ctx.deterministicLookup, {
+        subject: thread.subject,
+        fromEmail: latestForMatch.fromEmail,
+        toEmails: (latestForMatch.toEmails as string[] | null) || [],
+        ccEmails: (latestForMatch.ccEmails as string[] | null) || [],
+      });
+      let matchedIds: { clientId: number; confidence: string }[] = deterministic.clientIds.map((id) => ({ clientId: id, confidence: "high" }));
+      if (matchedIds.length === 0 && !ctx.enrichmentPaused) {
+        const matches = await matchEmailToClients(
+          `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\nTo: ${((m.toEmails as string[] | null) || []).join(", ")}\nCc: ${((m.ccEmails as string[] | null) || []).join(", ")}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
+          ctx.clientRefs,
+          usageCtx,
+        );
+        matchedIds = matches;
+      }
+      if (matchedIds.length > 0) {
+        await storage.setGmailThreadClients(threadId, matchedIds.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
+        existingClientIds = matchedIds.map((m) => m.clientId);
+        businessStatus = "MATCHED";
+      }
+    } else {
+      businessStatus = "MATCHED";
+    }
+
+    // 90 Degree Benefits involvement is tracked independently of client
+    // matches — Steve's decision: a thread can be linked to one or more
+    // clients AND flagged as 90DB correspondence at the same time (broker/
+    // vendor mail routinely spans multiple groups), not either/or.
+    const allAddresses = messages.flatMap((m) => [m.fromEmail, ...((m.toEmails as string[] | null) || []), ...((m.ccEmails as string[] | null) || [])]);
+    const filesToVendor = await isVendorCorrespondence(allAddresses);
+
+    if (existingClientIds.length === 0 && !filesToVendor && businessStatus !== "MATCHED") {
+      const latest = messages[messages.length - 1];
+      const { isBusiness } = ctx.enrichmentPaused
+        ? { isBusiness: true }
+        : await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "", usageCtx);
+      businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
+    } else if (existingClientIds.length === 0 && businessStatus !== "MATCHED") {
+      businessStatus = "UNASSIGNED";
+    }
+
+    // ── AI action-item extraction on inbound mail ──
+    // Only RECEIVED, non-historical messages whose extraction decision has
+    // not been made yet, and only once the thread's client/vendor context is
+    // known so a resulting task can be linked correctly. Skipped entirely for
+    // NOT_BUSINESS threads (newsletters, personal mail on steve.schultz@).
+    const awaiting = await storage.getMessagesAwaitingExtraction(threadId);
+    if (awaiting.length > 0 && businessStatus === "NOT_BUSINESS") {
+      // A decision, not an omission: this thread is not business mail, so no
+      // task will ever come from it. Stamped so it is not reconsidered on
+      // every future pass over the thread.
+      await storage.markMessagesTriageExtracted(awaiting.map((m) => m.id));
+    } else if (awaiting.length > 0 && !ctx.enrichmentPaused) {
+      for (const msg of awaiting) {
+        try {
+          // Guard against ever double-creating a task for the same email.
+          // The legacy Mailgun inbound webhook (the only other place that
+          // ran this same extraction on inbound mail) has been removed, so
+          // this should never actually find a match — kept as a defensive
+          // check on the shared Message-ID key rather than an assumption.
+          if (msg.messageIdHeader) {
+            const legacyDupe = await storage.getCommunicationByMessageIdHeader(msg.messageIdHeader);
+            if (legacyDupe) { await storage.markMessagesTriageExtracted([msg.id]); continue; }
+          }
+          const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
+          const processed = await processEmail(fullText, [], usageCtx);
+          if (processed.actionItems.length === 0) {
+            await storage.markMessagesTriageExtracted([msg.id]);
+            continue;
+          }
+
+          const owner = ownerForMailbox(mailbox);
+          const clientAssignments = existingClientIds.map((clientId) => ({ clientId, confidence: "medium" }));
+          for (const item of processed.actionItems) {
+            const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+            // Every extracted item is stored regardless of priority — the
+            // triage dashboard's tunable threshold (app_settings) filters
+            // at read time, so raising/lowering the bar later doesn't
+            // require re-running extraction against old mail.
+            await storage.createTaskWithClients({
+              communicationId: null,
+              gmailMessageId: msg.id,
+              clientId: existingClientIds[0] ?? null,
+              description: item.description,
+              dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
+              owner,
+              aiPriority: item.priority,
+            } as any, clientAssignments);
+            summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
+          }
+          // Stamped per message, immediately, rather than once for the whole
+          // thread at the end: a crash between a task being created and the
+          // stamp being written is what would re-extract this message later
+          // and file the same task twice, and stamping here narrows that
+          // window to a single message instead of every message on the thread.
+          await storage.markMessagesTriageExtracted([msg.id]);
+        } catch (err: any) {
+          // Deliberately not stamped: the decision was never reached, so the
+          // message stays queued, the thread stays flagged (see
+          // markGmailThreadSortedIfComplete), and the next pass tries again.
+          summary.errors.push(`message ${msg.gmailMessageId} action-item extraction: ${errorLabel(err)}`);
+          summary.errorClasses.push(errorClass(err));
+        }
+      }
+    }
+
+    // Summaries are built from each message's new text only (quoted
+    // history/forwards excepted, where bodyTextNew already equals the
+    // full body) — otherwise a long reply chain would have the same
+    // request counted once per quoted repetition.
+    const totalChars = messages.reduce((n, m) => n + (m.bodyTextNew?.length || m.bodyText?.length || 0), 0);
+    let summaryUpdate: { summary?: string | null; summaryOneLine?: string | null; summaryGeneratedAt?: Date; summaryForMessageCount?: number } = {};
+    if (ctx.generateSummaries && totalChars >= SUMMARY_MIN_CHARS && thread.summaryForMessageCount !== messages.length && !ctx.enrichmentPaused) {
+      const result = await generateThreadSummary(
+        thread.subject || "",
+        messages.map((m) => ({ fromName: m.fromName, fromEmail: m.fromEmail, sentAt: m.sentAt.toISOString(), bodyText: m.bodyTextNew || m.bodyText || "" })),
+        usageCtx,
+      );
+      if (result) {
+        summaryUpdate = {
+          summary: result.summary,
+          summaryOneLine: result.oneLine,
+          summaryGeneratedAt: new Date(),
+          summaryForMessageCount: messages.length,
+        };
+        summary.summariesGenerated++;
+      }
+    }
+
+    await storage.updateGmailThread(threadId, { businessStatus, filesToVendor, ...summaryUpdate } as any);
+    if (businessStatus === "MATCHED") summary.matched++;
+    else if (businessStatus === "NOT_BUSINESS") summary.notBusiness++;
+    else summary.unassigned++;
+    if (filesToVendor) summary.filedToVendor++;
+
+    // Only now is the thread sorted. A paused enrichment budget means the
+    // matching and classification above were guesses, not decisions, so the
+    // flag stays up and the thread is sorted properly once the ceiling resets.
+    if (ctx.enrichmentPaused) return false;
+    // The clear is conditional in the database: a message whose extraction
+    // failed above, or new mail another run stored on this thread while this
+    // pass was working it, keeps the thread queued.
+    const cleared = await storage.markGmailThreadSortedIfComplete(threadId);
+    if (cleared) summary.threadsSorted++;
+    return cleared;
+  } catch (err: any) {
+    const detail = `thread ${threadId} sorting: ${errorLabel(err)}`;
+    summary.errors.push(detail);
+    summary.errorClasses.push(errorClass(err));
+    console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
+    return false;
+  }
+}
+
+/** Per run: how many threads left unsorted by earlier runs are recovered before this run reads new mail. Recent mail first. */
+const RECOVERY_THREADS_PER_RUN = 100;
+/** Per boot: the bound on the startup sweep over threads left stored-but-unsorted by past interrupted runs. The daily LLM ceiling is the other governor. */
+const RECOVERY_THREADS_PER_SWEEP = 500;
+
+/**
+ * Sorts threads that carry stored-but-unsorted mail, across every mailbox,
+ * newest mail first. Runs at startup and can be called again to work further
+ * through a backlog; it is bounded per call so a boot cannot turn into an
+ * hours-long LLM run, and it stops early if the daily spend ceiling is hit.
+ *
+ * Summaries are deliberately skipped here — they are the expensive half of
+ * sorting, and what matters for a recovered thread is that it is matched to
+ * its client and visible in triage, not that it has a paragraph of prose.
+ */
+export async function sortPendingThreads(
+  options: { limit?: number; deadlineAt?: Date } = {},
+): Promise<{ before: number; sorted: number; remaining: number; paused: boolean }> {
+  const limit = options.limit ?? RECOVERY_THREADS_PER_SWEEP;
+  const before = await storage.countThreadsNeedingSorting();
+  if (before === 0) return { before, sorted: 0, remaining: 0, paused: false };
+
+  let gate = await isEnrichmentPaused();
+  if (gate.paused) {
+    return { before, sorted: 0, remaining: before, paused: true };
+  }
+
+  const clientRefs = await buildClientRefs();
+  const deterministicLookup = buildDeterministicLookup(clientRefs);
+  const summary = emptySummary("sortRecovery");
+  const threads = await storage.getThreadsNeedingSorting(limit);
+
+  // A mailbox with a sync run in flight is already recovering its own backlog.
+  // Sorting those threads here too would pay Claude twice for the same work,
+  // so they are left to that run and picked up by a later sweep.
+  const runStates = await storage.getGmailSyncRunStates();
+  let busyMailboxes = new Set(runStates.filter((s) => s.runState === "RUNNING").map((s) => s.mailbox.replace(/#full$/, "")));
+
+  let sorted = 0;
+  let processed = 0;
+  for (const thread of threads) {
+    if (options.deadlineAt && new Date() >= options.deadlineAt) break;
+    // Both governors are re-read as the sweep runs, not just at the start: the
+    // daily spend ceiling can be reached partway through, and a sync run can
+    // claim a mailbox after the sweep began.
+    if (processed++ % 25 === 0 && processed > 1) {
+      gate = await isEnrichmentPaused();
+      if (gate.paused) break;
+      const states = await storage.getGmailSyncRunStates();
+      busyMailboxes = new Set(states.filter((s) => s.runState === "RUNNING").map((s) => s.mailbox.replace(/#full$/, "")));
+    }
+    if (busyMailboxes.has(thread.mailbox)) continue;
+    const ok = await sortThread(thread.id, {
+      mailbox: thread.mailbox,
+      clientRefs,
+      deterministicLookup,
+      enrichmentPaused: false,
+      usageCtx: { mailbox: `${thread.mailbox}:sortRecovery` },
+      summary,
+      generateSummaries: false,
+    });
+    if (ok) sorted++;
+  }
+
+  const remaining = await storage.countThreadsNeedingSorting();
+  if (summary.errors.length) {
+    console.error(`[gmailFullSync] Sorting recovery: ${summary.errors.length} thread(s) failed to sort (${formatErrorClassTally(summary.errorClasses)}) — they stay queued.`);
+  }
+  return { before, sorted, remaining, paused: gate.paused };
 }
 
 /**
@@ -274,7 +583,7 @@ function describeRun(summary: GmailFullSyncSummary, filterForAllowlist: boolean,
  */
 export async function runGmailFullSync(
   mailbox: string,
-  options: { trigger?: GmailSyncTrigger } = {},
+  options: { trigger?: GmailSyncTrigger; deadlineAt?: Date } = {},
 ): Promise<GmailFullSyncSummary> {
   const stateKey = `${mailbox}#full`;
   const trigger = options.trigger ?? "POLLER";
@@ -296,7 +605,7 @@ export async function runGmailFullSync(
 
   const summary = emptySummary(mailbox);
   try {
-    return await runGmailFullSyncClaimed(mailbox, stateKey, runToken, summary);
+    return await runGmailFullSyncClaimed(mailbox, stateKey, runToken, summary, options.deadlineAt);
   } catch (err: any) {
     if (err instanceof SyncClaimLostError) {
       // Not a failure: another run owns this mailbox now. Write nothing —
@@ -328,6 +637,8 @@ async function runGmailFullSyncClaimed(
   stateKey: string,
   runToken: string,
   summary: GmailFullSyncSummary,
+  /** Hard stop for a run with a scheduled job's clock over it: finish the page in hand, bank the cursor, release the claim. Never cuts a page in half. */
+  deadlineAt?: Date,
 ): Promise<GmailFullSyncSummary> {
   const profile = await getGmailProfile(mailbox);
   if (profile.emailAddress.toLowerCase() !== mailbox.toLowerCase()) {
@@ -354,7 +665,26 @@ async function runGmailFullSyncClaimed(
   const backfillFloorEpoch = state?.backfillStartDate
     ? Math.floor(new Date(state.backfillStartDate).getTime() / 1000)
     : monthsAgoEpochSeconds(BACKFILL_MONTHS);
-  const afterEpoch = backfillFloorEpoch;
+  if (!state?.backfillStartDate) {
+    // Pinned before a single page is read, not at the end of the run. A run
+    // that banks a page cursor and then dies without having written the floor
+    // leaves the next run resuming that cursor against a freshly computed —
+    // and therefore different — window.
+    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, { backfillStartDate: new Date(backfillFloorEpoch * 1000) });
+  }
+
+  // Two modes, and the difference between them is the difference between a run
+  // that takes seconds and one that walks the whole window every time:
+  //
+  //  - Catching up (caughtUpAt null): ask for the entire window and work
+  //    backwards a page at a time across however many runs it takes.
+  //  - Caught up: ask only for mail since the last completed walk, less the
+  //    overlap. The window floor is still honoured as a lower bound.
+  const runStartedAt = new Date();
+  const caughtUpAt = state?.caughtUpAt ? new Date(state.caughtUpAt) : null;
+  const afterEpoch = caughtUpAt
+    ? Math.max(backfillFloorEpoch, Math.floor((caughtUpAt.getTime() - STEADY_STATE_OVERLAP_DAYS * 86_400_000) / 1000))
+    : backfillFloorEpoch;
 
   // No has:attachment restriction — every message, sent and received.
   const query = `after:${afterEpoch}`;
@@ -362,12 +692,33 @@ async function runGmailFullSyncClaimed(
   const deterministicLookup = buildDeterministicLookup(clientRefs);
   const internalDomain = (process.env.INTERNAL_EMAIL_DOMAIN || "90degreebenefits.com").toLowerCase();
   const touchedThreadIds = new Set<number>();
-  // Newly-created RECEIVED messages this run, grouped by thread, so the
-  // classify pass below can extract AI action items/tasks against them once
-  // the thread's client and vendor links are known. SENT messages never get
-  // action-item extraction — a message never generates a task off its own
-  // sender's outgoing mail.
-  const newReceivedMessagesByThread = new Map<number, GmailMessage[]>();
+  const sortCtx: SortContext = {
+    mailbox,
+    clientRefs,
+    deterministicLookup,
+    enrichmentPaused: enrichmentGate.paused,
+    usageCtx,
+    summary,
+    generateSummaries: true,
+  };
+
+  // ── Recover threads left stored-but-unsorted by earlier runs ──
+  // Before reading any new mail: mail already in the database that nobody can
+  // see in triage is a worse problem than mail not yet fetched. Newest first,
+  // and bounded, so a large backlog drains over several runs instead of
+  // turning one run into an hours-long LLM job.
+  const pending = await storage.getThreadsNeedingSorting(RECOVERY_THREADS_PER_RUN, mailbox);
+  if (pending.length > 0) {
+    console.log(`[gmailFullSync] ${mailbox}: ${pending.length} thread(s) stored but never sorted by an earlier run — sorting those first.`);
+    let recovered = 0;
+    for (const thread of pending) {
+      if (recovered++ % HEARTBEAT_EVERY === 0) {
+        await publishProgress(mailbox, stateKey, runToken, summary, "sorting earlier mail", 0);
+      }
+      if (deadlineAt && new Date() >= deadlineAt) break;
+      if (await sortThread(thread.id, sortCtx)) summary.threadsRecovered++;
+    }
+  }
 
   // Resume from where the last run's page cursor left off (stored in
   // lastProcessedInternalDate, repurposed here to hold a Gmail pageToken
@@ -380,13 +731,41 @@ async function runGmailFullSyncClaimed(
   let pageToken: string | undefined = state?.lastProcessedInternalDate || undefined;
   let finalPageToken: string | undefined = pageToken;
   let pagesCompleted = 0;
+  let cappedOut = false;
+
+  // A walk can span several runs. Its start time — not the finishing run's —
+  // is what the caught-up mark is stamped with, because mail that arrives
+  // while the walk is in progress is newer than the pages already read and
+  // would otherwise fall outside every later request.
+  const walkStartedAt = pageToken && state?.walkStartedAt ? new Date(state.walkStartedAt) : runStartedAt;
+  // Failures carry across the whole walk, not just this run: a run that fails
+  // to store a message banks its cursor, and without this the NEXT run could
+  // finish the walk cleanly and declare the mailbox caught up, leaving that
+  // message behind the window with nothing pointing at it any more.
+  const failuresBeforeThisRun = walkStartedAt === runStartedAt ? 0 : (state?.walkFailures ?? 0);
+  if (walkStartedAt === runStartedAt) {
+    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, { walkStartedAt: runStartedAt, walkFailures: 0 });
+  }
   do {
+    // A scheduled run has a clock over it (the platform kills the job at its
+    // timeout). Stopping here, between pages, means the cursor is already
+    // banked and the claim is released cleanly, instead of the job being
+    // killed mid-page and leaving a claim to time out.
+    if (deadlineAt && new Date() >= deadlineAt) {
+      summary.stoppedAtDeadline = true;
+      console.log(`[gmailFullSync] ${mailbox}: reached this run's time budget after ${summary.messagesScanned} message(s); stopping cleanly.`);
+      break;
+    }
     // Every page fetched is processed in full before the cap is checked
     // again — stopping mid-page would permanently skip whatever's left in
     // it, since Gmail's pageToken only lets you resume at the next page,
     // not partway through one. A little overrun past MAX_MESSAGES_PER_RUN
     // (up to one page's worth) is the trade for never dropping a message.
     const page = await searchMessageIds(mailbox, query, pageToken, 100);
+    // Threads this page put new mail on. Sorted when the page finishes, not
+    // at the end of the run, so an interruption costs at most one page's
+    // worth of sorting instead of the whole run's.
+    const pageThreadIds = new Set<number>();
     for (const ref of page.messages || []) {
       summary.messagesScanned++;
       // Renewed inside the page, not just between pages: a page of 100
@@ -400,6 +779,15 @@ async function runGmailFullSyncClaimed(
       try {
         const already = await storage.getGmailMessageByGmailId(ref.id);
         if (already) continue; // already synced this message
+
+        // Already judged and deliberately not stored on an earlier pass. This
+        // check is what keeps a second walk over the same window cheap: the
+        // allow-list verdict below needs the message's headers, so without it
+        // every skipped message is downloaded from Gmail again, every walk.
+        if (filterForAllowlist && await storage.isGmailMessageSkipped(ref.id)) {
+          summary.messagesSkippedNotAllowlisted++;
+          continue;
+        }
 
         const full = await getMessageFull(mailbox, ref.id);
         const fromHeader = getHeader(full.payload, "From") || "";
@@ -415,6 +803,9 @@ async function runGmailFullSyncClaimed(
           const { allowed } = await checkAllowlist([fromParsed.email, ...toEmails, ...ccEmails]);
           if (!allowed) {
             summary.messagesSkippedNotAllowlisted++;
+            // Only the id is kept — see gmailSkippedMessages. Nothing about
+            // the message itself is recorded for mail we chose not to hold.
+            await storage.recordSkippedGmailMessage(mailbox, ref.id);
             continue;
           }
         }
@@ -471,6 +862,14 @@ async function runGmailFullSyncClaimed(
           } as any);
         }
 
+        // Flagged BEFORE the message is stored, not after: a process killed
+        // between the insert and the flag would otherwise leave mail in the
+        // database that nothing ever sorts — the exact failure this tracking
+        // exists to end. Flagging first can only be wrong in the harmless
+        // direction (a thread queued for a sort it did not need), and the
+        // sort itself is idempotent.
+        await storage.markGmailThreadNeedsSorting(thread.id);
+
         // Insert is conflict-tolerant (see storage.createGmailMessage). The
         // cross-mailbox case is a duplicate, not an error, so it is counted
         // and skipped rather than logged as a failure.
@@ -508,16 +907,11 @@ async function runGmailFullSyncClaimed(
         }
         summary.messagesNew++;
         touchedThreadIds.add(thread.id);
-        // Historical (pre-census) messages are still filed (for
-        // search/reference) and count toward messagesNew, but never enter
-        // the action-item extraction pool. A message sent AFTER the census
-        // timestamp is live mail even in a censused thread — see the
-        // censusTimestamp comment above.
-        if (direction === "RECEIVED" && message.isHistoricalImport === false) {
-          const bucket = newReceivedMessagesByThread.get(thread.id);
-          if (bucket) bucket.push(message);
-          else newReceivedMessagesByThread.set(thread.id, [message]);
-        }
+        pageThreadIds.add(thread.id);
+        // Which of this thread's messages still need action-item extraction is
+        // read back out of the database when the thread is sorted, so that
+        // list survives the death of this process too. Historical (pre-census)
+        // messages are excluded there, not here.
 
         if (sentAt > thread.latestMessageAt) {
           await storage.updateGmailThread(thread.id, { latestMessageAt: sentAt, subject: thread.subject || subject });
@@ -715,11 +1109,28 @@ async function runGmailFullSyncClaimed(
         const detail = `message ${ref.id}: ${errorLabel(err)}`;
         summary.errors.push(detail);
         summary.errorClasses.push(errorClass(err));
+        // Counted apart from every other error: this is a message Gmail
+        // offered and the sync did not store. Until the walk manages a clean
+        // pass, the mailbox is not declared caught up, so the next walk covers
+        // this message again instead of leaving it behind the window.
+        summary.messagesFailedToIngest++;
         console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
       }
     }
     finalPageToken = page.nextPageToken; // undefined once the window is fully scanned
     pageToken = page.nextPageToken;
+
+    // ── Sort this page's threads before moving on ──
+    let sortedThisPage = 0;
+    for (const threadId of Array.from(pageThreadIds)) {
+      // Sorting is LLM-heavy and can run for minutes on a full page, so it
+      // heartbeats too — otherwise a healthy run looks abandoned here and
+      // gets taken over.
+      if (sortedThisPage++ % HEARTBEAT_EVERY === 0) {
+        await publishProgress(mailbox, stateKey, runToken, summary, "sorting threads", pagesCompleted);
+      }
+      await sortThread(threadId, sortCtx);
+    }
 
     // Cursor advances per page, not once at the end of the run. A run that
     // takes over an hour used to lose its entire position if it was cut short
@@ -736,158 +1147,49 @@ async function runGmailFullSyncClaimed(
     pagesCompleted++;
     await publishProgress(mailbox, stateKey, runToken, summary, "reading mail", pagesCompleted);
 
-    if (summary.messagesScanned >= MAX_MESSAGES_PER_RUN) break;
+    if (summary.messagesScanned >= MAX_MESSAGES_PER_RUN) {
+      // Only a cap that actually left pages unread counts as stopping short.
+      // A final page that happens to cross the cap has still finished the
+      // window, and treating it as capped would mean the mailbox never
+      // records that it caught up.
+      cappedOut = !!pageToken;
+      break;
+    }
   } while (pageToken);
 
-  // ── Classify and (re)summarize every thread touched this run ──
-  let threadsProcessed = 0;
-  for (const threadId of Array.from(touchedThreadIds)) {
-    // This pass is LLM-heavy and can run for many minutes on a big page's
-    // worth of threads, so it heartbeats too — otherwise a healthy run looks
-    // abandoned here and gets taken over.
-    if (threadsProcessed++ % HEARTBEAT_EVERY === 0) {
-      await publishProgress(mailbox, stateKey, runToken, summary, "sorting threads", pagesCompleted);
-    }
-    try {
-      const thread = await storage.getGmailThread(threadId);
-      if (!thread) continue;
-      const messages = await storage.getGmailMessagesForThread(threadId);
-      if (messages.length === 0) continue;
-
-      let existingClientIds = await storage.getGmailThreadClientIds(threadId);
-      let businessStatus = thread.businessStatus;
-      if (existingClientIds.length === 0) {
-        const latestForMatch = messages[messages.length - 1];
-        const deterministic = matchDeterministically(deterministicLookup, {
-          subject: thread.subject,
-          fromEmail: latestForMatch.fromEmail,
-          toEmails: (latestForMatch.toEmails as string[] | null) || [],
-          ccEmails: (latestForMatch.ccEmails as string[] | null) || [],
-        });
-        let matchedIds: { clientId: number; confidence: string }[] = deterministic.clientIds.map((id) => ({ clientId: id, confidence: "high" }));
-        if (matchedIds.length === 0 && !enrichmentGate.paused) {
-          const matches = await matchEmailToClients(
-            `Subject: ${thread.subject}\n\n${messages.map((m) => `From: ${m.fromEmail}\nTo: ${((m.toEmails as string[] | null) || []).join(", ")}\nCc: ${((m.ccEmails as string[] | null) || []).join(", ")}\n${m.bodyTextNew || m.bodyText || ""}`).join("\n---\n").slice(0, 6000)}`,
-            clientRefs,
-            usageCtx,
-          );
-          matchedIds = matches;
-        }
-        if (matchedIds.length > 0) {
-          await storage.setGmailThreadClients(threadId, matchedIds.map((m) => ({ clientId: m.clientId, confidence: m.confidence })));
-          existingClientIds = matchedIds.map((m) => m.clientId);
-          businessStatus = "MATCHED";
-        }
-      } else {
-        businessStatus = "MATCHED";
-      }
-
-      // 90 Degree Benefits involvement is tracked independently of client
-      // matches — Steve's decision: a thread can be linked to one or more
-      // clients AND flagged as 90DB correspondence at the same time (broker/
-      // vendor mail routinely spans multiple groups), not either/or.
-      const allAddresses = messages.flatMap((m) => [m.fromEmail, ...((m.toEmails as string[] | null) || []), ...((m.ccEmails as string[] | null) || [])]);
-      const filesToVendor = await isVendorCorrespondence(allAddresses);
-
-      if (existingClientIds.length === 0 && !filesToVendor && businessStatus !== "MATCHED") {
-        const latest = messages[messages.length - 1];
-        const { isBusiness } = enrichmentGate.paused
-          ? { isBusiness: true }
-          : await classifyMailRelevance(latest.fromEmail, thread.subject || "", latest.bodyTextNew || latest.bodyText || "", usageCtx);
-        businessStatus = isBusiness ? "UNASSIGNED" : "NOT_BUSINESS";
-      } else if (existingClientIds.length === 0 && businessStatus !== "MATCHED") {
-        businessStatus = "UNASSIGNED";
-      }
-
-      // ── AI action-item extraction on newly-synced inbound mail ──
-      // Only for RECEIVED messages this run, and only once the thread's
-      // client/vendor context is known so a resulting task can be linked
-      // correctly. Skipped entirely for NOT_BUSINESS threads (newsletters,
-      // personal mail on steve.schultz@) so no task work is spent on them.
-      const newMsgs = newReceivedMessagesByThread.get(threadId) || [];
-      if (newMsgs.length > 0 && businessStatus !== "NOT_BUSINESS" && !enrichmentGate.paused) {
-        for (const msg of newMsgs) {
-          try {
-            // Guard against ever double-creating a task for the same email.
-            // The legacy Mailgun inbound webhook (the only other place that
-            // ran this same extraction on inbound mail) has been removed, so
-            // this should never actually find a match — kept as a defensive
-            // check on the shared Message-ID key rather than an assumption.
-            if (msg.messageIdHeader) {
-              const legacyDupe = await storage.getCommunicationByMessageIdHeader(msg.messageIdHeader);
-              if (legacyDupe) continue;
-            }
-            const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
-            const processed = await processEmail(fullText, [], usageCtx);
-            if (processed.actionItems.length === 0) continue;
-
-            const owner = ownerForMailbox(mailbox);
-            const clientAssignments = existingClientIds.map((clientId) => ({ clientId, confidence: "medium" }));
-            for (const item of processed.actionItems) {
-              const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-              // Every extracted item is stored regardless of priority — the
-              // triage dashboard's tunable threshold (app_settings) filters
-              // at read time, so raising/lowering the bar later doesn't
-              // require re-running extraction against old mail.
-              const created = await storage.createTaskWithClients({
-                communicationId: null,
-                gmailMessageId: msg.id,
-                clientId: existingClientIds[0] ?? null,
-                description: item.description,
-                dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-                owner,
-                aiPriority: item.priority,
-              } as any, clientAssignments);
-              summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
-              void created;
-            }
-          } catch (err: any) {
-            summary.errors.push(`message ${msg.gmailMessageId} action-item extraction: ${errorLabel(err)}`);
-            summary.errorClasses.push(errorClass(err));
-          }
-        }
-      }
-
-      // Summaries are built from each message's new text only (quoted
-      // history/forwards excepted, where bodyTextNew already equals the
-      // full body) — otherwise a long reply chain would have the same
-      // request counted once per quoted repetition.
-      const totalChars = messages.reduce((n, m) => n + (m.bodyTextNew?.length || m.bodyText?.length || 0), 0);
-      let summaryUpdate: { summary?: string | null; summaryOneLine?: string | null; summaryGeneratedAt?: Date; summaryForMessageCount?: number } = {};
-      if (totalChars >= SUMMARY_MIN_CHARS && thread.summaryForMessageCount !== messages.length && !enrichmentGate.paused) {
-        const result = await generateThreadSummary(
-          thread.subject || "",
-          messages.map((m) => ({ fromName: m.fromName, fromEmail: m.fromEmail, sentAt: m.sentAt.toISOString(), bodyText: m.bodyTextNew || m.bodyText || "" })),
-          usageCtx,
-        );
-        if (result) {
-          summaryUpdate = {
-            summary: result.summary,
-            summaryOneLine: result.oneLine,
-            summaryGeneratedAt: new Date(),
-            summaryForMessageCount: messages.length,
-          };
-          summary.summariesGenerated++;
-        }
-      }
-
-      await storage.updateGmailThread(threadId, { businessStatus, filesToVendor, ...summaryUpdate } as any);
-      if (businessStatus === "MATCHED") summary.matched++;
-      else if (businessStatus === "NOT_BUSINESS") summary.notBusiness++;
-      else summary.unassigned++;
-      if (filesToVendor) summary.filedToVendor++;
-    } catch (err: any) {
-      const detail = `thread ${threadId} classify/summarize: ${errorLabel(err)}`;
-      summary.errors.push(detail);
-      summary.errorClasses.push(errorClass(err));
-      console.error(`[gmailFullSync] ${mailbox}: ${detail}`);
-    }
-  }
+  // Sorting is no longer a single pass at the end of the run — each page's
+  // threads are sorted as that page finishes (see sortThreads above the
+  // cursor write). Anything still flagged after all that (a thread whose
+  // sorting errored, or a run where LLM enrichment was paused) stays flagged
+  // and is picked up by the next run's recovery pass.
   summary.threadsTouched = touchedThreadIds.size;
+  summary.threadsPendingSort = await storage.countThreadsNeedingSorting(mailbox);
+
+  // The window was walked end to end this run: no page left, and the run
+  // wasn't cut short by its message cap or its clock. From here on this
+  // mailbox only asks Gmail for mail newer than this run's start, which is
+  // what turns a multi-hour crawl into a run measured in seconds.
+  //
+  // Stamped with the run's START time, not its end: mail that arrived while
+  // the run was working must fall inside the next run's request.
+  const walkFailures = failuresBeforeThisRun + summary.messagesFailedToIngest;
+  const windowExhausted = !pageToken && !cappedOut && !summary.stoppedAtDeadline && walkFailures === 0;
+  summary.caughtUp = windowExhausted || (caughtUpAt !== null && walkFailures === 0);
+  if (!pageToken && !cappedOut && !summary.stoppedAtDeadline && walkFailures > 0) {
+    console.warn(`[gmailFullSync] ${mailbox}: walked the whole window but ${walkFailures} message(s) could not be stored during it; staying in catch-up so the next walk sees them again.`);
+  }
+  if (caughtUpAt && cappedOut) {
+    // Not broken — the cursor is banked and the next run finishes the window,
+    // which re-advances the mark. Logged because a mailbox that does this
+    // every run is one whose overlap window has outgrown the per-run cap.
+    console.warn(`[gmailFullSync] ${mailbox}: a caught-up run hit the ${MAX_MESSAGES_PER_RUN}-message cap; the next run finishes the window.`);
+  }
 
   await storage.updateGmailSyncStateIfOwner(stateKey, runToken, {
     backfillStartDate: new Date(backfillFloorEpoch * 1000),
     lastProcessedInternalDate: finalPageToken || null,
+    ...(windowExhausted ? { caughtUpAt: walkStartedAt } : {}),
+    walkFailures,
     lastRunAt: new Date(),
     lastRunSummary: describeRun(summary, filterForAllowlist, false),
   });
@@ -898,7 +1200,7 @@ async function runGmailFullSyncClaimed(
 
 /** Runs the sync for every currently-connected mailbox, one after another. A failure on one mailbox (e.g. NEEDS_REAUTH) is recorded and does not stop the others. */
 export async function runGmailFullSyncAllMailboxes(
-  options: { trigger?: GmailSyncTrigger } = {},
+  options: { trigger?: GmailSyncTrigger; deadlineAt?: Date } = {},
 ): Promise<GmailFullSyncSummary[]> {
   const accounts = await storage.getGmailAccounts();
   const results: GmailFullSyncSummary[] = [];

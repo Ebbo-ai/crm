@@ -59,6 +59,26 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Scheduled-deployment entry points. Each is a short-lived process that
+  // does one job and exits — the daily digest and the mail sync pass — so
+  // they must be bundled separately from the web server rather than reached
+  // through it. See server/jobs/*.ts.
+  console.log("building scheduled jobs...");
+  await esbuild({
+    entryPoints: ["server/jobs/digest.ts", "server/jobs/sync.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outdir: "dist/jobs",
+    outExtension: { ".js": ".cjs" },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    external: externals,
+    logLevel: "info",
+  });
 }
 
 buildAll().catch((err) => {

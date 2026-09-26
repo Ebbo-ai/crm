@@ -1710,6 +1710,143 @@ app.use((req, res, next) => {
     }
     log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied");
 
+    // ── Phase 30: "stored" and "sorted" are separate facts ──
+    // Sorting (client matching, 90DB filing, business classification, action
+    // item extraction) used to run in one pass at the END of a sync run. A run
+    // killed after its messages were stored but before that pass left those
+    // threads matched to nobody and in no one's triage — permanently, because
+    // the messages already existed and every later run skipped them. The flag
+    // below is what makes that state visible and recoverable.
+    const sortingColumnExisted = await pool.query(`
+      SELECT 1 FROM information_schema.columns WHERE table_name = 'gmail_threads' AND column_name = 'needs_sorting'
+    `);
+    await pool.query(`
+      ALTER TABLE gmail_threads ADD COLUMN IF NOT EXISTS needs_sorting BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE gmail_threads ADD COLUMN IF NOT EXISTS sorted_at TIMESTAMP;
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS triage_extracted_at TIMESTAMP;
+      CREATE INDEX IF NOT EXISTS idx_gmail_threads_needs_sorting ON gmail_threads (needs_sorting) WHERE needs_sorting;
+    `);
+    if (sortingColumnExisted.rowCount === 0) {
+      // One-time, and only on the boot that introduces the columns.
+      //
+      // Every message that already exists has had its extraction decision
+      // made — or deliberately not made, for a year of backfilled mail that
+      // was never going to become a task. Stamping them all is what stops the
+      // recovery pass below from dumping twelve months of action items into
+      // today's triage.
+      const stamped = await pool.query(`UPDATE gmail_messages SET triage_extracted_at = now() WHERE triage_extracted_at IS NULL`);
+
+      // Which existing threads were never sorted cannot be known exactly —
+      // nothing recorded it until now. This is the closest safe approximation:
+      // a thread holding mail, with no client, no 90DB filing, no summary, and
+      // still sitting at the default UNASSIGNED status. It over-selects (a
+      // genuinely unmatched business thread looks the same), and that is the
+      // right way to be wrong: a false positive costs one re-match, a false
+      // negative leaves mail invisible.
+      const flagged = await pool.query(`
+        UPDATE gmail_threads t SET needs_sorting = true
+        WHERE t.summary IS NULL
+          AND t.business_status = 'UNASSIGNED'
+          AND t.files_to_vendor = false
+          AND NOT EXISTS (SELECT 1 FROM gmail_thread_clients c WHERE c.thread_id = t.id)
+          AND EXISTS (SELECT 1 FROM gmail_messages m WHERE m.thread_id = t.id)
+      `);
+      await pool.query(`UPDATE gmail_threads SET sorted_at = now() WHERE needs_sorting = false AND sorted_at IS NULL`);
+      log(`Startup migration: stored-vs-sorted tracking added — ${stamped.rowCount} existing message(s) stamped as extraction-decided, ${flagged.rowCount} thread(s) flagged as stored but never sorted`);
+    }
+    log("Startup migration: stored-vs-sorted thread tracking ready");
+
+    // ── Phase 31: six-month sync window + a "caught up" marker ──
+    // Placed here, above anything that reads gmail_import_state through
+    // Drizzle, for the same reason as Phase 30: the ORM selects every column
+    // the schema declares.
+    await pool.query(`
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS caught_up_at TIMESTAMP;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS walk_started_at TIMESTAMP;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS walk_failures INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS gmail_skipped_messages (
+        id SERIAL PRIMARY KEY,
+        mailbox TEXT NOT NULL,
+        gmail_message_id TEXT NOT NULL UNIQUE,
+        reason TEXT NOT NULL DEFAULT 'NOT_ALLOWLISTED',
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      );
+    `);
+
+    // The floor is stored per mailbox and never recomputed, which is what
+    // stops it creeping forward a day at a time. That also means lowering the
+    // constant alone would change nothing for the mailboxes already syncing —
+    // their stored floor is still a year back. This raises those floors once,
+    // to a single fixed date, and the app-settings key is what keeps it a
+    // one-time correction rather than something that re-runs every boot and
+    // walks the floor forward forever.
+    //
+    // Mail already stored from outside the new window stays. This only stops
+    // the sync from reaching further back.
+    const floorMarker = await pool.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths'`);
+    if (floorMarker.rows[0]?.value !== "6") {
+      const newFloor = new Date();
+      newFloor.setMonth(newFloor.getMonth() - 6);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Taken first and held for the transaction. Locking the marker row
+        // would not serialise two instances booting together the very first
+        // time, because on that boot the row does not exist yet and there is
+        // nothing to lock.
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('gmailSync:backfillFloor'))`);
+        // The marker is re-read inside the transaction and the rows are locked
+        // for the duration. Two instances booting together (autoscale does
+        // that) would otherwise both pass the check outside and raise the
+        // floor twice, and a sync already in flight would write its old
+        // twelve-month floor back over this one the moment it finished.
+        const marker = await client.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths' FOR UPDATE`);
+        const rows = await client.query(`SELECT mailbox, run_state FROM gmail_import_state WHERE mailbox LIKE '%#full' FOR UPDATE`);
+        const running = rows.rows.filter((r: any) => r.run_state === "RUNNING");
+        if (marker.rows[0]?.value === "6") {
+          await client.query("ROLLBACK");
+        } else if (running.length > 0) {
+          // Deliberately left for the next boot rather than forced: a running
+          // sync holds the old window in memory for the rest of its run.
+          await client.query("ROLLBACK");
+          log(`Startup migration: six-month sync window deferred — ${running.length} mailbox sync(s) in flight; will apply on the next boot`);
+        } else {
+          const raised = await client.query(
+            `UPDATE gmail_import_state
+                SET backfill_start_date = $1,
+                    -- The page cursor belongs to the old query. A token from
+                    -- an "after: 12 months ago" walk means nothing against a
+                    -- six-month one, so the next run starts a fresh pass.
+                    last_processed_internal_date = NULL,
+                    walk_started_at = NULL,
+                    -- Not caught up by definition: the new, smaller window has
+                    -- never been walked end to end.
+                    caught_up_at = NULL
+              WHERE mailbox LIKE '%#full'
+                AND (backfill_start_date IS NULL OR backfill_start_date < $1)
+              RETURNING mailbox`,
+            [newFloor],
+          );
+          await client.query(
+            `INSERT INTO app_settings (key, value, updated_by) VALUES ('gmailSync:backfillFloorMonths', '6', 'system')
+             ON CONFLICT (key) DO UPDATE SET value = '6', updated_by = 'system'`,
+          );
+          await client.query("COMMIT");
+          log(`Startup migration: mail sync window shortened to 6 months — ${raised.rowCount} mailbox floor(s) raised to ${newFloor.toISOString().slice(0, 10)}; already-stored older mail is untouched`);
+        }
+      } catch (err: any) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+    log("Startup migration: six-month mail sync window ready");
+
+    // Runs before the catch-up below, and before anything else that reads
+    // gmail_messages or gmail_threads through Drizzle: the ORM selects every
+    // column the schema declares, so a query issued before these columns
+    // exist fails and takes the whole migration chain down with it.
     // One-time, bounded catch-up: messages sent after their thread's census
     // timestamp (genuine live mail) that got skipped before the
     // per-message isHistoricalImport fix existed. See
@@ -1751,6 +1888,7 @@ app.use((req, res, next) => {
       log(`Startup migration: cleared ${staleClaims.rowCount} abandoned mailbox sync claim(s) left by a previous process`);
     }
     log("Startup migration: mailbox sync single-flight guard ready");
+
 
     // One-time diagnostic: does a Gmail filter auto-apply the "90 Degree
     // Benefits" label to new incoming mail, or was the label only ever
@@ -1829,6 +1967,30 @@ app.use((req, res, next) => {
   }
   setTimeout(runGmailSyncSafely, 10_000);
   setInterval(runGmailSyncSafely, GMAIL_SYNC_INTERVAL_MS);
+
+  // Mail that was stored by an interrupted run but never sorted is in the
+  // database and in nobody's triage. Each sync run recovers a slice of its own
+  // mailbox's backlog; this sweep works the queue across all mailboxes,
+  // newest mail first, bounded per boot and stopping early if the daily AI
+  // spend ceiling is reached.
+  setTimeout(async () => {
+    try {
+      const { sortPendingThreads } = await import("./gmailFullSync");
+      const { storage } = await import("./storage");
+      // A sync run does its own recovery pass first; overlapping the two
+      // would spend twice on the same threads. The next boot (or the next
+      // scheduled run) picks the queue up instead.
+      const states = await storage.getGmailSyncRunStates();
+      if (states.some((s) => s.runState === "RUNNING")) return;
+
+      const result = await sortPendingThreads();
+      if (result.before > 0) {
+        log(`Sorting recovery: ${result.before} thread(s) stored but not sorted — sorted ${result.sorted} this boot, ${result.remaining} remaining${result.paused ? " (stopped early: daily AI spend ceiling reached)" : ""}`);
+      }
+    } catch (err: any) {
+      console.error(`Sorting recovery error: ${errorLabel(err)}`);
+    }
+  }, 60_000);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

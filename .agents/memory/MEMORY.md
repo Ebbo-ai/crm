@@ -25,3 +25,6 @@
 - [PPR file storage](ppr-file-storage.md) — uploads/ is wiped every deploy so PPR files live in Object Storage; the monthly zip must file documents AND read metrics, not just metrics.
 - [Background timers on autoscale](background-jobs-on-autoscale.md) — idle instances stop the poller (repeating self-clearing gaps, not a hang); an unconditional interval overlaps runs, and a dup-key error proves concurrency.
 - [Production data fixes vs schema](prod-data-fixes.md) — executeSql production is read-only; a data fix (not schema) that must reach prod goes in as an idempotent app-startup seed, applied on next deploy.
+- [Stored vs sorted mail](mail-stored-vs-sorted.md) — storing a message and sorting its thread are separate facts; flag before insert, clear only in a conditional UPDATE.
+- [Rolling mail sync window](mail-sync-window.md) — floor stored per mailbox, never recomputed; caught-up mark takes the walk's start, and an unstored message blocks it for the whole walk.
+- [Scheduled job entry points](scheduled-job-entrypoints.md) — autoscale timers only fire while an instance is awake; recurring work needs its own bundled job the user creates in Publishing.
