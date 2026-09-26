@@ -23,6 +23,22 @@ no startup migration chain (the web deployment owns the schema).
 - Set the job's own in-process deadline below the platform job timeout and check
   it at safe boundaries (between pages, between threads), so the run banks its
   cursor and releases its claim instead of being killed mid-work.
+- A job whose output another scheduled job consumes needs a WALL-CLOCK cutoff as
+  well as that relative budget, kept next to the schedule times it is derived
+  from. A relative budget sized for a bad morning is exactly what lets a run
+  still be working when the downstream job fires. Compute the cutoff as an
+  instant in the schedule's timezone (carrying the start's seconds pushes it
+  past the mark), treat a start between the cutoff and the downstream job as too
+  late to do anything, and do not START a phase whose deadline has already
+  passed — a phase that queries and sets up before its first clock check still
+  runs work towards the downstream job's moment.
+- Those checks are cooperative: whatever a page or a thread began runs to
+  completion. A cutoff is "nothing new starts", not a guarantee of being
+  finished, so it needs named slack ahead of the downstream job.
+- Say in the log WHY a run ended — finished the work vs stopped on a cap — and
+  name what was left. The two look identical in a list of per-item lines, and
+  a mailbox skipped because something else held its claim is not evidence that
+  anything was caught up.
 - Exit non-zero when the core work failed. The deployment's run history is the
   only place a failure shows, and a job that catches everything reports a green
   tick over an inbox that was never read.
