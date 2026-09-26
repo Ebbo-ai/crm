@@ -8,7 +8,7 @@ import {
   gmailThreads, gmailThreadClients, gmailMessages, gmailAttachments, gmailSkippedMessages,
   gmailBackfillDomains, gmailBackfillThreads,
   sendingIdentities, userSendingIdentities, gmailAccounts, mailAllowlistDomains, appSettings,
-  documentSends, unfiledAttachments,
+  documentSends, unfiledAttachments, globalDocuments,
   type DocumentSend, type InsertDocumentSend,
   type UnfiledAttachment, type InsertUnfiledAttachment,
   type SendingIdentity, type InsertSendingIdentity,
@@ -30,6 +30,7 @@ import {
   type PlanTier,
   type RateCard, type InsertRateCard,
   type Document, type InsertDocument,
+  type GlobalDocument, type InsertGlobalDocument,
   type Issue, type InsertIssue,
   type PprUpload, type InsertPprUpload,
   type PprMonthGroup,
@@ -3292,6 +3293,12 @@ export class DatabaseStorage implements IStorage {
     throw new Error(`Gmail message ${(data as any).gmailMessageId} could not be inserted and does not exist`);
   }
 
+  /** One stored message by our own id — what Reply and Forward anchor to, so threading follows the message the sender was actually looking at. */
+  async getGmailMessageById(id: number): Promise<GmailMessage | undefined> {
+    const [row] = await db.select().from(gmailMessages).where(eq(gmailMessages.id, id));
+    return row;
+  }
+
   async getGmailMessagesForThread(threadId: number): Promise<GmailMessage[]> {
     return db.select().from(gmailMessages).where(eq(gmailMessages.threadId, threadId)).orderBy(asc(gmailMessages.sentAt));
   }
@@ -3664,6 +3671,125 @@ export class DatabaseStorage implements IStorage {
       await this.assignCommunicationToClients(comm.id, data.clientIds.map(clientId => ({ clientId, confidence: "manual" })));
     }
     return comm;
+  }
+
+  // ── Documents offered on a send ─────────────────────────────────────────────
+
+  /**
+   * The client's current document of each kind — what "attach the SPD" means
+   * when three SPDs have been filed over two years. Superseded and older
+   * versioned rows stay in the database and on the Documents tab; they are
+   * simply not what a send offers by default.
+   */
+  async getCurrentDocumentsForClient(clientId: number): Promise<Document[]> {
+    return db.select().from(documents)
+      .where(and(eq(documents.clientId, clientId), eq(documents.isCurrent, true)))
+      .orderBy(desc(documents.uploadedAt));
+  }
+
+  async getGlobalDocuments(includeSuperseded = false): Promise<GlobalDocument[]> {
+    const rows = await db.select().from(globalDocuments).orderBy(desc(globalDocuments.uploadedAt));
+    return includeSuperseded ? rows : rows.filter((d) => d.isCurrent);
+  }
+
+  async getGlobalDocument(id: number): Promise<GlobalDocument | undefined> {
+    const [row] = await db.select().from(globalDocuments).where(eq(globalDocuments.id, id));
+    return row;
+  }
+
+  /** A re-upload under the same name supersedes the old one rather than replacing it, so a message sent last month can still be traced to the file that actually went. */
+  async createGlobalDocument(data: InsertGlobalDocument): Promise<GlobalDocument> {
+    await db.update(globalDocuments).set({ isCurrent: false })
+      .where(and(eq(globalDocuments.name, data.name), eq(globalDocuments.isCurrent, true)));
+    const [row] = await db.insert(globalDocuments).values(data).returning();
+    return row;
+  }
+
+  // ── Outbound mail, recorded where the rest of the mail lives ───────────────
+
+  /**
+   * Files a message the CRM just sent into the Gmail-native tables, so the
+   * reply appears in the thread immediately instead of waiting for the next
+   * sync to notice our own Sent folder.
+   *
+   * Conflict-tolerant on purpose: sync may reach the same message first (it
+   * is in the sender's Sent folder the moment Gmail accepts it), and losing
+   * that race must not turn a successful send into an error the sender sees.
+   */
+  async recordOutboundGmailMessage(data: {
+    gmailMessageId: string;
+    gmailThreadId: string;
+    mailbox: string;
+    fromEmail: string;
+    fromName: string;
+    toEmails: string[];
+    ccEmails: string[];
+    subject: string | null;
+    bodyText: string;
+    messageIdHeader: string | null;
+    sentByUserId: number;
+    sentByUserName: string;
+    clientIds: number[];
+  }): Promise<{ threadId: number; messageId: number | null }> {
+    const sentAt = new Date();
+    let thread = await this.getGmailThreadByGmailId(data.gmailThreadId);
+    if (!thread) {
+      thread = await this.createGmailThreadTolerant({
+        gmailThreadId: data.gmailThreadId,
+        mailbox: data.mailbox,
+        subject: data.subject,
+        latestMessageAt: sentAt,
+        messageCount: 0,
+        // A thread we started by sending is business by definition, and it is
+        // linked to whichever clients the composer was opened from.
+        businessStatus: data.clientIds.length > 0 ? "MATCHED" : "UNASSIGNED",
+      } as any);
+    }
+    if (data.clientIds.length > 0) {
+      const existing = await this.getGmailThreadClientIds(thread.id);
+      const missing = data.clientIds.filter((id) => !existing.includes(id));
+      if (missing.length > 0) {
+        await this.setGmailThreadClients(thread.id, [
+          ...existing.map((clientId) => ({ clientId, confidence: "manual" })),
+          ...missing.map((clientId) => ({ clientId, confidence: "manual" })),
+        ]);
+      }
+    }
+    let messageId: number | null = null;
+    try {
+      const { message } = await this.createGmailMessage({
+        gmailMessageId: data.gmailMessageId,
+        threadId: thread.id,
+        mailbox: data.mailbox,
+        fromEmail: data.fromEmail.toLowerCase(),
+        fromName: data.fromName,
+        toEmails: data.toEmails.map((e) => e.toLowerCase()),
+        ccEmails: data.ccEmails.map((e) => e.toLowerCase()),
+        subject: data.subject,
+        bodyText: data.bodyText,
+        bodyTextNew: data.bodyText,
+        hasQuotedText: false,
+        isForward: false,
+        sentAt,
+        direction: "SENT",
+        hasAttachments: false,
+        messageIdHeader: data.messageIdHeader,
+        // Our own send has no action items to extract — the decision is made
+        // here rather than left for the sorting pass to reconsider forever.
+        triageExtractedAt: sentAt,
+        sentByUserId: data.sentByUserId,
+        sentByUserName: data.sentByUserName,
+      } as any);
+      messageId = message.id;
+    } catch {
+      // Sync got there first, or the same Message-ID already exists from
+      // another connected mailbox. Either way the message is stored.
+    }
+    await this.updateGmailThread(thread.id, {
+      latestMessageAt: sentAt,
+      messageCount: (await this.getGmailMessagesForThread(thread.id)).length,
+    } as any);
+    return { threadId: thread.id, messageId };
   }
 }
 

@@ -1059,6 +1059,15 @@ export const gmailMessages = pgTable("gmail_messages", {
   /** RFC822 Message-ID header — see communications.messageIdHeader for why this, not Gmail's per-mailbox id, is the cross-mailbox dedupe key. */
   messageIdHeader: text("message_id_header"),
   /**
+   * For mail sent from the CRM: the person who pressed Send, which the From
+   * address does not say. Steve sending as kim.anderson@ is a Kim message in
+   * every mailbox that receives it, and the record of who actually sent it
+   * exists only here. Null for received mail and for anything Gmail sync
+   * picked up without the CRM having sent it.
+   */
+  sentByUserId: integer("sent_by_user_id"),
+  sentByUserName: text("sent_by_user_name"),
+  /**
    * When action-item extraction made its decision about this message —
    * whether it produced tasks or deliberately produced none. Null means the
    * decision has not been made yet, so a sorting pass that is interrupted or

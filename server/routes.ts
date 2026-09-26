@@ -23,7 +23,7 @@ import {
 import {
   checkResolutionNote, isResolutionType, isTaskPriority, READ_NO_TASK_NOTE,
 } from "@shared/communication-state";
-import { checkOutboundDocumentGuard, recordGuardRefusal } from "./documentGuards";
+import { checkOutboundDocumentGuard, recordGuardRefusal, isInternalOnlyCategory } from "./documentGuards";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
@@ -3719,11 +3719,47 @@ export async function registerRoutes(
    * once Gmail sync is watching that box (Mailgun's API leaves no Sent-folder
    * copy in Gmail the way sending through Gmail itself would).
    */
-  app.post("/api/communications/send", requireAuth, async (req, res) => {
+  /**
+   * Accepts JSON or multipart/form-data. The composer posts multipart only
+   * when a file from the sender's own computer is attached; everything else
+   * arrives as JSON. One endpoint either way, so there is a single place
+   * where permission, the guard, threading and the record all happen.
+   */
+  const composeUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 10 } });
+
+  /** Multipart turns every field into a string, so arrays arrive as JSON text or a comma list. */
+  function sendFieldToArray(value: any): any[] {
+    if (value == null || value === "") return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+      return trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    return [value];
+  }
+
+  app.post("/api/communications/send", requireAuth, composeUpload.array("files", 10), async (req, res) => {
     try {
-      const { fromIdentityId, to, cc, bcc, subject, bodyText, clientIds, documentIds } = req.body;
+      const payload: any = req.body || {};
+      const { fromIdentityId, subject, bodyText } = payload;
+      const to = sendFieldToArray(payload.to);
+      const cc = sendFieldToArray(payload.cc);
+      const bcc = sendFieldToArray(payload.bcc);
+      const clientIds = sendFieldToArray(payload.clientIds);
+      const documentIds = sendFieldToArray(payload.documentIds);
+      const globalDocumentIds = sendFieldToArray(payload.globalDocumentIds);
+      const replyToMessageId = payload.replyToMessageId ? parseInt(String(payload.replyToMessageId)) : null;
+      const uploadedFiles = ((req.files as any[]) || []) as { originalname: string; buffer: Buffer }[];
       const user = req.user as any;
-      if (!fromIdentityId || !to || !bodyText) {
+      if (!fromIdentityId || to.length === 0 || !bodyText) {
         return res.status(400).json({ message: "fromIdentityId, to and bodyText are required" });
       }
       const identity = await storage.getSendingIdentity(parseInt(fromIdentityId));
@@ -3756,13 +3792,36 @@ export async function registerRoutes(
       if (requestedDocumentIds.some((id) => !Number.isInteger(id) || id <= 0)) {
         return res.status(400).json({ message: "documentIds must be positive whole numbers" });
       }
-      let attachedDocuments: { id: number; documentName: string | null; category: string }[] = [];
-      if (requestedDocumentIds.length > 0) {
-        for (const docId of requestedDocumentIds) {
-          const doc = await storage.getDocument(docId);
-          if (!doc) return res.status(400).json({ message: `Document ${docId} not found` });
-          attachedDocuments.push({ id: doc.id, documentName: doc.documentName, category: doc.category as string });
-        }
+      const requestedGlobalDocumentIds: number[] = globalDocumentIds.map(Number);
+      if (requestedGlobalDocumentIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+        return res.status(400).json({ message: "globalDocumentIds must be positive whole numbers" });
+      }
+
+      // Every attachment is resolved from its stored record: the bytes and
+      // the category are read together, by id. A category supplied by the
+      // caller is never used — that is how an internal-only document would
+      // get out while declaring itself something harmless.
+      const {
+        resolveClientDocumentAttachment,
+        resolveGlobalDocumentAttachment,
+        resolveUploadedFileAttachment,
+      } = await import("./outboundAttachments");
+      const resolvedAttachments: {
+        attachment: { filename: string; mimeType: string; content: Buffer };
+        guarded: { id?: number | null; documentName?: string | null; category: string };
+        label: string;
+      }[] = [];
+      try {
+        for (const docId of requestedDocumentIds) resolvedAttachments.push(await resolveClientDocumentAttachment(docId));
+        for (const gid of requestedGlobalDocumentIds) resolvedAttachments.push(await resolveGlobalDocumentAttachment(gid));
+        for (const file of uploadedFiles) resolvedAttachments.push(resolveUploadedFileAttachment(file));
+      } catch (err: any) {
+        // A document that cannot be read is a failed send, not a send with
+        // one file quietly missing.
+        return res.status(400).json({ message: err?.message || "An attachment could not be read" });
+      }
+      const attachedDocuments = resolvedAttachments.map((r) => r.guarded);
+      if (attachedDocuments.length > 0) {
         const guard = checkOutboundDocumentGuard(attachedDocuments, {
           to: toList,
           cc: ccList,
@@ -3780,12 +3839,47 @@ export async function registerRoutes(
           });
           return res.status(403).json({ message: guard.message, blocked: guard.blocked });
         }
-        // The guard passed, but this route cannot actually attach anything
-        // yet. Saying so is better than sending the message without the
-        // documents and letting the sender believe they went.
-        return res.status(501).json({
-          message: "Attaching documents to a message is not available yet. Send the message without attachments, or share the document another way.",
-        });
+      }
+
+      // ── Threading ──
+      // A reply is anchored to the exact message the sender had open, never
+      // to a guess about which message in the conversation is newest. The
+      // viewed message's own Message-ID is what every mail client threads
+      // on, so it is read from that message's stored row.
+      let inReplyTo: string | null = null;
+      let references: string | null = null;
+      let gmailThreadIdForSend: string | null = null;
+      let parentThreadRow: { id: number; gmailThreadId: string; mailbox: string } | null = null;
+      if (replyToMessageId) {
+        const parent = await storage.getGmailMessageById(replyToMessageId);
+        if (!parent) return res.status(400).json({ message: `Message ${replyToMessageId} not found` });
+        const thread = await storage.getGmailThread(parent.threadId);
+        if (thread) {
+          parentThreadRow = { id: thread.id, gmailThreadId: thread.gmailThreadId, mailbox: thread.mailbox };
+          // Gmail only accepts a threadId that exists in the sending
+          // mailbox. A thread synced from clientservice@ has no such id in
+          // Kim's mailbox, so in that case the headers alone do the
+          // threading — which is what the recipient sees anyway.
+          if (thread.mailbox.toLowerCase() === identity.email.toLowerCase()) {
+            gmailThreadIdForSend = thread.gmailThreadId;
+          }
+          const chain = (await storage.getGmailMessagesForThread(thread.id))
+            .filter((m) => m.messageIdHeader && new Date(m.sentAt) <= new Date(parent.sentAt))
+            .map((m) => m.messageIdHeader as string);
+          // Keep the chain short enough to stay inside one header line; the
+          // most recent entries are the ones clients actually use.
+          const trimmed = Array.from(new Set(chain)).slice(-10);
+          references = trimmed.length > 0 ? trimmed.join(" ") : null;
+        }
+        inReplyTo = parent.messageIdHeader || null;
+        if (!inReplyTo && !gmailThreadIdForSend) {
+          // Mail synced before Message-ID headers were stored cannot be
+          // threaded. Say so instead of sending something that lands as a
+          // new conversation without warning.
+          return res.status(409).json({
+            message: "This email was synced before the CRM started recording Message-IDs, so a reply cannot be threaded to it. Send a new message instead.",
+          });
+        }
       }
 
       const signatureBlock = identity.signature ? `\n\n${identity.signature}` : "";
@@ -3797,6 +3891,12 @@ export async function registerRoutes(
       // Mailgun (server/mailer.ts) is reserved for system mail (digests,
       // notifications) that never needs to look like a person's message.
       const account = await storage.getGmailAccountByMailbox(identity.email);
+      const bccList = [
+        ...requestedBccList,
+        ...(identity.email.toLowerCase() === CLIENT_SERVICE_ADDRESS ? [] : [CLIENT_SERVICE_ADDRESS]),
+      ];
+      let sentGmailMessageId: string | null = null;
+      let sentGmailThreadId: string | null = null;
       let messageIdHeader: string | null = null;
       if (account && account.status === "CONNECTED") {
         const { sendViaGmail } = await import("./gmailSend");
@@ -3807,15 +3907,19 @@ export async function registerRoutes(
           subject: subject || "(no subject)",
           text,
           replyTo,
-          bcc: [
-            ...requestedBccList,
-            ...(identity.email.toLowerCase() === CLIENT_SERVICE_ADDRESS ? [] : [CLIENT_SERVICE_ADDRESS]),
-          ],
+          bcc: bccList,
           documents: attachedDocuments,
+          attachments: resolvedAttachments.map((r) => r.attachment),
+          inReplyTo,
+          references,
+          gmailThreadId: gmailThreadIdForSend,
           attemptedBy: { userId: user.id, userName: user.fullName || user.email },
         });
         // A guard refusal is the sender's to fix, not an upstream failure.
         if (!result.ok) return res.status(result.guardBlocked ? 403 : 502).json({ message: result.error });
+        sentGmailMessageId = result.gmailMessageId || null;
+        sentGmailThreadId = result.threadId || null;
+        messageIdHeader = result.messageIdHeader || null;
       } else {
         return res.status(409).json({
           message: `${identity.email} is not connected to Gmail yet. Connect it in Settings \u2192 Mail Accounts before sending as this identity.`,
@@ -3823,18 +3927,170 @@ export async function registerRoutes(
       }
 
       const parsedClientIds: number[] = Array.isArray(clientIds) ? clientIds.map(Number).filter(Boolean) : [];
+      const attachmentNote = resolvedAttachments.length > 0
+        ? `\n\nAttached: ${resolvedAttachments.map((r) => r.label).join(", ")}`
+        : "";
       const comm = await storage.createOutboundCommunication({
         subject: subject || null,
         fromEmail: identity.email,
         fromName: identity.displayName,
         to: toList,
-        bodyText: text,
+        bodyText: `${text}${attachmentNote}`,
         replyToEmail: replyTo || null,
         sentByUserId: user.id,
         sentByUserName: user.fullName,
         clientIds: parsedClientIds,
       } as any);
-      res.status(201).json(comm);
+
+      // The message also belongs in the mail tables, where the thread is
+      // read — otherwise a reply sent from here does not appear in the
+      // conversation it answered until the next sync notices our own Sent
+      // folder. Recording it is best effort: the mail has gone either way,
+      // and a bookkeeping failure must not be reported as a failed send.
+      let threadIdForClient: number | null = parentThreadRow?.id ?? null;
+      if (sentGmailMessageId && sentGmailThreadId) {
+        try {
+          const recorded = await storage.recordOutboundGmailMessage({
+            gmailMessageId: sentGmailMessageId,
+            gmailThreadId: sentGmailThreadId,
+            mailbox: identity.email,
+            fromEmail: identity.email,
+            fromName: identity.displayName,
+            toEmails: toList,
+            ccEmails: ccList,
+            subject: subject || null,
+            bodyText: text,
+            messageIdHeader,
+            sentByUserId: user.id,
+            sentByUserName: user.fullName || user.email,
+            clientIds: parsedClientIds,
+          });
+          threadIdForClient = recorded.threadId;
+        } catch (err: any) {
+          console.error(`[send] message sent but not recorded in mail tables: ${errorLabel(err)}`);
+        }
+      }
+
+      // Each client document that went out gets a send date, so the
+      // Documents tab shows when it was last sent and to whom.
+      for (const docId of requestedDocumentIds) {
+        try {
+          await storage.createDocumentSend({
+            documentId: docId,
+            sentAt: new Date(),
+            sentTo: toList.join(", "),
+            gmailMessageId: sentGmailMessageId,
+          } as any);
+        } catch {
+          /* the send happened; a missing send-date row is not worth failing it */
+        }
+      }
+
+      res.status(201).json({ ...comm, gmailThreadId: sentGmailThreadId, threadId: threadIdForClient });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * What a composer can attach for this client: the client's current
+   * document of each kind, plus the fixed documents that are the same for
+   * everyone. Internal-only categories are listed and marked rather than
+   * hidden — hiding them would leave someone hunting for a document the
+   * server is going to refuse anyway, and the mark explains why.
+   */
+  app.get("/api/clients/:clientId/attachable-documents", requireAuth, async (req, res) => {
+    try {
+      const clientId = parseInt(req.params.clientId);
+      const [clientDocs, globalDocs] = await Promise.all([
+        storage.getCurrentDocumentsForClient(clientId),
+        storage.getGlobalDocuments(),
+      ]);
+      res.json({
+        clientDocuments: clientDocs.map((d) => ({
+          id: d.id,
+          documentName: d.documentName,
+          fileName: d.fileName,
+          category: d.category,
+          uploadedAt: d.uploadedAt,
+          isInternalOnly: isInternalOnlyCategory(d.category as string),
+        })),
+        globalDocuments: globalDocs.map((g) => ({
+          id: g.id,
+          name: g.name,
+          category: g.category,
+          fileName: g.fileName,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * One stored message, for a composer opened from somewhere that only
+   * knows the message id (the triage feed knows the task, not the mail).
+   * Reply needs the original's text to quote and its recipients to answer.
+   */
+  app.get("/api/gmail-messages/:id", requireAuth, async (req, res) => {
+    try {
+      const message = await storage.getGmailMessageById(parseInt(req.params.id));
+      if (!message) return res.status(404).json({ message: "Message not found" });
+      const thread = await storage.getGmailThread(message.threadId);
+      if (thread?.isPrivate && (req.user as any).role !== "ADMIN") {
+        return res.status(403).json({ message: "Private thread" });
+      }
+      const clientIds = await storage.getGmailThreadClientIds(message.threadId);
+      res.json({ ...message, clientIds });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ─── Global documents: the same file for every client ──────────────────────
+  // Marketing and reference PDFs that belong to no one client. Kept in Object
+  // Storage, not on local disk, because the container's disk is wiped on every
+  // deploy and these are meant to outlive that.
+
+  app.get("/api/global-documents", requireAuth, async (_req, res) => {
+    try {
+      res.json(await storage.getGlobalDocuments());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/global-documents", requireAuth, memUpload.single("file"), async (req, res) => {
+    try {
+      const file = req.file as any;
+      if (!file) return res.status(400).json({ message: "A file is required" });
+      const name = (req.body.name || file.originalname).toString().trim();
+      const category = (req.body.category || "Marketing").toString().trim();
+      if (!name) return res.status(400).json({ message: "A name is required" });
+      const { storeGlobalDocumentBytes } = await import("./outboundAttachments");
+      const key = await storeGlobalDocumentBytes(file.originalname, file.buffer);
+      const created = await storage.createGlobalDocument({
+        name,
+        category,
+        filePath: key,
+        fileName: file.originalname,
+        isCurrent: true,
+        uploadedBy: (req.user as any).fullName || (req.user as any).email,
+      } as any);
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/global-documents/:id/download", requireAuth, async (req, res) => {
+    try {
+      const doc = await storage.getGlobalDocument(parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      const { downloadAttachmentBytes } = await import("./objectStorage");
+      const bytes = await downloadAttachmentBytes(doc.filePath);
+      res.setHeader("Content-Disposition", `attachment; filename="${doc.fileName}"`);
+      res.send(bytes);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

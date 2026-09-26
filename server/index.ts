@@ -83,6 +83,23 @@ app.use((req, res, next) => {
   // schema diff.
   try {
     const { pool } = await import("./db");
+
+    // ── Who pressed Send ──
+    // The From address on an outbound message does not identify the person
+    // who sent it: Steve sending as kim.anderson@ produces a message that is
+    // Kim's in every recipient's mailbox. These two columns are the only
+    // record of the actual logged-in user, so they are written at send time
+    // and never inferred afterwards.
+    //
+    // This runs first, not in source order with the rest: later phases read
+    // gmail_messages through Drizzle, which selects every column the schema
+    // declares. Adding these after one of those reads makes the read fail on
+    // a column that does not exist yet.
+    await pool.query(`
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS sent_by_user_id INTEGER;
+      ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS sent_by_user_name TEXT;
+    `);
+
     await pool.query(`
       DO $$ BEGIN
         -- client_status enum + column
@@ -1944,7 +1961,6 @@ app.use((req, res, next) => {
     // there is nothing to move. Reclassifying on a looser guess would file a
     // client's proposal as internal-only and block a send that should go.
     log("Startup migration: INTERNAL_RENEWAL_REPORT category ready");
-
 
     // One-time diagnostic: does a Gmail filter auto-apply the "90 Degree
     // Benefits" label to new incoming mail, or was the label only ever

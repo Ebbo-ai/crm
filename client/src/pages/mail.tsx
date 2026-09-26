@@ -12,8 +12,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import {
-  Mail, Paperclip, RefreshCw, Search, Lock, Sparkles, ChevronLeft, ChevronDown, ChevronUp, Forward,
+  Mail, Paperclip, RefreshCw, Search, Lock, Sparkles, ChevronLeft, ChevronDown, ChevronUp, Forward, Reply,
 } from "lucide-react";
+import ComposeMessageDialog, { type ComposeMode, type ComposeSourceMessage } from "@/components/compose-message-dialog";
 
 interface ThreadListItem {
   id: number;
@@ -93,6 +94,7 @@ function ThreadPane({ threadId }: { threadId: number }) {
   const { data, isLoading } = useQuery<ThreadDetail>({ queryKey: [`/api/gmail-inbox/threads/${threadId}`] });
   const { data: clients } = useQuery<ClientOption[]>({ queryKey: ["/api/clients"] });
   const [assignClientId, setAssignClientId] = useState<string>("");
+  const [compose, setCompose] = useState<{ mode: ComposeMode; source: ComposeSourceMessage } | null>(null);
 
   const assign = useMutation({
     mutationFn: () => apiRequest("POST", `/api/gmail-inbox/threads/${threadId}/assign`, { clientId: assignClientId }),
@@ -159,9 +161,19 @@ function ThreadPane({ threadId }: { threadId: number }) {
 
         <div className="space-y-3">
           {messages.map((m) => (
-            <MessageCard key={m.id} m={m} />
+            <MessageCard key={m.id} m={m} onCompose={(mode, source) => setCompose({ mode, source })} />
           ))}
         </div>
+
+        {compose && (
+          <ComposeMessageDialog
+            mode={compose.mode}
+            source={compose.source}
+            clientId={data.clients[0]?.id ?? null}
+            clientIds={data.clients.map((c) => c.id)}
+            onClose={() => setCompose(null)}
+          />
+        )}
       </div>
 
       {thread.summary && (
@@ -177,7 +189,13 @@ function ThreadPane({ threadId }: { threadId: number }) {
   );
 }
 
-function MessageCard({ m }: { m: ThreadMessage }) {
+function MessageCard({
+  m,
+  onCompose,
+}: {
+  m: ThreadMessage;
+  onCompose: (mode: ComposeMode, source: ComposeSourceMessage) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   // Forwards and low-confidence messages carry the full body as bodyTextNew
   // already, so there's nothing meaningful to collapse — always show the
@@ -221,6 +239,20 @@ function MessageCard({ m }: { m: ThreadMessage }) {
             {expanded ? "Hide quoted text" : "Show quoted text"}
           </button>
         )}
+        <div className="flex gap-1.5 mt-3">
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+            onClick={() => onCompose("reply", m)} data-testid={`button-reply-${m.id}`}>
+            <Reply className="w-3 h-3" /> Reply
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+            onClick={() => onCompose("replyAll", m)} data-testid={`button-reply-all-${m.id}`}>
+            <Reply className="w-3 h-3" /> Reply all
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+            onClick={() => onCompose("forward", m)} data-testid={`button-forward-${m.id}`}>
+            <Forward className="w-3 h-3" /> Forward
+          </Button>
+        </div>
         {m.attachments.length > 0 && (
           <div className="flex items-center gap-2 mt-3 flex-wrap">
             {m.attachments.map((a) => (

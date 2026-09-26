@@ -11,7 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { formatDistanceToNow, format } from "date-fns";
-import { Inbox, ArrowRight, X, Undo2, Sparkles, Loader2, CheckCircle2 } from "lucide-react";
+import { Inbox, ArrowRight, X, Undo2, Sparkles, Loader2, CheckCircle2, Reply } from "lucide-react";
+import ComposeMessageDialog from "@/components/compose-message-dialog";
 
 interface TriageRow {
   id: number;
@@ -39,13 +40,14 @@ const PRIORITY_COLOR: Record<string, string> = {
 };
 
 function TriageRowView({
-  row, tab, onOpen, onDismiss, onUnresolve, isBusy,
+  row, tab, onOpen, onDismiss, onUnresolve, onReply, isBusy,
 }: {
   row: TriageRow;
   tab: "open" | "resolved";
   onOpen: () => void;
   onDismiss: () => void;
   onUnresolve: () => void;
+  onReply: () => void;
   isBusy: boolean;
 }) {
   return (
@@ -96,6 +98,15 @@ function TriageRowView({
               Un-resolve
             </Button>
           )}
+          {tab === "open" && (
+            <Button
+              size="sm" variant="outline" onClick={onReply}
+              className="h-7 text-xs gap-1.5 border-brand text-brand"
+              data-testid={`button-reply-triage-${row.id}`}
+            >
+              <Reply className="w-3 h-3" /> Reply
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={onOpen} className="h-6 text-xs gap-1 text-brand">
             Open email <ArrowRight className="w-3 h-3" />
           </Button>
@@ -120,6 +131,7 @@ export default function GmailTriageFeed() {
   const [tab, setTab] = useState<"open" | "resolved">("open");
   const isSteve = user?.fullName === "Steve Schultz";
   const [ownerView, setOwnerView] = useState<string>(user?.fullName ?? "Kim Anderson");
+  const [replyTo, setReplyTo] = useState<TriageRow | null>(null);
 
   const owner = isSteve ? ownerView : (user?.fullName ?? "Kim Anderson");
 
@@ -149,6 +161,24 @@ export default function GmailTriageFeed() {
   });
 
   const openEmail = (row: TriageRow) => setLocation(`/mail?threadId=${row.gmailThreadId}`);
+
+  // Reply happens here, on the item Steve is already looking at, rather than
+  // sending him to another screen to find the same message again.
+  const replyDialog = replyTo && (
+    <ComposeMessageDialog
+      mode="reply"
+      source={{
+        id: replyTo.gmailMessageId,
+        subject: replyTo.subject,
+        fromEmail: replyTo.senderEmail,
+        fromName: replyTo.senderName,
+        sentAt: replyTo.createdAt,
+      }}
+      clientId={replyTo.clients[0]?.id ?? null}
+      clientIds={replyTo.clients.map((c) => c.id)}
+      onClose={() => setReplyTo(null)}
+    />
+  );
 
   return (
     <Card className="border-0 shadow-sm" data-testid="card-gmail-triage-feed">
@@ -210,12 +240,14 @@ export default function GmailTriageFeed() {
                 onOpen={() => openEmail(row)}
                 onDismiss={() => dismiss.mutate(row.id)}
                 onUnresolve={() => unresolve.mutate(row.id)}
+                onReply={() => setReplyTo(row)}
                 isBusy={(dismiss.isPending && dismiss.variables === row.id) || (unresolve.isPending && unresolve.variables === row.id)}
               />
             ))}
           </div>
         )}
       </CardContent>
+      {replyDialog}
     </Card>
   );
 }
