@@ -28,14 +28,14 @@ import {
  * How far back a mailbox's rolling sync is allowed to reach, set once per
  * mailbox and then pinned (see backfillStartDate below).
  *
- * Six months, not twelve: the business runs on renewals, and correspondence
- * older than roughly six months before a client's anniversary has no
- * operational value. Anything older is still in Google Workspace and reachable
- * by searching there — the same decision that cancelled the historical import.
- * A twelve-month rolling window was that import in a different hat, and it is
- * what had steve.schultz@ grinding backwards for days.
+ * Thirty days. The CRM carries new mail; it is not an archive. Any rolling
+ * window measured in months is the cancelled historical import wearing a
+ * different hat — a six-month window had already put thousands of messages of
+ * past correspondence into the database with thousands more still to walk.
+ * Thirty days catches up in minutes and client pages fill in as mail arrives.
+ * Older correspondence stays in Google Workspace, where it is one search away.
  */
-const BACKFILL_MONTHS = 6;
+const BACKFILL_DAYS = 30;
 /**
  * Once a mailbox's whole window has been walked, later runs look only at mail
  * since the last completed walk, less this much overlap. Gmail search is by
@@ -135,10 +135,8 @@ export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecke
   return result;
 }
 
-function monthsAgoEpochSeconds(months: number): number {
-  const d = new Date();
-  d.setMonth(d.getMonth() - months);
-  return Math.floor(d.getTime() / 1000);
+function daysAgoEpochSeconds(days: number): number {
+  return Math.floor((Date.now() - days * 86_400_000) / 1000);
 }
 
 export function isEmbeddedImage(ref: { filename: string; mimeType: string; sizeBytes: number }): boolean {
@@ -664,7 +662,7 @@ async function runGmailFullSyncClaimed(
   // dropping mail that had never actually been synced yet.
   const backfillFloorEpoch = state?.backfillStartDate
     ? Math.floor(new Date(state.backfillStartDate).getTime() / 1000)
-    : monthsAgoEpochSeconds(BACKFILL_MONTHS);
+    : daysAgoEpochSeconds(BACKFILL_DAYS);
   if (!state?.backfillStartDate) {
     // Pinned before a single page is read, not at the end of the run. A run
     // that banks a page cursor and then dies without having written the floor

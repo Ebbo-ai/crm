@@ -30,6 +30,10 @@ caught-up mark.
   page. A final page that crosses the cap has still finished the window.
 - Shrinking the window never deletes stored mail. Older mail stays; the sync
   just stops reaching back for more.
+- The one-time migration is guarded by a marker that stores the window it last
+  applied (e.g. "30d"), not by a key whose NAME carries the unit. A key called
+  "...FloorMonths" cannot express the next change and forces a second key that
+  can disagree with the first.
 - The steady-state overlap must stay well under the per-run cap, or a routine
   run caps out on overlap alone and never advances the mark.
 - Mail judged and deliberately not stored (allow-list) needs its id recorded, or

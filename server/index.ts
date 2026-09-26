@@ -1756,7 +1756,7 @@ app.use((req, res, next) => {
     }
     log("Startup migration: stored-vs-sorted thread tracking ready");
 
-    // ── Phase 31: six-month sync window + a "caught up" marker ──
+    // ── Phase 31: thirty-day sync window + a "caught up" marker ──
     // Placed here, above anything that reads gmail_import_state through
     // Drizzle, for the same reason as Phase 30: the ORM selects every column
     // the schema declares.
@@ -1783,10 +1783,13 @@ app.use((req, res, next) => {
     //
     // Mail already stored from outside the new window stays. This only stops
     // the sync from reaching further back.
-    const floorMarker = await pool.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths'`);
-    if (floorMarker.rows[0]?.value !== "6") {
-      const newFloor = new Date();
-      newFloor.setMonth(newFloor.getMonth() - 6);
+    // The marker carries the window it last applied, so changing the window
+    // again is a one-line change here and in gmailFullSync: a stored marker
+    // that no longer matches means the floors need raising once more.
+    const FLOOR_MARKER = "30d";
+    const floorMarker = await pool.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloor'`);
+    if (floorMarker.rows[0]?.value !== FLOOR_MARKER) {
+      const newFloor = new Date(Date.now() - 30 * 86_400_000);
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -1798,27 +1801,28 @@ app.use((req, res, next) => {
         // The marker is re-read inside the transaction and the rows are locked
         // for the duration. Two instances booting together (autoscale does
         // that) would otherwise both pass the check outside and raise the
-        // floor twice, and a sync already in flight would write its old
-        // twelve-month floor back over this one the moment it finished.
-        const marker = await client.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths' FOR UPDATE`);
+        // floor twice, and a sync already in flight would write its old,
+        // longer floor back over this one the moment it finished.
+        const marker = await client.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloor' FOR UPDATE`);
         const rows = await client.query(`SELECT mailbox, run_state FROM gmail_import_state WHERE mailbox LIKE '%#full' FOR UPDATE`);
         const running = rows.rows.filter((r: any) => r.run_state === "RUNNING");
-        if (marker.rows[0]?.value === "6") {
+        if (marker.rows[0]?.value === FLOOR_MARKER) {
           await client.query("ROLLBACK");
         } else if (running.length > 0) {
           // Deliberately left for the next boot rather than forced: a running
           // sync holds the old window in memory for the rest of its run.
           await client.query("ROLLBACK");
-          log(`Startup migration: six-month sync window deferred — ${running.length} mailbox sync(s) in flight; will apply on the next boot`);
+          log(`Startup migration: 30-day sync window deferred — ${running.length} mailbox sync(s) in flight; will apply on the next boot`);
         } else {
           const raised = await client.query(
             `UPDATE gmail_import_state
                 SET backfill_start_date = $1,
-                    -- The page cursor belongs to the old query. A token from
-                    -- an "after: 12 months ago" walk means nothing against a
-                    -- six-month one, so the next run starts a fresh pass.
+                    -- The page cursor belongs to the old query. A token from a
+                    -- walk over a longer window means nothing against this
+                    -- one, so the next run starts a fresh pass.
                     last_processed_internal_date = NULL,
                     walk_started_at = NULL,
+                    walk_failures = 0,
                     -- Not caught up by definition: the new, smaller window has
                     -- never been walked end to end.
                     caught_up_at = NULL
@@ -1828,11 +1832,16 @@ app.use((req, res, next) => {
             [newFloor],
           );
           await client.query(
-            `INSERT INTO app_settings (key, value, updated_by) VALUES ('gmailSync:backfillFloorMonths', '6', 'system')
-             ON CONFLICT (key) DO UPDATE SET value = '6', updated_by = 'system'`,
+            `INSERT INTO app_settings (key, value, updated_by) VALUES ('gmailSync:backfillFloor', $1, 'system')
+             ON CONFLICT (key) DO UPDATE SET value = $1, updated_by = 'system'`,
+            [FLOOR_MARKER],
           );
+          // The previous marker key named its unit in the key itself, which is
+          // why the window could not change without a second key. Removed so
+          // the two cannot disagree about which window is in force.
+          await client.query(`DELETE FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths'`);
           await client.query("COMMIT");
-          log(`Startup migration: mail sync window shortened to 6 months — ${raised.rowCount} mailbox floor(s) raised to ${newFloor.toISOString().slice(0, 10)}; already-stored older mail is untouched`);
+          log(`Startup migration: mail sync window shortened to 30 days — ${raised.rowCount} mailbox floor(s) raised to ${newFloor.toISOString().slice(0, 10)}; already-stored older mail is untouched`);
         }
       } catch (err: any) {
         await client.query("ROLLBACK").catch(() => {});
@@ -1841,7 +1850,7 @@ app.use((req, res, next) => {
         client.release();
       }
     }
-    log("Startup migration: six-month mail sync window ready");
+    log("Startup migration: 30-day mail sync window ready");
 
     // Runs before the catch-up below, and before anything else that reads
     // gmail_messages or gmail_threads through Drizzle: the ORM selects every
