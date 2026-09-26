@@ -12,6 +12,7 @@ import { buildDeterministicLookup, matchDeterministically } from "./emailClientM
 import { classifyDocumentType, normalizeDocumentFilename, looksSigned } from "./documentVersioning";
 import { resolveFieldMapping } from "./fieldMapping";
 import { errorLabel, errorClass, formatErrorClassTally } from "./logRedaction";
+import { mailboxFloorDate, mailboxFloorPolicy } from "./mailSyncWindow";
 import type { GmailMessage } from "@shared/schema";
 import {
   getGmailProfile,
@@ -24,18 +25,6 @@ import {
   extractMessageBody,
 } from "./gmail";
 
-/**
- * How far back a mailbox's rolling sync is allowed to reach, set once per
- * mailbox and then pinned (see backfillStartDate below).
- *
- * Thirty days. The CRM carries new mail; it is not an archive. Any rolling
- * window measured in months is the cancelled historical import wearing a
- * different hat — a six-month window had already put thousands of messages of
- * past correspondence into the database with thousands more still to walk.
- * Thirty days catches up in minutes and client pages fill in as mail arrives.
- * Older correspondence stays in Google Workspace, where it is one search away.
- */
-const BACKFILL_DAYS = 30;
 /**
  * Once a mailbox's whole window has been walked, later runs look only at mail
  * since the last completed walk, less this much overlap. Gmail search is by
@@ -133,10 +122,6 @@ export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecke
     }
   }
   return result;
-}
-
-function daysAgoEpochSeconds(days: number): number {
-  return Math.floor((Date.now() - days * 86_400_000) / 1000);
 }
 
 export function isEmbeddedImage(ref: { filename: string; mimeType: string; sizeBytes: number }): boolean {
@@ -660,15 +645,45 @@ async function runGmailFullSyncClaimed(
   // before now" on every run (the original bug) crept the floor forward a
   // little each day, quietly shrinking the retained window and eventually
   // dropping mail that had never actually been synced yet.
-  const backfillFloorEpoch = state?.backfillStartDate
-    ? Math.floor(new Date(state.backfillStartDate).getTime() / 1000)
-    : daysAgoEpochSeconds(BACKFILL_DAYS);
-  if (!state?.backfillStartDate) {
+  //
+  // mailboxFloorDate is the rolling window for most mailboxes and a fixed
+  // start date for the few listed as exceptions; either way it is read once
+  // here and then pinned, alongside the policy that produced it.
+  //
+  // The policy is also what makes this run self-correcting. Floors are
+  // normally rewritten at startup when the policy changes, but a row can miss
+  // that: created after the boot check by an instance still draining during a
+  // deploy, or claimed by a run at the moment the check looked. Rather than
+  // wait for another boot, a run whose stored policy is not the current one
+  // repins the floor itself.
+  const floorPolicy = mailboxFloorPolicy(mailbox);
+  const storedFloorIsCurrent = state?.backfillStartDate != null && state.floorPolicy === floorPolicy;
+  const backfillFloorEpoch = storedFloorIsCurrent
+    ? Math.floor(new Date(state!.backfillStartDate!).getTime() / 1000)
+    : Math.floor(mailboxFloorDate(mailbox).getTime() / 1000);
+  /** Only for the log line: whether an existing floor is being replaced or one is being pinned for the first time. */
+  const replacingAFloor = state?.backfillStartDate != null;
+  if (!storedFloorIsCurrent) {
+    if (replacingAFloor) {
+      console.log(`[gmailFullSync] ${mailbox}: floor policy is now ${floorPolicy}; repinning the window to ${new Date(backfillFloorEpoch * 1000).toISOString().slice(0, 10)} and starting a fresh walk. Mail already stored outside it stays.`);
+    }
     // Pinned before a single page is read, not at the end of the run. A run
     // that banks a page cursor and then dies without having written the floor
     // leaves the next run resuming that cursor against a freshly computed —
     // and therefore different — window.
-    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, { backfillStartDate: new Date(backfillFloorEpoch * 1000) });
+    await storage.updateGmailSyncStateIfOwner(stateKey, runToken, {
+      backfillStartDate: new Date(backfillFloorEpoch * 1000),
+      floorPolicy,
+      // A cursor, a walk and a caught-up mark all belong to the window that
+      // produced them. Against a different window they mean nothing — and
+      // that includes a row whose floor is NULL but which still carries a
+      // cursor banked by an interrupted earlier run. On a genuinely first
+      // sync there is nothing here to clear and these writes do nothing.
+      lastProcessedInternalDate: null,
+      walkStartedAt: null,
+      walkFailures: 0,
+      caughtUpAt: null,
+    });
   }
 
   // Two modes, and the difference between them is the difference between a run
@@ -679,7 +694,7 @@ async function runGmailFullSyncClaimed(
   //  - Caught up: ask only for mail since the last completed walk, less the
   //    overlap. The window floor is still honoured as a lower bound.
   const runStartedAt = new Date();
-  const caughtUpAt = state?.caughtUpAt ? new Date(state.caughtUpAt) : null;
+  const caughtUpAt = state?.caughtUpAt && storedFloorIsCurrent ? new Date(state.caughtUpAt) : null;
   const afterEpoch = caughtUpAt
     ? Math.max(backfillFloorEpoch, Math.floor((caughtUpAt.getTime() - STEADY_STATE_OVERLAP_DAYS * 86_400_000) / 1000))
     : backfillFloorEpoch;
@@ -726,7 +741,7 @@ async function runGmailFullSyncClaimed(
   // never reach new mail once the backlog passed MAX_MESSAGES_PER_RUN.
   // Once the mailbox is exhausted (no nextPageToken), the cursor resets to
   // undefined so the next run starts a fresh pass to pick up brand-new mail.
-  let pageToken: string | undefined = state?.lastProcessedInternalDate || undefined;
+  let pageToken: string | undefined = storedFloorIsCurrent ? (state?.lastProcessedInternalDate || undefined) : undefined;
   let finalPageToken: string | undefined = pageToken;
   let pagesCompleted = 0;
   let cappedOut = false;

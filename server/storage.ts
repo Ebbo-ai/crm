@@ -1004,13 +1004,14 @@ export class DatabaseStorage implements IStorage {
   async updateGmailSyncStateIfOwner(
     stateKey: string,
     owner: string,
-    fields: { lastProcessedInternalDate?: string | null; lastRunAt?: Date; lastRunSummary?: string; backfillStartDate?: Date; caughtUpAt?: Date; walkStartedAt?: Date; walkFailures?: number },
+    fields: { lastProcessedInternalDate?: string | null; lastRunAt?: Date; lastRunSummary?: string; backfillStartDate?: Date; floorPolicy?: string; caughtUpAt?: Date | null; walkStartedAt?: Date | null; walkFailures?: number },
   ): Promise<boolean> {
     const sets = [
       fields.lastProcessedInternalDate !== undefined ? sql`last_processed_internal_date = ${fields.lastProcessedInternalDate}` : null,
       fields.lastRunAt !== undefined ? sql`last_run_at = ${fields.lastRunAt}` : null,
       fields.lastRunSummary !== undefined ? sql`last_run_summary = ${fields.lastRunSummary}` : null,
       fields.backfillStartDate !== undefined ? sql`backfill_start_date = ${fields.backfillStartDate}` : null,
+      fields.floorPolicy !== undefined ? sql`floor_policy = ${fields.floorPolicy}` : null,
       fields.caughtUpAt !== undefined ? sql`caught_up_at = ${fields.caughtUpAt}` : null,
       fields.walkStartedAt !== undefined ? sql`walk_started_at = ${fields.walkStartedAt}` : null,
       fields.walkFailures !== undefined ? sql`walk_failures = ${fields.walkFailures}` : null,

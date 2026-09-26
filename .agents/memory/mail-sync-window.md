@@ -30,10 +30,32 @@ caught-up mark.
   page. A final page that crosses the cap has still finished the window.
 - Shrinking the window never deletes stored mail. Older mail stays; the sync
   just stops reaching back for more.
-- The one-time migration is guarded by a marker that stores the window it last
-  applied (e.g. "30d"), not by a key whose NAME carries the unit. A key called
-  "...FloorMonths" cannot express the next change and forces a second key that
-  can disagree with the first.
+- The window is not one number for everyone. A mailbox that is work-only can
+  justify a fixed start date where a mailbox mixing businesses and personal
+  mail cannot, so the policy is "rolling default plus a short list of fixed-date
+  exceptions" held in ONE module that both the sync and the startup migration
+  read. Two copies of the policy is how the migration and the sync end up
+  disagreeing about a mailbox's floor.
+- Store the policy that produced each floor ALONGSIDE the floor, per mailbox
+  ("30d", or the fixed date), and rewrite a mailbox only when ITS policy string
+  changed. Two wrong ways to decide this, both tried:
+  - By comparing the stored floor against what the rolling window would compute
+    today. A rolling mailbox pinned weeks ago always fails that comparison, so
+    changing one mailbox's exception drags every other floor forward over the
+    stretch of window it had not walked yet, and resets its cursor with it.
+  - By one global "already applied" marker in a settings table. It says nothing
+    about a row that did not exist when it was written — during a deploy an
+    old instance still draining creates one — and once committed it stops
+    anything from ever looking at that row again. Read the rows every boot
+    instead; there are a handful of them.
+- Rewriting happens in either direction. Widening one mailbox's window is a
+  legitimate change, so an "only if the new floor is newer" predicate is wrong.
+- Startup is not the only place that can repin a floor, and it must not be: a
+  row can be created or claimed after the boot check looked at it. The sync
+  itself compares the stored policy before it reads a page and repins if it
+  differs, so a mailbox converges on its own next run instead of waiting for a
+  reboot. That also lets startup skip a mailbox mid-sync (whose in-flight run
+  would write its old floor back) without holding up the idle ones.
 - The steady-state overlap must stay well under the per-run cap, or a routine
   run caps out on overlap alone and never advances the mark.
 - Mail judged and deliberately not stored (allow-list) needs its id recorded, or

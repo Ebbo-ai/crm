@@ -717,6 +717,15 @@ export const gmailImportState = pgTable("gmail_import_state", {
    * nothing left pointing at it. Reset to zero when a fresh walk starts.
    */
   walkFailures: integer("walk_failures").notNull().default(0),
+  /**
+   * Which floor policy produced backfillStartDate above: the rolling window
+   * ("30d") or a fixed start date for a mailbox listed as an exception
+   * ("2026-06-01"). Recorded per mailbox so the startup migration can tell
+   * whose policy actually changed. Without it, adding one mailbox's exception
+   * would rewrite every other mailbox's pinned floor to "now minus the window"
+   * and throw away a catch-up already in progress.
+   */
+  floorPolicy: text("floor_policy"),
   lastRunAt: timestamp("last_run_at"),
   lastRunSummary: text("last_run_summary"),
   /**

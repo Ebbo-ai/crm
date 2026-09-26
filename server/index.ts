@@ -11,6 +11,7 @@ import {
 import { scheduleDailyDigest } from "./digest";
 import { storage } from "./storage";
 import { errorLabel, redactEmails } from "./logRedaction";
+import { mailboxFloorDate, mailboxFloorPolicy } from "./mailSyncWindow";
 
 const app = express();
 const httpServer = createServer(app);
@@ -1764,6 +1765,7 @@ app.use((req, res, next) => {
       ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS caught_up_at TIMESTAMP;
       ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS walk_started_at TIMESTAMP;
       ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS walk_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE gmail_import_state ADD COLUMN IF NOT EXISTS floor_policy TEXT;
       CREATE TABLE IF NOT EXISTS gmail_skipped_messages (
         id SERIAL PRIMARY KEY,
         mailbox TEXT NOT NULL,
@@ -1774,74 +1776,97 @@ app.use((req, res, next) => {
     `);
 
     // The floor is stored per mailbox and never recomputed, which is what
-    // stops it creeping forward a day at a time. That also means lowering the
-    // constant alone would change nothing for the mailboxes already syncing —
-    // their stored floor is still a year back. This raises those floors once,
-    // to a single fixed date, and the app-settings key is what keeps it a
-    // one-time correction rather than something that re-runs every boot and
-    // walks the floor forward forever.
+    // stops it creeping forward a day at a time. That also means changing the
+    // policy in code does nothing for mailboxes already syncing — their floor
+    // is already written — so the stored floors have to be rewritten once,
+    // here.
     //
-    // Mail already stored from outside the new window stays. This only stops
-    // the sync from reaching further back.
-    // The marker carries the window it last applied, so changing the window
-    // again is a one-line change here and in gmailFullSync: a stored marker
-    // that no longer matches means the floors need raising once more.
-    const FLOOR_MARKER = "30d";
-    const floorMarker = await pool.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloor'`);
-    if (floorMarker.rows[0]?.value !== FLOOR_MARKER) {
-      const newFloor = new Date(Date.now() - 30 * 86_400_000);
+    // The decision is made per mailbox, by comparing the policy that produced
+    // each stored floor against the policy in force now. Not by a single
+    // "already applied" marker: a marker says nothing about a row that did not
+    // exist when it was written (during a deploy an old instance still
+    // draining can create one), and once committed it would stop anything ever
+    // looking at that row again. The table is a handful of rows, so reading it
+    // every boot is free.
+    //
+    // Mail already stored from outside a window stays. This only changes how
+    // far back the sync reaches.
+    const floorRows = await pool.query(`SELECT mailbox, floor_policy FROM gmail_import_state WHERE mailbox LIKE '%#full'`);
+    const outOfPolicy = floorRows.rows.filter(
+      (r: any) => r.floor_policy !== mailboxFloorPolicy(String(r.mailbox).replace(/#full$/, "")),
+    );
+    if (outOfPolicy.length > 0) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        // Taken first and held for the transaction. Locking the marker row
-        // would not serialise two instances booting together the very first
-        // time, because on that boot the row does not exist yet and there is
-        // nothing to lock.
+        // Two instances booting together (autoscale does that) would otherwise
+        // both read the same out-of-policy rows and rewrite them twice.
         await client.query(`SELECT pg_advisory_xact_lock(hashtext('gmailSync:backfillFloor'))`);
-        // The marker is re-read inside the transaction and the rows are locked
-        // for the duration. Two instances booting together (autoscale does
-        // that) would otherwise both pass the check outside and raise the
-        // floor twice, and a sync already in flight would write its old,
-        // longer floor back over this one the moment it finished.
-        const marker = await client.query(`SELECT value FROM app_settings WHERE key = 'gmailSync:backfillFloor' FOR UPDATE`);
-        const rows = await client.query(`SELECT mailbox, run_state FROM gmail_import_state WHERE mailbox LIKE '%#full' FOR UPDATE`);
-        const running = rows.rows.filter((r: any) => r.run_state === "RUNNING");
-        if (marker.rows[0]?.value === FLOOR_MARKER) {
-          await client.query("ROLLBACK");
-        } else if (running.length > 0) {
-          // Deliberately left for the next boot rather than forced: a running
-          // sync holds the old window in memory for the rest of its run.
-          await client.query("ROLLBACK");
-          log(`Startup migration: 30-day sync window deferred — ${running.length} mailbox sync(s) in flight; will apply on the next boot`);
-        } else {
-          const raised = await client.query(
+        // Re-read under the lock and held for the transaction: the rows are
+        // what the decision is made from, and two instances booting together
+        // must not both act on the same pre-lock read.
+        const rows = await client.query(`SELECT mailbox, run_state, floor_policy FROM gmail_import_state WHERE mailbox LIKE '%#full' FOR UPDATE`);
+        // Per mailbox, because the floors are no longer all the same date:
+        // most mailboxes get the rolling window, a listed exception gets its
+        // own fixed start date. mailboxFloorDate is the single source of that
+        // answer, shared with the sync itself.
+        const now = new Date();
+        const applied: string[] = [];
+        const inFlight: string[] = [];
+        for (const row of rows.rows) {
+          const address = String(row.mailbox).replace(/#full$/, "");
+          const policy = mailboxFloorPolicy(address);
+          // The decision is "did THIS mailbox's policy change", never "is its
+          // floor still the date the rolling window would produce today". A
+          // rolling mailbox pinned weeks ago fails a date comparison while its
+          // policy is untouched, and rewriting it would push its floor forward
+          // over the stretch of window it had not walked yet — every time some
+          // other mailbox's exception changed.
+          if (row.floor_policy === policy) continue;
+          if (row.run_state === "RUNNING") {
+            // Skipped, not deferred for everyone: a sync in flight holds its
+            // old window in memory and would write that floor back when it
+            // finished. Its own next run repins it (gmailFullSync checks the
+            // policy before it reads a page), so nothing waits on a reboot,
+            // and one busy mailbox does not hold up the idle ones.
+            inFlight.push(address);
+            continue;
+          }
+          const target = mailboxFloorDate(address, now);
+          await client.query(
             `UPDATE gmail_import_state
                 SET backfill_start_date = $1,
-                    -- The page cursor belongs to the old query. A token from a
-                    -- walk over a longer window means nothing against this
-                    -- one, so the next run starts a fresh pass.
+                    floor_policy = $3,
+                    -- The page cursor belongs to the old query. A token from
+                    -- a walk over a different window means nothing against
+                    -- this one, so the next run starts a fresh pass.
                     last_processed_internal_date = NULL,
                     walk_started_at = NULL,
                     walk_failures = 0,
-                    -- Not caught up by definition: the new, smaller window has
-                    -- never been walked end to end.
+                    -- Not caught up by definition: this window has never been
+                    -- walked end to end.
                     caught_up_at = NULL
-              WHERE mailbox LIKE '%#full'
-                AND (backfill_start_date IS NULL OR backfill_start_date < $1)
-              RETURNING mailbox`,
-            [newFloor],
+              WHERE mailbox = $2`,
+            [target, row.mailbox, policy],
           );
-          await client.query(
-            `INSERT INTO app_settings (key, value, updated_by) VALUES ('gmailSync:backfillFloor', $1, 'system')
-             ON CONFLICT (key) DO UPDATE SET value = $1, updated_by = 'system'`,
-            [FLOOR_MARKER],
-          );
-          // The previous marker key named its unit in the key itself, which is
-          // why the window could not change without a second key. Removed so
-          // the two cannot disagree about which window is in force.
-          await client.query(`DELETE FROM app_settings WHERE key = 'gmailSync:backfillFloorMonths'`);
+          applied.push(`${address} → ${target.toISOString().slice(0, 10)} (${policy})`);
+        }
+        if (applied.length === 0) {
+          // Another instance got there first while we waited on the lock, or
+          // everything left out of policy is mid-sync.
+          await client.query("ROLLBACK");
+        } else {
+          // Earlier attempts at this kept the answer in app_settings — first
+          // under a key whose NAME carried the unit ("...FloorMonths", which
+          // could not express a change of unit), then under a single global
+          // marker. Both are superseded by the per-mailbox policy column and
+          // are removed so nothing can read a stale one and disagree.
+          await client.query(`DELETE FROM app_settings WHERE key IN ('gmailSync:backfillFloorMonths', 'gmailSync:backfillFloor')`);
           await client.query("COMMIT");
-          log(`Startup migration: mail sync window shortened to 30 days — ${raised.rowCount} mailbox floor(s) raised to ${newFloor.toISOString().slice(0, 10)}; already-stored older mail is untouched`);
+          log(`Startup migration: mail sync floors set — ${applied.join(", ")}; already-stored mail outside a window is untouched`);
+        }
+        if (inFlight.length > 0) {
+          log(`Startup migration: mail sync floors left to ${inFlight.length} mailbox(es) mid-sync (${inFlight.join(", ")}) — each repins on its own next run`);
         }
       } catch (err: any) {
         await client.query("ROLLBACK").catch(() => {});
