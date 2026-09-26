@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { DOCUMENT_CATEGORY_LABELS } from "@/lib/constants";
+import { INTERNAL_ONLY_BADGE_LABEL, isInternalOnlyCategory } from "@shared/documentPolicy";
 import { Inbox, RefreshCw, Download, CheckCircle2, XCircle } from "lucide-react";
 import { format } from "date-fns";
 
@@ -132,7 +133,9 @@ export default function GmailImportPage() {
                         <SelectTrigger className="w-40" data-testid={`select-category-${row.id}`}><SelectValue placeholder="Category…" /></SelectTrigger>
                         <SelectContent>
                           {Object.entries(DOCUMENT_CATEGORY_LABELS).map(([k, v]) => (
-                            <SelectItem key={k} value={k}>{v}</SelectItem>
+                            <SelectItem key={k} value={k}>
+                              {isInternalOnlyCategory(k) ? `${v} — ${INTERNAL_ONLY_BADGE_LABEL.toLowerCase()}` : v}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

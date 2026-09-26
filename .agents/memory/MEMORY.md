@@ -27,4 +27,5 @@
 - [Production data fixes vs schema](prod-data-fixes.md) — executeSql production is read-only; a data fix (not schema) that must reach prod goes in as an idempotent app-startup seed, applied on next deploy.
 - [Stored vs sorted mail](mail-stored-vs-sorted.md) — storing a message and sorting its thread are separate facts; flag before insert, clear only in a conditional UPDATE.
 - [Rolling mail sync window](mail-sync-window.md) — floor stored per mailbox, never recomputed; caught-up mark takes the walk's start, and an unstored message blocks it for the whole walk.
+- [Internal-only documents](internal-only-documents.md) — category, not per-document, decides; guard runs on the request and in the send helper; one recipient array entry can hold many addresses.
 - [Scheduled job entry points](scheduled-job-entrypoints.md) — autoscale timers only fire while an instance is awake; recurring work needs its own bundled job the user creates in Publishing.

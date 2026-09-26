@@ -12,8 +12,31 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { DOCUMENT_CATEGORY_LABELS } from "@/lib/constants";
-import { Upload, Download, Trash2, FileText, Search, ChevronDown, ChevronRight, FileClock } from "lucide-react";
+import { INTERNAL_ONLY_BADGE_LABEL, INTERNAL_ONLY_BADGE_REASON, isInternalOnlyCategory } from "@shared/documentPolicy";
+import { Upload, Download, Trash2, FileText, Search, ChevronDown, ChevronRight, FileClock, Lock } from "lucide-react";
 import { format } from "date-fns";
+
+/**
+ * Marks a document nobody may email outside the company. The server refuses
+ * such a send regardless; this is so it is obvious before anyone tries.
+ */
+function InternalOnlyBadge({ category }: { category: string }) {
+  if (!isInternalOnlyCategory(category)) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium bg-danger-tint text-danger"
+      title={INTERNAL_ONLY_BADGE_REASON}
+      data-testid={`badge-internal-only-${category}`}
+    >
+      <Lock className="w-3 h-3" /> {INTERNAL_ONLY_BADGE_LABEL}
+    </span>
+  );
+}
+
+/** Category name for a dropdown, with internal-only said out loud. */
+function categoryOptionLabel(key: string, label: string): string {
+  return isInternalOnlyCategory(key) ? `${label} — ${INTERNAL_ONLY_BADGE_LABEL.toLowerCase()}` : label;
+}
 
 /** Categories versioned by client + category + normalizedFileName — see server/storage.ts VERSIONED_DOCUMENT_CATEGORIES. Rendered as the "Renewal documents" group instead of the flat table below. */
 const VERSIONED_CATEGORIES = new Set(["RENEWAL_PROPOSAL", "EMPLOYER_ACCEPTANCE", "HANDOUT", "SUPPLEMENT"]);
@@ -113,7 +136,7 @@ export default function DocumentsTab({ clientId }: { clientId: number }) {
           <SelectContent>
             <SelectItem value="ALL">All Categories</SelectItem>
             {Object.entries(DOCUMENT_CATEGORY_LABELS).map(([k, v]) => (
-              <SelectItem key={k} value={k}>{v}</SelectItem>
+              <SelectItem key={k} value={k}>{categoryOptionLabel(k, v)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -145,9 +168,12 @@ export default function DocumentsTab({ clientId }: { clientId: number }) {
                     {doc.notes && <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">{doc.notes}</p>}
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${CATEGORY_COLORS[doc.category] || "bg-muted text-muted-foreground"}`}>
-                      {DOCUMENT_CATEGORY_LABELS[doc.category]}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${CATEGORY_COLORS[doc.category] || "bg-muted text-muted-foreground"}`}>
+                        {DOCUMENT_CATEGORY_LABELS[doc.category] || doc.category}
+                      </span>
+                      <InternalOnlyBadge category={doc.category} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
                     <p className="text-xs text-muted-foreground">{format(new Date(doc.uploadedAt), "MMM d, yyyy")}</p>
@@ -204,8 +230,9 @@ function RenewalDocumentGroup({ versions }: { versions: any[] }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${CATEGORY_COLORS[current.category] || "bg-muted text-muted-foreground"}`}>
-                {DOCUMENT_CATEGORY_LABELS[current.category]}
+                {DOCUMENT_CATEGORY_LABELS[current.category] || current.category}
               </span>
+              <InternalOnlyBadge category={current.category} />
               {current.version && (
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-muted text-muted-foreground">v{current.version}</span>
               )}
@@ -362,7 +389,7 @@ function UploadDialog({ open, onClose, clientId }: { open: boolean; onClose: () 
               <SelectTrigger data-testid="select-document-category"><SelectValue placeholder="Select category" /></SelectTrigger>
               <SelectContent>
                 {Object.entries(DOCUMENT_CATEGORY_LABELS).map(([k, v]) => (
-                  <SelectItem key={k} value={k}>{v}</SelectItem>
+                  <SelectItem key={k} value={k}>{categoryOptionLabel(k, v)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -23,6 +23,7 @@ import {
 import {
   checkResolutionNote, isResolutionType, isTaskPriority, READ_NO_TASK_NOTE,
 } from "@shared/communication-state";
+import { checkOutboundDocumentGuard, recordGuardRefusal } from "./documentGuards";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
@@ -3716,7 +3717,7 @@ export async function registerRoutes(
    */
   app.post("/api/communications/send", requireAuth, async (req, res) => {
     try {
-      const { fromIdentityId, to, subject, bodyText, clientIds } = req.body;
+      const { fromIdentityId, to, cc, bcc, subject, bodyText, clientIds, documentIds } = req.body;
       const user = req.user as any;
       if (!fromIdentityId || !to || !bodyText) {
         return res.status(400).json({ message: "fromIdentityId, to and bodyText are required" });
@@ -3730,9 +3731,58 @@ export async function registerRoutes(
       }
 
       const toList: string[] = Array.isArray(to) ? to : [to];
+      const ccList: string[] = Array.isArray(cc) ? cc : cc ? [cc] : [];
+      const requestedBccList: string[] = Array.isArray(bcc) ? bcc : bcc ? [bcc] : [];
       const isOwnAddress = identity.email.toLowerCase() === String(user.email).toLowerCase();
       const CLIENT_SERVICE_ADDRESS = "clientservice@simple.us";
       const replyTo = !isOwnAddress && identity.email.toLowerCase() !== CLIENT_SERVICE_ADDRESS ? CLIENT_SERVICE_ADDRESS : undefined;
+
+      // ── Internal-only document guard ──
+      // Checked here, on the request, before anything is sent, and checked
+      // again inside the send helper. Both stand: this one can name the user
+      // in the audit record and answer with a fixable message; the one in the
+      // helper catches any path that does not come through this route.
+      // A request that asks for attachments must be answered about
+      // attachments. Quietly dropping an id nobody could parse would send a
+      // message the sender believes carried a document.
+      if (documentIds != null && !Array.isArray(documentIds)) {
+        return res.status(400).json({ message: "documentIds must be an array of document ids" });
+      }
+      const requestedDocumentIds: number[] = Array.isArray(documentIds) ? documentIds.map(Number) : [];
+      if (requestedDocumentIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+        return res.status(400).json({ message: "documentIds must be positive whole numbers" });
+      }
+      let attachedDocuments: { id: number; documentName: string | null; category: string }[] = [];
+      if (requestedDocumentIds.length > 0) {
+        for (const docId of requestedDocumentIds) {
+          const doc = await storage.getDocument(docId);
+          if (!doc) return res.status(400).json({ message: `Document ${docId} not found` });
+          attachedDocuments.push({ id: doc.id, documentName: doc.documentName, category: doc.category as string });
+        }
+        const guard = checkOutboundDocumentGuard(attachedDocuments, {
+          to: toList,
+          cc: ccList,
+          // The clientservice@ copy this route adds is internal, but it is a
+          // real recipient, so the guard sees it rather than being told which
+          // recipients are worth checking.
+          bcc: [...requestedBccList, ...(identity.email.toLowerCase() === CLIENT_SERVICE_ADDRESS ? [] : [CLIENT_SERVICE_ADDRESS])],
+        });
+        if (!guard.allowed) {
+          await recordGuardRefusal({
+            blocked: guard.blocked,
+            attemptedByUserId: user.id,
+            attemptedByName: user.fullName || user.email,
+            context: "POST /api/communications/send",
+          });
+          return res.status(403).json({ message: guard.message, blocked: guard.blocked });
+        }
+        // The guard passed, but this route cannot actually attach anything
+        // yet. Saying so is better than sending the message without the
+        // documents and letting the sender believe they went.
+        return res.status(501).json({
+          message: "Attaching documents to a message is not available yet. Send the message without attachments, or share the document another way.",
+        });
+      }
 
       const signatureBlock = identity.signature ? `\n\n${identity.signature}` : "";
       const text = `${bodyText}${signatureBlock}`;
@@ -3749,12 +3799,19 @@ export async function registerRoutes(
         const result = await sendViaGmail(identity.email, {
           fromName: identity.displayName,
           to: toList,
+          cc: ccList,
           subject: subject || "(no subject)",
           text,
           replyTo,
-          bcc: identity.email.toLowerCase() === "clientservice@simple.us" ? undefined : "clientservice@simple.us",
+          bcc: [
+            ...requestedBccList,
+            ...(identity.email.toLowerCase() === CLIENT_SERVICE_ADDRESS ? [] : [CLIENT_SERVICE_ADDRESS]),
+          ],
+          documents: attachedDocuments,
+          attemptedBy: { userId: user.id, userName: user.fullName || user.email },
         });
-        if (!result.ok) return res.status(502).json({ message: result.error });
+        // A guard refusal is the sender's to fix, not an upstream failure.
+        if (!result.ok) return res.status(result.guardBlocked ? 403 : 502).json({ message: result.error });
       } else {
         return res.status(409).json({
           message: `${identity.email} is not connected to Gmail yet. Connect it in Settings \u2192 Mail Accounts before sending as this identity.`,

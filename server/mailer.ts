@@ -13,6 +13,8 @@
  * any other mailbox once it is connected.
  */
 
+import { checkOutboundDocumentGuard, recordGuardRefusal, type GuardedDocument } from "./documentGuards";
+
 const MAILGUN_SENDING_DOMAIN = "mg.simple.us";
 
 function apiKey(): string | undefined {
@@ -22,9 +24,17 @@ function apiKey(): string | undefined {
 export interface OutboundEmail {
   from: string;
   to: string | string[];
+  cc?: string | string[];
   subject: string;
   text: string;
   html?: string;
+  /**
+   * Anything being attached, for the internal-only document guard. Mailgun
+   * carries system mail (digests, notifications) which attaches nothing
+   * today; the guard sits here anyway so a future caller cannot send an
+   * internal-only document out through this path either.
+   */
+  documents?: GuardedDocument[];
   /** Set when the sender is covering for another identity, so a reply lands on the shared mailbox instead of one person's alone. */
   replyTo?: string;
   /**
@@ -44,16 +54,24 @@ export interface OutboundEmail {
  * crashing the caller — a missing key or a Mailgun outage should not take
  * down the process.
  */
-export async function sendEmail(email: OutboundEmail): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function sendEmail(email: OutboundEmail): Promise<{ ok: true } | { ok: false; error: string; guardBlocked?: boolean }> {
+  const guard = checkOutboundDocumentGuard(email.documents, { to: email.to, cc: email.cc, bcc: email.bcc });
+  if (!guard.allowed) {
+    await recordGuardRefusal({ blocked: guard.blocked, attemptedByName: email.from, context: "mailgun send" });
+    return { ok: false, error: guard.message!, guardBlocked: true };
+  }
+
   const key = apiKey();
   if (!key) {
     return { ok: false, error: "Mailgun API key is not configured (Mailgun_API_KEY)." };
   }
 
   const to = Array.isArray(email.to) ? email.to.join(",") : email.to;
+  const cc = Array.isArray(email.cc) ? email.cc.join(",") : email.cc;
   const form = new URLSearchParams();
   form.set("from", email.from);
   form.set("to", to);
+  if (cc) form.set("cc", cc);
   form.set("subject", email.subject);
   form.set("text", email.text);
   if (email.html) form.set("html", email.html);

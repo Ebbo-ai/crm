@@ -83,6 +83,7 @@ export const TIER_LABELS: Record<string, string> = {
   FAMILY: "EE+FAM",
 };
 
+/** Every category in the document_category enum (shared/schema.ts). A category missing here renders as its raw enum value, which is how PLAN_TRANSMITTAL used to show up. */
 export const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
   CLIENT_AGREEMENT: "Client Agreement",
   PROPOSAL: "Proposal",
@@ -90,6 +91,13 @@ export const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
   BROKER_COMPENSATION: "Broker Compensation",
   BROKER_OF_RECORD: "Broker of Record",
   RENEWAL_PROPOSAL: "Renewal Proposal",
+  PPR_REPORT: "Performance Report",
+  SPD: "SPD",
+  HANDOUT: "Handout",
+  NEW_PROPOSAL: "New Proposal",
+  RATE_NOTICE: "Rate Notice",
+  PLAN_TRANSMITTAL: "Plan Transmittal",
+  SUPPLEMENT: "Supplement",
   OTHER: "Other",
 };
 
