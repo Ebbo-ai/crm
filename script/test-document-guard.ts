@@ -9,11 +9,14 @@
  */
 
 import { checkDocumentRecipientGuard, checkOutboundDocumentGuard, extractEmailAddress } from "../server/documentGuards";
+import { classifyDocumentType } from "../server/documentVersioning";
 import { INTERNAL_ONLY_DOCUMENT_CATEGORIES } from "../shared/documentPolicy";
 
 const TRANSMITTAL = { id: 101, documentName: "Plan Transmittal, Plan Year 2026", category: "PLAN_TRANSMITTAL" };
 const COMMISSION = { id: 102, documentName: "Broker Commission Schedule 2026", category: "BROKER_COMPENSATION" };
 const HANDOUT = { id: 103, documentName: "Open Enrollment Handout", category: "HANDOUT" };
+const INTERNAL_REPORT = { id: 104, documentName: "Renewal Report, Plan Year 2026", category: "INTERNAL_RENEWAL_REPORT" };
+const CLIENT_PROPOSAL = { id: 105, documentName: "2026 Renewal Proposal", category: "RENEWAL_PROPOSAL" };
 
 const KIM = "kim.anderson@simple.us";
 const STEVE = "steve.schultz@simple.us";
@@ -80,6 +83,24 @@ check(
   "commission sheet (BROKER_COMPENSATION) to the broker: blocked",
   checkOutboundDocumentGuard([COMMISSION], { to: [BROKER] }).allowed,
   false,
+);
+
+// The pair the split exists for: the generated report and the proposal used
+// to share one category, so one of them was always filed wrongly.
+check(
+  "internal renewal report to the client: blocked",
+  checkOutboundDocumentGuard([INTERNAL_REPORT], { to: [CLIENT] }).allowed,
+  false,
+);
+check(
+  "internal renewal report inside the company: allowed",
+  checkOutboundDocumentGuard([INTERNAL_REPORT], { to: [KIM], cc: [TPA] }).allowed,
+  true,
+);
+check(
+  "client-facing renewal proposal to the client and broker: allowed",
+  checkOutboundDocumentGuard([CLIENT_PROPOSAL], { to: [CLIENT], cc: [BROKER] }).allowed,
+  true,
 );
 
 check(
@@ -192,6 +213,45 @@ check(
   "unrestricted category passes",
   checkDocumentRecipientGuard("HANDOUT", [CLIENT]).allowed,
   true,
+);
+
+console.log("\n── Filing the generated report ──");
+
+// Filing is where the guard gets its facts, so the classifier that files
+// documents arriving by mail has to agree about what the report is.
+check(
+  "the saved report filename files as internal",
+  classifyDocumentType("SD-001-renewal-report-2026-1774483200000.pdf"),
+  "INTERNAL_RENEWAL_REPORT",
+);
+// The download route names the same report without the save timestamp. If
+// that copy comes back in by mail it has to land in the same category.
+check(
+  "the downloaded report filename files as internal",
+  classifyDocumentType("SD-001-renewal-report-2026.pdf"),
+  "INTERNAL_RENEWAL_REPORT",
+);
+check(
+  "a client's renewal document is still a proposal",
+  classifyDocumentType("2026 Dental Plan renewal Tavares Concrete.pdf"),
+  "RENEWAL_PROPOSAL",
+);
+check(
+  "a broker's 'renewal report' is not assumed to be ours",
+  classifyDocumentType("2026 Renewal Report - Unity Care.pdf"),
+  "RENEWAL_PROPOSAL",
+);
+// The subject line is written by whoever sent the mail. It must not be able
+// to move an attachment into a category that changes who may receive it.
+check(
+  "a subject quoting the report filename cannot reclassify an attachment",
+  classifyDocumentType("2026 Renewal Proposal Unity Care.pdf", "Re: SD-001-renewal-report-2026.pdf"),
+  "RENEWAL_PROPOSAL",
+);
+check(
+  "a filename merely containing the pattern mid-string is not ours",
+  classifyDocumentType("copy of SD-001-renewal-report-2026.pdf.zip"),
+  "RENEWAL_PROPOSAL",
 );
 
 console.log(`\nInternal-only categories: ${INTERNAL_ONLY_DOCUMENT_CATEGORIES.join(", ")}`);

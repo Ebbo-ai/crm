@@ -1587,7 +1587,12 @@ app.use((req, res, next) => {
             'CLIENT_AGREEMENT', 'PROPOSAL', 'EMPLOYER_ACCEPTANCE', 'BROKER_COMPENSATION', 'BROKER_OF_RECORD',
             'RENEWAL_PROPOSAL', 'PPR_REPORT', 'OTHER',
             'SPD', 'HANDOUT', 'NEW_PROPOSAL', 'RATE_NOTICE',
-            'PLAN_TRANSMITTAL', 'SUPPLEMENT'
+            -- INTERNAL_RENEWAL_REPORT is listed here as well as in the
+            -- ADD VALUE below: a database still carrying RENEWAL_ACCEPTANCE
+            -- takes this rebuild branch, and leaving the label out would drop
+            -- a value the deploy-time schema diff may already have added —
+            -- taking any row filed under it with the cast.
+            'PLAN_TRANSMITTAL', 'SUPPLEMENT', 'INTERNAL_RENEWAL_REPORT'
           );
           ALTER TABLE documents ALTER COLUMN category DROP DEFAULT;
           ALTER TABLE documents ALTER COLUMN category TYPE document_category_new USING category::text::document_category_new;
@@ -1922,6 +1927,23 @@ app.use((req, res, next) => {
       log(`Startup migration: cleared ${staleClaims.rowCount} abandoned mailbox sync claim(s) left by a previous process`);
     }
     log("Startup migration: mailbox sync single-flight guard ready");
+
+    // ── INTERNAL_RENEWAL_REPORT: the internal renewal report leaves
+    // RENEWAL_PROPOSAL ──
+    // RENEWAL_PROPOSAL held two opposite audiences: the proposals that go to
+    // clients and brokers, and the report this app generates, which breaks
+    // out every fee component including broker compensation. The send guard
+    // decides by category, so one category could not be both restricted and
+    // permitted. ADD VALUE IF NOT EXISTS makes this a no-op on every boot
+    // after the first, and it runs outside a transaction because Postgres
+    // will not add an enum value inside one.
+    await pool.query(`ALTER TYPE document_category ADD VALUE IF NOT EXISTS 'INTERNAL_RENEWAL_REPORT'`);
+    // No data migration accompanies this. Every existing RENEWAL_PROPOSAL row
+    // in dev and production came from a Gmail import or a person's upload —
+    // none carries the generated report's filename, note, or renewal link, so
+    // there is nothing to move. Reclassifying on a looser guess would file a
+    // client's proposal as internal-only and block a send that should go.
+    log("Startup migration: INTERNAL_RENEWAL_REPORT category ready");
 
 
     // One-time diagnostic: does a Gmail filter auto-apply the "90 Degree

@@ -1281,7 +1281,11 @@ export async function registerRoutes(
         planId: null,
         renewalId,
         documentName: `Renewal Report, Plan Year ${renewal.planYear}`,
-        category: "RENEWAL_PROPOSAL",
+        // Its own category, not RENEWAL_PROPOSAL: this report breaks out every
+        // fee component including broker compensation, while RENEWAL_PROPOSAL
+        // is what goes to the client and the broker. Filing it here is what
+        // makes the send-layer guard refuse it — nobody has to remember.
+        category: "INTERNAL_RENEWAL_REPORT",
         filePath,
         fileName,
         version: generatorVersion,

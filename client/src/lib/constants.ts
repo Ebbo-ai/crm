@@ -91,6 +91,7 @@ export const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
   BROKER_COMPENSATION: "Broker Compensation",
   BROKER_OF_RECORD: "Broker of Record",
   RENEWAL_PROPOSAL: "Renewal Proposal",
+  INTERNAL_RENEWAL_REPORT: "Internal Renewal Report",
   PPR_REPORT: "Performance Report",
   SPD: "SPD",
   HANDOUT: "Handout",

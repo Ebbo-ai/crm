@@ -11,7 +11,23 @@
  * first match wins. Deliberately conservative — an ambiguous filename that
  * matches nothing here is left as OTHER rather than guessed at.
  */
-const FILENAME_CATEGORY_PATTERNS: { pattern: RegExp; category: string }[] = [
+const FILENAME_CATEGORY_PATTERNS: { pattern: RegExp; category: string; filenameOnly?: boolean }[] = [
+  // This app's own generated renewal report, recognised by the two filenames
+  // it actually emits and nothing looser: `<client>-renewal-report-<plan
+  // year>.pdf` when downloaded, and the same with a save timestamp appended
+  // when filed. Anchored to the end of the filename, and matched against the
+  // filename alone — an email subject that happens to quote a filename must
+  // not reclassify the attachment.
+  //
+  // It is internal-only, so a false match blocks a legitimate client send —
+  // the mirror-image failure, and just as bad. A renewal report from anyone
+  // else, named any other way, stays a proposal. Must come before the
+  // /\brenewal\b/ pattern below, which would otherwise claim it.
+  {
+    pattern: /(^|[\/\\])[^\/\\]*-renewal-report-\d{4}(-\d{10,})?\.pdf$/i,
+    category: "INTERNAL_RENEWAL_REPORT",
+    filenameOnly: true,
+  },
   // Renewal / proposal material
   { pattern: /renewal[_\s-]*proposal/i, category: "RENEWAL_PROPOSAL" },
   { pattern: /\bproposal\b/i, category: "RENEWAL_PROPOSAL" },
@@ -40,8 +56,12 @@ const SIGNED_FILENAME_PATTERN = /\bsigned\b|\bexecuted\b|\bscanned\b/i;
  */
 export function classifyDocumentType(filename: string, subject?: string): string | null {
   const haystack = `${filename} ${subject || ""}`;
-  for (const { pattern, category } of FILENAME_CATEGORY_PATTERNS) {
-    if (pattern.test(haystack)) return category;
+  for (const { pattern, category, filenameOnly } of FILENAME_CATEGORY_PATTERNS) {
+    // A pattern marked filenameOnly ignores the subject. The subject is a
+    // useful hint for "is this a proposal", but it is written by whoever sent
+    // the mail, so it must not be able to move a document into a category
+    // that changes who may receive it.
+    if (pattern.test(filenameOnly ? filename : haystack)) return category;
   }
   return null;
 }

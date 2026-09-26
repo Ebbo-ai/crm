@@ -21,6 +21,11 @@
  * - BROKER_COMPENSATION is what a commission sheet is filed as — there is no
  *   separate commission-sheet category. It states what the broker is paid,
  *   which is not the broker's to receive from us and not the client's to see.
+ * - INTERNAL_RENEWAL_REPORT is the renewal report this app generates, which
+ *   lists every fee component separately, broker compensation included. It
+ *   used to be filed as RENEWAL_PROPOSAL, the same category as the proposals
+ *   that go to clients and brokers. One category cannot be both restricted
+ *   and permitted, so the internal report has its own.
  *
  * Categories are deliberately coarse here. A category is either internal-only
  * or it is not; there is no per-document exception, because an exception is
@@ -29,6 +34,7 @@
 export const INTERNAL_ONLY_DOCUMENT_CATEGORIES: readonly string[] = [
   "PLAN_TRANSMITTAL",
   "BROKER_COMPENSATION",
+  "INTERNAL_RENEWAL_REPORT",
 ];
 
 const INTERNAL_ONLY_SET = new Set(INTERNAL_ONLY_DOCUMENT_CATEGORIES);

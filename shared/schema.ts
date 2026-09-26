@@ -29,6 +29,11 @@ export const documentCategoryEnum = pgEnum("document_category", [
   // Internal-only: admin fee breakdown. Never attach to a client/broker-facing send —
   // enforced server-side in server/documentGuards.ts, not just a UI warning.
   "PLAN_TRANSMITTAL",
+  // Internal-only: the renewal report this app generates, which breaks out every
+  // fee component including broker compensation. Split out of RENEWAL_PROPOSAL,
+  // which holds the proposals that DO go to clients and brokers — one category
+  // cannot be both restricted and permitted, and the guard decides by category.
+  "INTERNAL_RENEWAL_REPORT",
   // Rate bridges, funding options, glide paths, signature pages — supplemental
   // material accompanying a renewal proposal, distinct from the proposal itself.
   "SUPPLEMENT",
