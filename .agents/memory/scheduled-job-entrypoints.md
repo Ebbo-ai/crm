@@ -19,7 +19,13 @@ no startup migration chain (the web deployment owns the schema).
   autoscale web app. One project can hold both, but the scheduled ones are
   created by the user in the Publishing tool. Give exact run command, cron
   expression, timezone and job timeout instead of attempting it.
-- Scheduled deployments do inherit the project's secrets and DATABASE_URL.
+- Secrets are per-deployment, not project-wide. Replit's docs are explicit that
+  workspace secrets do not automatically carry into a published app: each
+  deployment keeps its own production secret set, configured in Publishing. A
+  scheduled deployment created separately therefore needs its own copy of every
+  secret the job reads, and a job that is missing one fails at the first call
+  that needs it rather than at startup. Enumerate the job's `process.env` reads
+  and hand the user that list when they create the deployment.
 - Set the job's own in-process deadline below the platform job timeout and check
   it at safe boundaries (between pages, between threads), so the run banks its
   cursor and releases its claim instead of being killed mid-work.

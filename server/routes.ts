@@ -23,7 +23,7 @@ import {
 import {
   checkResolutionNote, isResolutionType, isTaskPriority, READ_NO_TASK_NOTE,
 } from "@shared/communication-state";
-import { checkOutboundDocumentGuard, recordGuardRefusal, isInternalOnlyCategory } from "./documentGuards";
+import { checkOutboundDocumentGuard, recordGuardRefusal, isInternalOnlyCategory, isInternalRecipient } from "./documentGuards";
 import { and, eq, desc, ne, or, isNull, inArray } from "drizzle-orm";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { runImport } from "./crm-import";
@@ -4022,6 +4022,137 @@ export async function registerRoutes(
           fileName: g.fileName,
         })),
       });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * The people a message can be addressed to, grouped by who they are.
+   *
+   * Grouping is the point, not a nicety: a broker sitting in a list headed
+   * "internal" is how a fee breakdown reaches the wrong person. Each group is
+   * returned separately and labelled, and nothing is merged — the same
+   * address appearing as both a client contact and a broker contact is shown
+   * in both places rather than being quietly collapsed into one.
+   *
+   * Free typing stays: this endpoint only offers, it does not constrain.
+   */
+  app.get("/api/recipient-directory", requireAuth, async (req, res) => {
+    try {
+      const rawClientId = req.query.clientId;
+      const clientId = rawClientId ? parseInt(String(rawClientId)) : null;
+      type DirectoryPerson = { name: string; email: string; role?: string | null; isInternal: boolean };
+      const groups: { key: string; label: string; note?: string; people: DirectoryPerson[] }[] = [];
+      // Whether an address is inside the company is decided by the same
+      // domain test the send guard uses, not by which list the address
+      // happens to sit in. A staff account or a 90 Degree row can hold a
+      // personal gmail address; the group heading would then be saying
+      // "internal" about somebody who is not, which is the whole failure
+      // this picker exists to prevent.
+      const person = (name: string, email: string, role?: string | null): DirectoryPerson => ({
+        name,
+        email,
+        role: role ?? null,
+        isInternal: !!email && isInternalRecipient(email),
+      });
+
+      if (clientId && Number.isInteger(clientId)) {
+        const [client, brokerContacts] = await Promise.all([
+          storage.getClient(clientId),
+          storage.getBrokerContacts(clientId),
+        ]);
+        if (client) {
+          const clientPeople: DirectoryPerson[] = [];
+          if (client.decisionMakerEmail) {
+            clientPeople.push(person(
+              client.decisionMakerName || client.decisionMakerEmail,
+              client.decisionMakerEmail,
+              client.decisionMakerTitle || "Decision maker",
+            ));
+          }
+          if (client.adminContactEmail) {
+            clientPeople.push(person(
+              client.adminContactName || client.adminContactEmail,
+              client.adminContactEmail,
+              client.adminContactTitle || "Admin contact",
+            ));
+          }
+          if (clientPeople.length > 0) {
+            groups.push({
+              key: "client",
+              label: client.clientName,
+              note: "Client · outside the company",
+              people: clientPeople,
+            });
+          }
+
+          // A broker contact with a termination date has left the account.
+          // Offering them is how last year's advisor gets this year's mail.
+          const serving = brokerContacts.filter((b) => !b.terminationDate && b.email);
+          const brokerPeople = serving.map((b) => person(
+            b.contactName,
+            b.email as string,
+            [b.role, b.isPrimary ? "primary" : null].filter(Boolean).join(" · ") || null,
+          ));
+          // The flat mirror on the client row is the same person as the
+          // primary broker contact, so it is only offered when there are no
+          // broker_contacts rows at all — older clients never had them.
+          // Deliberately not "no serving contact with an address": a client
+          // whose only broker rows are terminated has no broker right now,
+          // and the mirror may still hold the one who left.
+          if (brokerContacts.length === 0 && client.brokerEmail) {
+            brokerPeople.push(person(
+              client.brokerContactName || client.brokerEmail,
+              client.brokerEmail,
+              client.brokerFirmName || "Broker",
+            ));
+          }
+          if (brokerPeople.length > 0) {
+            groups.push({
+              key: "broker",
+              label: client.brokerFirmName ? `Broker — ${client.brokerFirmName}` : "Broker",
+              note: "Outside the company",
+              people: brokerPeople,
+            });
+          }
+        }
+      }
+
+      const [users, identities, vendorContacts] = await Promise.all([
+        storage.getAllUsers(),
+        storage.getAllSendingIdentities(),
+        storage.getVendorContacts(),
+      ]);
+      const staff: DirectoryPerson[] = [];
+      const seenInternal = new Set<string>();
+      for (const u of users) {
+        if (!u.isActive || u.fullName === "System Administrator" || !u.email) continue;
+        seenInternal.add(u.email.toLowerCase());
+        staff.push(person(u.fullName, u.email, null));
+      }
+      // clientservice@ is a shared mailbox, not a person, so it is not in
+      // users — it is a sending identity. It still belongs in this list:
+      // copying the shared mailbox is the normal way to keep both people in
+      // the loop on one thread.
+      for (const i of identities) {
+        if (!i.isActive || seenInternal.has(i.email.toLowerCase())) continue;
+        seenInternal.add(i.email.toLowerCase());
+        staff.push(person(i.displayName, i.email, "Shared mailbox"));
+      }
+      if (staff.length > 0) groups.push({ key: "internal", label: "Simple", note: "Internal", people: staff });
+
+      // The 90 Degree roster is seeded with names and roles; the addresses
+      // are filled in by hand and several are still blank. A name with no
+      // address is returned anyway, with an empty email, so the picker can
+      // say why it cannot be clicked instead of leaving the person out and
+      // looking like the roster is short.
+      const vendor = vendorContacts.map((v) => person(v.name, v.email || "", v.role));
+      if (vendor.length > 0) {
+        groups.push({ key: "vendor", label: "90 Degree Benefits", note: "Administrator", people: vendor });
+      }
+
+      res.json({ groups });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

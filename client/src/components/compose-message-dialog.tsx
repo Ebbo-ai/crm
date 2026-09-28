@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { Loader2, Lock, Paperclip, Send, X } from "lucide-react";
+import { Loader2, Lock, Paperclip, Send, Users, X } from "lucide-react";
 
 /**
  * One composer for every way a message leaves the CRM: a fresh message, a
@@ -43,6 +43,21 @@ interface SendingIdentity {
   email: string;
   displayName: string;
   signature: string | null;
+}
+
+interface DirectoryPerson {
+  name: string;
+  email: string;
+  role?: string | null;
+  /** Decided by the server against the same domains the send guard uses, not by which group the person is listed under. */
+  isInternal: boolean;
+}
+
+interface DirectoryGroup {
+  key: string;
+  label: string;
+  note?: string;
+  people: DirectoryPerson[];
 }
 
 interface AttachableDocuments {
@@ -153,6 +168,22 @@ export default function ComposeMessageDialog({
     setSourceApplied(true);
   }, [fetchedSource, sourceApplied, mode, to, source]);
 
+  const [bcc, setBcc] = useState("");
+  const { data: directory } = useQuery<{ groups: DirectoryGroup[] }>({
+    queryKey: clientId ? [`/api/recipient-directory?clientId=${clientId}`] : ["/api/recipient-directory"],
+  });
+  const [showDirectory, setShowDirectory] = useState(false);
+
+  /** Adds an address to a field, never twice, and leaves anything typed alone. */
+  function addRecipient(field: "to" | "cc" | "bcc", email: string) {
+    const setter = field === "to" ? setTo : field === "cc" ? setCc : setBcc;
+    setter((current) => {
+      const existing = current.split(",").map((s) => s.trim()).filter(Boolean);
+      if (existing.some((e) => e.toLowerCase() === email.toLowerCase())) return current;
+      return [...existing, email].join(", ");
+    });
+  }
+
   const [documentIds, setDocumentIds] = useState<number[]>([]);
   const [globalDocumentIds, setGlobalDocumentIds] = useState<number[]>([]);
   const [files, setFiles] = useState<File[]>([]);
@@ -180,6 +211,7 @@ export default function ComposeMessageDialog({
       fd.append("fromIdentityId", fromIdentityId);
       fd.append("to", JSON.stringify(to.split(",").map((s) => s.trim()).filter(Boolean)));
       fd.append("cc", JSON.stringify(cc.split(",").map((s) => s.trim()).filter(Boolean)));
+      fd.append("bcc", JSON.stringify(bcc.split(",").map((s) => s.trim()).filter(Boolean)));
       fd.append("subject", subject);
       fd.append("bodyText", body);
       fd.append("clientIds", JSON.stringify(clientIds ?? (clientId ? [clientId] : [])));
@@ -268,6 +300,101 @@ export default function ComposeMessageDialog({
               <Label className="text-xs">Cc</Label>
               <Input value={cc} onChange={(e) => setCc(e.target.value)} className="mt-1" data-testid="input-send-cc" />
             </div>
+            <div>
+              <Label className="text-xs">Bcc</Label>
+              <Input value={bcc} onChange={(e) => setBcc(e.target.value)} className="mt-1" data-testid="input-send-bcc" />
+            </div>
+          </div>
+
+          {/* ── Who to send to ──
+              Grouped and labelled: the broker is never shown inside the
+              internal list, because that is how the wrong person gets copied
+              on something they should not see. Typing an address by hand
+              still works; this only saves the typing. */}
+          <div className="border border-border rounded-md">
+            <button
+              type="button"
+              onClick={() => setShowDirectory((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold"
+              data-testid="button-toggle-recipient-picker"
+            >
+              <span className="flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-muted-foreground" />
+                Add people
+              </span>
+              <span className="text-muted-foreground font-normal">{showDirectory ? "Hide" : "Show"}</span>
+            </button>
+            {showDirectory && (
+              <div className="px-3 pb-3 space-y-3 max-h-64 overflow-y-auto">
+                {(directory?.groups ?? []).length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No saved contacts to offer here — type the address instead.
+                  </p>
+                )}
+                {(directory?.groups ?? []).map((group) => (
+                  <div key={group.key} data-testid={`recipient-group-${group.key}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-xs font-semibold text-foreground">{group.label}</p>
+                      {group.note && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] h-4 px-1 ${
+                            group.key === "broker" ? "border-destructive text-destructive" : ""
+                          }`}
+                        >
+                          {group.note}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      {group.people.map((p) => (
+                        <div
+                          key={`${group.key}-${p.email}`}
+                          className="flex items-center justify-between gap-2 text-xs"
+                          data-testid={`recipient-${group.key}-${p.email}`}
+                        >
+                          <span className="min-w-0 truncate">
+                            <span className="text-foreground">{p.name}</span>
+                            {p.role && <span className="text-muted-foreground"> · {p.role}</span>}
+                            <span className="text-muted-foreground">
+                              {" · "}
+                              {p.email || "no address on file"}
+                            </span>
+                            {/* A staff row or a 90 Degree row holding a personal
+                                address is still an outside address. Say so on
+                                the person, not just in the group heading. */}
+                            {p.email && !p.isInternal && (group.key === "internal" || group.key === "vendor") && (
+                              <Badge variant="outline" className="ml-1.5 text-[10px] h-4 px-1 border-destructive text-destructive">
+                                outside
+                              </Badge>
+                            )}
+                          </span>
+                          <span className="flex items-center gap-1 shrink-0">
+                            {(["to", "cc", "bcc"] as const).map((field) => (
+                              <Button
+                                key={field}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-[11px]"
+                                disabled={!p.email}
+                                onClick={() => addRecipient(field, p.email)}
+                                data-testid={`button-add-${field}-${p.email || p.name}`}
+                              >
+                                {field === "to" ? "To" : field === "cc" ? "Cc" : "Bcc"}
+                              </Button>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">Subject</Label>
               <Input
