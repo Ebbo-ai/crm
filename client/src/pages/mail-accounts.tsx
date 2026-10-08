@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Mail, Link2, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, ShieldX, DollarSign, PauseCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import StartupTasksCard from "@/components/startup-tasks-card";
 
 interface MailAccountRow {
   mailbox: string;
@@ -137,6 +138,10 @@ export default function MailAccountsPage() {
           <RefreshCw className={`w-4 h-4 mr-2 ${sync.isPending ? "animate-spin" : ""}`} />
           {sync.isPending ? "Syncing…" : "Sync all now"}
         </Button>
+      </div>
+
+      <div className="mb-6">
+        <StartupTasksCard />
       </div>
 
       <Card className="mb-6">

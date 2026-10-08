@@ -12,9 +12,22 @@ import { scheduleDailyDigest } from "./digest";
 import { storage } from "./storage";
 import { errorLabel, redactEmails } from "./logRedaction";
 import { mailboxFloorDate, mailboxFloorPolicy } from "./mailSyncWindow";
+import { runDeferredStartupTasks, type DeferredStartupTask } from "./startupTasks";
 
 const app = express();
 const httpServer = createServer(app);
+const processStartedAt = Date.now();
+
+/**
+ * False until the schema migrations have finished.
+ *
+ * The port opens before they run, so the deployment's health check is
+ * answered immediately and a slow migration can never stop the app from
+ * starting. API requests that arrive in that window are told to wait rather
+ * than failing on a column that does not exist yet; it is normally a few
+ * seconds.
+ */
+let schemaReady = false;
 
 // Deployed behind Replit's proxy, which terminates TLS; without this, Express sees
 // every request as plain HTTP and a "secure" session cookie would never be set.
@@ -69,12 +82,46 @@ app.use((req, res, next) => {
   next();
 });
 
+// The readiness gate. Registered before any route, so it covers every API
+// path including ones added later. Static files and the health check are not
+// gated — the page can load and say so.
+app.use("/api", (_req, res, next) => {
+  if (schemaReady) return next();
+  res.status(503).json({ message: "The CRM is finishing its startup checks. This takes a few seconds — try again shortly." });
+});
+
 (async () => {
   // Bring the report service up first so it boots in parallel with the startup
   // migrations below. This call cannot throw: if the engine will not start, the
   // CRM still comes up and only PDF/report generation is affected.
   startRatingEngine();
 
+  // Per-phase timing, so a phase that starts getting slow is visible in the
+  // log before it is slow enough to stop the app booting.
+  let phaseClock = Date.now();
+  const logPhase = (message: string) => {
+    const ms = Date.now() - phaseClock;
+    phaseClock = Date.now();
+    log(`${message} (${ms}ms)`);
+  };
+
+  /**
+   * Schema only: tables, columns, enums, indexes, and the handful of
+   * one-statement data fixes that are bounded by a small table.
+   *
+   * This is the work that genuinely has to finish before a request is
+   * served, because the ORM selects every column the schema declares and a
+   * query issued against a missing column fails. Everything whose cost grows
+   * with the data — every backfill, every scan of a queue — now lives in
+   * server/startupTasks.ts and runs after the port is open. A phase added
+   * here that reads a backlog will eventually stop the app from starting.
+   */
+  async function runSchemaMigrations() {
+  // Reset here, not at module load: the clock is measuring each migration
+  // phase, and these do not start until the listener callback fires. Without
+  // this, the first phase reports the time the process spent getting to the
+  // open port as if it were its own.
+  phaseClock = Date.now();
   // Startup migrations: add missing columns, tables, and enums.
   // The plans uniqueness constraint is declared in the Drizzle schema and applied
   // to production by the publish flow. Phase 12 below additionally migrates an
@@ -1292,11 +1339,9 @@ app.use((req, res, next) => {
     `);
     log("Startup migration: field-review confirm-to-record columns and history table ready");
 
-    const { storage } = await import("./storage");
-    const backfill = await storage.backfillFieldProposalMappings();
-    if (backfill.total > 0) {
-      log(`Startup migration: field-proposal mapping backfill — ${backfill.mapped} mapped, ${backfill.unmapped} unmapped of ${backfill.total} pending`);
-    }
+    // The field-proposal mapping backfill used to run here. It scans every
+    // pending proposal, so its cost grows with the review queue — it is the
+    // phase that grew past the platform's boot window. Now a deferred task.
 
     // ── Phase 17: dedupe the review queue by plan-year, not by document ────────
     // The Gmail backfill filed every version of every renewal cycle (prior-year
@@ -1309,10 +1354,8 @@ app.use((req, res, next) => {
     await pool.query(`
       ALTER TABLE documents ADD COLUMN IF NOT EXISTS effective_date TIMESTAMP;
     `);
-    const dateBackfill = await storage.backfillDocumentEffectiveDates();
-    if (dateBackfill.total > 0) {
-      log(`Startup migration: document effective-date backfill — ${dateBackfill.dated} dated, ${dateBackfill.undated} left undated of ${dateBackfill.total}`);
-    }
+    // The effective-date backfill that fills this column is a deferred task:
+    // it reads every undated document, and that set only grows.
 
     // ── Phase 18: Gmail inbox inside the CRM ───────────────────────────────────
     // Full mail (not just has:attachment), full body storage, thread grouping,
@@ -1399,10 +1442,6 @@ app.use((req, res, next) => {
     `);
     log("Startup migration: Gmail historical import match-method column + persisted error table ready");
 
-    const imageCleanup = await storage.cleanupEmbeddedImageDocuments();
-    if (imageCleanup.deleted > 0) {
-      log(`Startup migration: removed ${imageCleanup.deleted} signature-logo/icon document(s) mistakenly filed by the original attachment backfill`);
-    }
 
     // ── Phase 19: quoted-history trimming on Gmail messages ─────────────────
     await pool.query(`
@@ -1410,10 +1449,8 @@ app.use((req, res, next) => {
       ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS has_quoted_text BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS is_forward BOOLEAN NOT NULL DEFAULT false;
     `);
-    const quoteBackfill = await storage.backfillGmailQuoteSplits();
-    if (quoteBackfill > 0) {
-      log(`Startup migration: computed quoted-text splits for ${quoteBackfill} previously-imported Gmail message(s)`);
-    }
+    // Computing the quote splits for messages imported before these columns
+    // existed is a deferred task — it reads message bodies in bulk.
 
     // ── Phase 21: reconcile legacy communications rows against Gmail-native data ──
     await pool.query(`ALTER TABLE communications ADD COLUMN IF NOT EXISTS superseded_by_gmail_message_id INTEGER;`);
@@ -1427,11 +1464,8 @@ app.use((req, res, next) => {
         updated_by TEXT
       );
     `);
-    const { reconcileLegacyCommunicationsWithGmail } = await import("./mailDedup");
-    const dedupResult = await reconcileLegacyCommunicationsWithGmail();
-    if (dedupResult.matched > 0) {
-      log(`Startup migration: marked ${dedupResult.matched} legacy communication row(s) as superseded by a matching Gmail-native message (${dedupResult.scanned} legacy row(s) still unmatched)`);
-    }
+    // Reconciling legacy communication rows against Gmail-native messages
+    // compares two growing tables against each other. Deferred task.
 
     // ── Phase 20: per-user sending identities + outbound communication log ──
     await pool.query(`
@@ -1705,33 +1739,10 @@ app.use((req, res, next) => {
     // flagged here, even though its thread appears in the census, so a real
     // client/broker reply on a "90 Degree Benefits" thread is never
     // silently muted.
-    const flagResult = await pool.query(`
-      UPDATE gmail_messages gm
-      SET is_historical_import = true
-      FROM gmail_threads gt
-      JOIN gmail_backfill_threads gbt ON gbt.gmail_thread_id = gt.gmail_thread_id AND gbt.mailbox = gt.mailbox
-      WHERE gm.thread_id = gt.id AND gm.sent_at <= gbt.created_at AND gm.is_historical_import = false
-      RETURNING gm.id
-    `);
-    if (flagResult.rowCount) {
-      log(`Startup migration: flagged ${flagResult.rowCount} gmail_messages row(s) as historical-import scope (backfill-scoped thread, regardless of which pipeline created the row)`);
-    }
-    // One-time-in-effect bulk cleanup: delete (not resolve) every AI-origin
-    // triage task that traces back to a historical-import-scoped message.
-    // Naturally idempotent — once these rows are gone, this matches nothing
-    // on every later boot — so it doubles as a permanent backstop with no
-    // separate one-time marker needed.
-    const beforeCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
-    const cleanupResult = await pool.query(`
-      DELETE FROM communication_tasks
-      WHERE gmail_message_id IN (SELECT id FROM gmail_messages WHERE is_historical_import = true)
-      RETURNING id
-    `);
-    if (cleanupResult.rowCount) {
-      const afterCount = await pool.query(`SELECT COUNT(*) FROM communication_tasks WHERE gmail_message_id IS NOT NULL`);
-      log(`Startup migration: bulk-removed ${cleanupResult.rowCount} historical-import triage task(s) — AI-origin tasks before: ${beforeCount.rows[0].count}, after: ${afterCount.rows[0].count}`);
-    }
-    log("Startup migration: gmail_messages.is_historical_import ready, historical-import triage cleanup applied");
+    // Flagging historical-import messages and removing the triage tasks that
+    // trace back to them are both whole-table passes over mail. Deferred
+    // tasks — see startupTasks.ts.
+    logPhase("Startup migration: gmail_messages.is_historical_import ready");
 
     // ── Phase 30: "stored" and "sorted" are separate facts ──
     // Sorting (client matching, 90DB filing, business classification, action
@@ -1907,11 +1918,9 @@ app.use((req, res, next) => {
     // timestamp (genuine live mail) that got skipped before the
     // per-message isHistoricalImport fix existed. See
     // storage.getUnextractedPostCensusMessages for the exact criteria.
-    const { runPostCensusCatchUpExtraction } = await import("./gmailFullSync");
-    const catchUp = await runPostCensusCatchUpExtraction();
-    if (catchUp.messagesChecked > 0) {
-      log(`Startup migration: post-census catch-up — checked ${catchUp.messagesChecked} previously-skipped live message(s), created ${catchUp.tasksCreated} triage task(s)`);
-    }
+    // The post-census catch-up extraction is a deferred task. It calls the
+    // AI per message, so it was both the slowest thing in the boot path and
+    // the one most able to hang it.
 
     // ── Phase 29: single-flight guard + live progress for the mailbox sync ──
     // The row in gmail_import_state IS the lock. An in-process boolean was not
@@ -1968,50 +1977,151 @@ app.use((req, res, next) => {
     // rolling-sync/backfill census-timestamp coordination is — if a filter
     // is still live, brand-new threads keep joining the label every day,
     // not just replies on already-labeled threads.
-    try {
-      const { CONFIGURED_MAILBOXES } = await import("./googleOAuth");
-      const { listGmailFilters, listGmailLabels } = await import("./gmail");
-      for (const { mailbox } of CONFIGURED_MAILBOXES) {
-        try {
-          const labels = await listGmailLabels(mailbox);
-          const targetLabel = labels.find((l) => l.name === "90 Degree Benefits");
-          if (!targetLabel) {
-            log(`Startup diagnostic: ${mailbox} has no "90 Degree Benefits" label at all.`);
-            continue;
-          }
-          const filters = await listGmailFilters(mailbox);
-          const matching = filters.filter((f) => f.action?.addLabelIds?.includes(targetLabel.id));
-          if (matching.length > 0) {
-            // Criteria are not logged: a Gmail filter's criteria are addresses
-            // and subject fragments, i.e. client identities. The count and the
-            // label id answer the diagnostic question on their own.
-            log(`Startup diagnostic: ${mailbox} HAS ${matching.length} active Gmail filter(s) auto-applying "90 Degree Benefits" (label id ${targetLabel.id}).`);
-          } else {
-            log(`Startup diagnostic: ${mailbox} has NO active Gmail filter targeting "90 Degree Benefits" — label appears to be manually applied only.`);
-          }
-        } catch (err: any) {
-          log(`Startup diagnostic: ${mailbox} filter/label check failed: ${errorLabel(err)}`);
-        }
-      }
-    } catch (err: any) {
-      console.error(`Startup diagnostic (Gmail filter check) error: ${errorLabel(err)}`);
-    }
-
-    const retroTyping = await (await import("./documentRetroTyping")).runDocumentRetroTyping();
-    if (retroTyping.scanned > 0) {
-      log(`Startup migration: retro-typing pass scanned ${retroTyping.scanned} OTHER document(s) — reclassified ${retroTyping.reclassified.length}, left ${retroTyping.leftAsOther} as OTHER (ambiguous filename)`);
-    }
+    // The Gmail filter/label diagnostic and the document retro-typing pass
+    // are deferred tasks. The first makes network calls to three mailboxes
+    // and can hang on an auth problem; the second scans every OTHER-typed
+    // document. Neither belongs in front of the port.
   } catch (err: any) {
     console.error(`Startup migration error: ${errorLabel(err)}`);
   }
+  }
 
   await registerRoutes(httpServer, app);
-  await seedDatabase().catch((err) => console.error(`Seed error: ${errorLabel(err)}`));
 
-  // Daily 7:30 AM America/New_York task digest — each owner gets their own
-  // open/overdue items by email instead of the list only being visible if
-  // someone opens the app.
-  scheduleDailyDigest();
+  /**
+   * The work that used to run in front of the port.
+   *
+   * Each entry declares how long its result stays good; a boot inside that
+   * window skips the task instead of re-reading the whole backlog, which is
+   * the actual defect that took production down. The one-time repairs keep a
+   * long interval rather than a "done forever" flag so that mail imported
+   * later is still picked up eventually — just never during a boot.
+   */
+  const deferredStartupTasks: DeferredStartupTask[] = [
+    {
+      name: "field-proposal-mapping-backfill",
+      label: "Field proposal mapping backfill",
+      minIntervalHours: 24,
+      run: async () => {
+        const result = await storage.backfillFieldProposalMappings();
+        if (result.total === 0) return null;
+        return `${result.mapped} mapped, ${result.unmapped} unmapped of ${result.total} pending`;
+      },
+    },
+    {
+      name: "document-effective-date-backfill",
+      label: "Document effective-date backfill",
+      minIntervalHours: 24,
+      run: async () => {
+        const result = await storage.backfillDocumentEffectiveDates();
+        if (result.total === 0) return null;
+        return `${result.dated} dated, ${result.undated} left undated of ${result.total}`;
+      },
+    },
+    {
+      name: "embedded-image-document-cleanup",
+      label: "Signature-image document cleanup",
+      minIntervalHours: 24 * 7,
+      run: async () => {
+        const result = await storage.cleanupEmbeddedImageDocuments();
+        return result.deleted > 0 ? `removed ${result.deleted} signature-logo/icon document(s)` : null;
+      },
+    },
+    {
+      name: "gmail-quote-split-backfill",
+      label: "Quoted-text split backfill",
+      minIntervalHours: 24,
+      run: async () => {
+        const count = await storage.backfillGmailQuoteSplits();
+        return count > 0 ? `computed splits for ${count} message(s)` : null;
+      },
+    },
+    {
+      name: "legacy-communication-dedup",
+      label: "Legacy communication reconciliation",
+      minIntervalHours: 24 * 7,
+      run: async () => {
+        const { reconcileLegacyCommunicationsWithGmail } = await import("./mailDedup");
+        const result = await reconcileLegacyCommunicationsWithGmail();
+        return result.matched > 0
+          ? `${result.matched} legacy row(s) superseded by a Gmail-native message, ${result.scanned} still unmatched`
+          : null;
+      },
+    },
+    {
+      name: "historical-import-flagging",
+      label: "Historical-import flagging and triage cleanup",
+      minIntervalHours: 24,
+      run: async () => {
+        const { pool } = await import("./db");
+        const flagged = await pool.query(`
+          UPDATE gmail_messages gm
+          SET is_historical_import = true
+          FROM gmail_threads gt
+          JOIN gmail_backfill_threads gbt ON gbt.gmail_thread_id = gt.gmail_thread_id AND gbt.mailbox = gt.mailbox
+          WHERE gm.thread_id = gt.id AND gm.sent_at <= gbt.created_at AND gm.is_historical_import = false
+        `);
+        const removed = await pool.query(`
+          DELETE FROM communication_tasks
+          WHERE gmail_message_id IN (SELECT id FROM gmail_messages WHERE is_historical_import = true)
+        `);
+        if (!flagged.rowCount && !removed.rowCount) return null;
+        return `${flagged.rowCount ?? 0} message(s) flagged, ${removed.rowCount ?? 0} historical triage task(s) removed`;
+      },
+    },
+    {
+      name: "post-census-catchup-extraction",
+      label: "Post-census catch-up extraction",
+      minIntervalHours: 24,
+      run: async () => {
+        const { runPostCensusCatchUpExtraction } = await import("./gmailFullSync");
+        const result = await runPostCensusCatchUpExtraction();
+        return result.messagesChecked > 0
+          ? `checked ${result.messagesChecked} previously-skipped message(s), created ${result.tasksCreated} triage task(s)`
+          : null;
+      },
+    },
+    {
+      name: "document-retro-typing",
+      label: "Document retro-typing pass",
+      minIntervalHours: 24,
+      run: async () => {
+        const { runDocumentRetroTyping } = await import("./documentRetroTyping");
+        const result = await runDocumentRetroTyping();
+        return result.scanned > 0
+          ? `scanned ${result.scanned} OTHER document(s), reclassified ${result.reclassified.length}, left ${result.leftAsOther} as OTHER`
+          : null;
+      },
+    },
+    {
+      name: "gmail-filter-diagnostic",
+      label: "Gmail 90 Degree Benefits filter check",
+      minIntervalHours: 24 * 7,
+      run: async () => {
+        const { CONFIGURED_MAILBOXES } = await import("./googleOAuth");
+        const { listGmailFilters, listGmailLabels } = await import("./gmail");
+        const findings: string[] = [];
+        for (const { mailbox } of CONFIGURED_MAILBOXES) {
+          try {
+            const labels = await listGmailLabels(mailbox);
+            const targetLabel = labels.find((l) => l.name === "90 Degree Benefits");
+            if (!targetLabel) {
+              findings.push(`${mailbox}: no label`);
+              continue;
+            }
+            const filters = await listGmailFilters(mailbox);
+            // Criteria are never recorded: a Gmail filter's criteria are
+            // addresses and subject fragments, i.e. client identities.
+            const matching = filters.filter((f) => f.action?.addLabelIds?.includes(targetLabel.id));
+            findings.push(`${mailbox}: ${matching.length} active filter(s)`);
+          } catch (err: any) {
+            findings.push(`${mailbox}: check failed (${errorLabel(err)})`);
+          }
+        }
+        return findings.join("; ");
+      },
+    },
+  ];
 
   // Gmail inbox: kick off an initial sync shortly after boot (never blocks
   // startup — a year of mail is many pages), then keep polling every 5
@@ -2037,6 +2147,8 @@ app.use((req, res, next) => {
       console.error(`Gmail inbox sync error: ${errorLabel(err)}`);
     }
   }
+  /** Started once the schema is ready, never before the port is open. */
+  function startRecurringWork() {
   setTimeout(runGmailSyncSafely, 10_000);
   setInterval(runGmailSyncSafely, GMAIL_SYNC_INTERVAL_MS);
 
@@ -2063,6 +2175,7 @@ app.use((req, res, next) => {
       console.error(`Sorting recovery error: ${errorLabel(err)}`);
     }
   }, 60_000);
+  }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -2106,14 +2219,44 @@ app.use((req, res, next) => {
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on port ${port} after ${Date.now() - processStartedAt}ms`);
       // Report-service readiness is polled only after the listener is open,
       // never before it. A renderer that is slow or dead must not delay the CRM
       // from accepting traffic or answering a deployment health check. Endpoints
       // that need the renderer return a clear 503 until it recovers.
       void waitForRatingEngine();
+      // Everything that touches the database happens from here, behind the
+      // open port. The deployment's health check is already being answered,
+      // so a slow migration or a failing backfill can no longer stop the app
+      // from starting — which is exactly how it stopped starting before.
+      void finishBoot();
     },
   );
+
+  /**
+   * Database work, in the order it has to happen: schema first (the API is
+   * gated on it), then seed, then the recurring jobs, then the deferred
+   * backfills that used to sit in front of the port.
+   */
+  async function finishBoot() {
+    const startedAt = Date.now();
+    await runSchemaMigrations();
+    schemaReady = true;
+    log(`Schema ready in ${Date.now() - startedAt}ms — API now answering`);
+
+    await seedDatabase().catch((err) => console.error(`Seed error: ${errorLabel(err)}`));
+
+    // Daily 7:30 AM America/New_York task digest — each owner gets their own
+    // open/overdue items by email instead of the list only being visible if
+    // someone opens the app. (The scheduled deployment is the real one; this
+    // in-process timer only fires when an instance happens to be awake.)
+    scheduleDailyDigest();
+    startRecurringWork();
+
+    // Fire and forget: these report their own outcome into startup_tasks,
+    // which Settings reads. Nothing above waits on them.
+    void runDeferredStartupTasks(deferredStartupTasks);
+  }
 
   // Graceful shutdown: finish in-flight requests before exiting
   const shutdown = () => {

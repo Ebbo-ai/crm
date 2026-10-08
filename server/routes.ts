@@ -4028,6 +4028,23 @@ export async function registerRoutes(
   });
 
   /**
+   * What the background startup work did, and what failed.
+   *
+   * These tasks run after the server is listening, so a failure here never
+   * stops the app — which also means nobody would ever notice it without
+   * somewhere to look. This is that place; the UI shows a warning while any
+   * task's last run failed.
+   */
+  app.get("/api/system/startup-tasks", requireAuth, async (_req, res) => {
+    try {
+      const { getStartupTaskStatus } = await import("./startupTasks");
+      res.json(await getStartupTaskStatus());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
    * The people a message can be addressed to, grouped by who they are.
    *
    * Grouping is the point, not a nicety: a broker sitting in a list headed

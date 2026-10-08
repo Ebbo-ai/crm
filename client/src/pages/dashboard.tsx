@@ -21,6 +21,7 @@ import { MONTHS } from "@/lib/constants";
 import CommunicationFeed from "@/components/communication-feed";
 import GmailTriageFeed from "@/components/gmail-triage-feed";
 import TodoList from "@/components/todo-list";
+import { StartupTaskWarning } from "@/components/startup-tasks-card";
 
 const ISSUE_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   FUNDING:      { label: "Funding",     color: "bg-info-tint text-brand-accent" },
@@ -543,6 +544,9 @@ export default function DashboardPage() {
             <BarChart2 className="w-4 h-4" /> Import Monthly PPRs
           </Button>
         </div>
+
+        {/* Background maintenance that failed. Renders nothing when all is well. */}
+        <StartupTaskWarning />
 
         {/* Search bar */}
         <div className="mb-8">
