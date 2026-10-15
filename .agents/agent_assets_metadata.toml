@@ -37,3 +37,17 @@ mtime_ms = 1792096156071
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/13708c07-660f-4c0a-aba6-cdbfe87662ee/29b0aa5f-0293-49e8-a0f9-dbe26a80460e"
 storage_version_token = "1792096223909696"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "BaBYaNmTn4JwRIUMXHv_s"
+uri = "file://reports/batch3-projection.md"
+type = "text"
+title = "Batch 3 verification and tomorrow’s digest projection"
+description = "Read-only production projection for Kim and Steve: section counts and the first ten lines of every section, plus dev checks and judgment calls."
+logical_id = "a730bd1d-581d-48c6-91bf-dd4e596d8bcf"
+content_hash = "sha256:6d0eaa5632d40874f19ae721b15eda8228e753b69e12f0c62f08b2cd140b61e6"
+size = 7465
+mtime_ms = 1792097421931
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/a730bd1d-581d-48c6-91bf-dd4e596d8bcf/e64e1840-b77d-4414-9939-c318c3479704"
+storage_version_token = "1792097428919194"
+content_type = "text/markdown"

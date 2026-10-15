@@ -27,6 +27,7 @@ import MailPage from "@/pages/mail";
 import MailAccountsPage from "@/pages/mail-accounts";
 import GmailBackfillPage from "@/pages/gmail-backfill";
 import NotFound from "@/pages/not-found";
+import TodayPage from "@/pages/today";
 
 function ProtectedRoute({ component: Component, adminOnly }: { component: React.ComponentType; adminOnly?: boolean }) {
   const { user, isLoading } = useAuth();
@@ -65,6 +66,7 @@ function Router() {
       <Route path="/login" component={AuthRedirect} />
       <Route path="/">{() => <ProtectedRoute component={DashboardPage} />}</Route>
       <Route path="/dashboard">{() => <ProtectedRoute component={DashboardPage} />}</Route>
+      <Route path="/today">{() => <ProtectedRoute component={TodayPage} />}</Route>
       <Route path="/clients">{() => <ProtectedRoute component={ClientsPage} />}</Route>
       <Route path="/clients/new">{() => <ProtectedRoute component={ClientFormPage} />}</Route>
       <Route path="/clients/:id/edit">{() => <ProtectedRoute component={ClientFormPage} />}</Route>

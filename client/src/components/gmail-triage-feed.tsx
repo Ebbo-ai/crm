@@ -18,6 +18,7 @@ interface TriageRow {
   id: number;
   description: string;
   dueDate: string | null;
+  dateReview?: string | null;
   owner: string;
   aiPriority: "HIGH" | "MEDIUM" | "LOW" | null;
   createdAt: string;
@@ -64,6 +65,7 @@ function TriageRowView({
           </div>
           <p className="text-sm font-medium text-foreground mt-1 truncate">{row.subject || "(no subject)"}</p>
           <p className="text-xs text-foreground mt-1 leading-relaxed line-clamp-2">{row.description}</p>
+          {row.dateReview && <p role="alert" className="text-xs text-warning-strong mt-1">{row.dateReview}</p>}
           <p className="text-xs text-muted-foreground mt-1">
             {row.senderName || row.senderEmail}
             <span className="mx-1.5">·</span>

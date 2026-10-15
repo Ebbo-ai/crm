@@ -77,6 +77,7 @@ export interface MatchResult {
 
 export interface ActionItem {
   description: string;
+  kind?: "RENEWAL" | "SERVICE";
   dueDate?: string | null;
   /**
    * HIGH | MEDIUM | LOW — how urgent/substantive this request is. Feeds the
@@ -261,7 +262,8 @@ Return ONLY the JSON array, no other text.`;
 export async function processEmail(
   emailText: string,
   attachmentTexts: string[],
-  usageCtx?: LlmUsageContext
+  usageCtx?: LlmUsageContext,
+  sentDate?: string | Date
 ): Promise<EmailProcessResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     return {
@@ -276,7 +278,10 @@ export async function processEmail(
     ? `\n\nATTACHMENT CONTENTS:\n${attachmentTexts.map((t, i) => `[Attachment ${i + 1}]\n${t.slice(0, 3000)}`).join("\n\n")}`
     : "";
 
-  const prompt = `You are an assistant for Simple Benefits, a dental/vision/hearing benefits TPA company. A staff member has forwarded this email for tracking in the client management system.
+  const prompt = `Current date: ${new Date().toISOString().slice(0,10)}. Message sent date: ${sentDate ? new Date(sentDate).toISOString() : "unknown; do not guess a year"}.
+Resolve relative deadlines against the message sent date. Return null when the due date cannot be established.
+For each action item include kind: RENEWAL for renewal proposals, acceptance forms, renewal transmittals and renewal handouts; SERVICE for other work, including claims and run-out service.
+You are an assistant for Simple Benefits, a dental/vision/hearing benefits TPA company. A staff member has forwarded this email for tracking in the client management system.
 
 EMAIL:
 ---
@@ -341,6 +346,7 @@ Return ONLY the JSON object, no other text.`;
     const rawItems = Array.isArray(parsed.actionItems) ? parsed.actionItems : [];
     const actionItems: ActionItem[] = rawItems.map((it: any) => ({
       description: String(it?.description ?? "").trim(),
+      kind: it?.kind === "RENEWAL" ? "RENEWAL" : "SERVICE",
       dueDate: it?.dueDate ?? null,
       priority: (["HIGH", "MEDIUM", "LOW"].includes(it?.priority) ? it.priority : "MEDIUM") as ActionItem["priority"],
     })).filter((it: ActionItem) => it.description.length > 0);

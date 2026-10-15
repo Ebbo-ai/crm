@@ -196,8 +196,8 @@ export interface IStorage {
   /** To-dos with no client attached: they belong to the business, not an account. */
   getGeneralTodos(opts: { resolved: boolean }): Promise<DecoratedTask[]>;
   getClientManualTodos(clientId: number): Promise<DecoratedTask[]>;
-  moveTaskToTodo(id: number, priority: string): Promise<CommunicationTask | undefined>;
-  resolveCommunicationTask(id: number, note: string, user: string): Promise<{ task: CommunicationTask | undefined; communicationResolved: boolean }>;
+  moveTaskToTodo(id: number, priority: string, openOwner?: string): Promise<CommunicationTask | undefined>;
+  resolveCommunicationTask(id: number, note: string, user: string, openOwner?: string): Promise<{ task: CommunicationTask | undefined; communicationResolved: boolean }>;
   reorderTodos(priority: string, orderedIds: number[]): Promise<number>;
   getClientTasks(clientId: number): Promise<DecoratedTask[]>;
   getUnreadCommunicationsCount(): Promise<number>;
@@ -2054,6 +2054,7 @@ export class DatabaseStorage implements IStorage {
       id: r.task.id,
       description: r.task.description,
       dueDate: r.task.dueDate,
+      dateReview: r.task.dateReview,
       owner: r.task.owner,
       aiPriority: r.task.aiPriority,
       createdAt: r.task.createdAt,
@@ -2189,6 +2190,10 @@ export class DatabaseStorage implements IStorage {
     task: InsertCommunicationTask,
     matches: { clientId: number; confidence: string }[],
   ): Promise<CommunicationTask> {
+    if (task.gmailMessageId) {
+      const { ingestEmailTask } = await import("./email-task-intake");
+      return await ingestEmailTask(task,matches) as any;
+    }
     return db.transaction(async tx => {
       const [created] = await tx.insert(communicationTasks)
         .values({ ...task, clientId: matches[0]?.clientId ?? null })
@@ -2460,7 +2465,7 @@ export class DatabaseStorage implements IStorage {
    * past the current maximum, so promoting something never jumps the queue
    * ahead of items that have already been waiting.
    */
-  async moveTaskToTodo(id: number, priority: string) {
+  async moveTaskToTodo(id: number, priority: string, openOwner?: string) {
     return db.transaction(async tx => {
       const [{ maxOrder } = { maxOrder: null as number | null }] = await tx
         .select({ maxOrder: sql<number | null>`max(${communicationTasks.sortOrder})` })
@@ -2477,6 +2482,7 @@ export class DatabaseStorage implements IStorage {
       }).where(and(
         eq(communicationTasks.id, id),
         inArray(communicationTasks.status, ["OPEN", "TODO"]),
+        ...(openOwner ? [eq(communicationTasks.owner,openOwner),eq(communicationTasks.status,"OPEN")] : []),
       )).returning();
       return updated;
     });
@@ -2490,7 +2496,7 @@ export class DatabaseStorage implements IStorage {
    * work remains under that message it stays in the feed, because it has not
    * genuinely been dealt with yet.
    */
-  async resolveCommunicationTask(id: number, note: string, user: string) {
+  async resolveCommunicationTask(id: number, note: string, user: string, openOwner?: string) {
     const resolvedAt = new Date();
     return db.transaction(async tx => {
       // Resolving something already resolved would overwrite the original note,
@@ -2505,6 +2511,7 @@ export class DatabaseStorage implements IStorage {
       }).where(and(
         eq(communicationTasks.id, id),
         inArray(communicationTasks.status, ["OPEN", "TODO"]),
+        ...(openOwner ? [eq(communicationTasks.owner,openOwner),eq(communicationTasks.status,"OPEN")] : []),
       )).returning();
 
       if (!updated) return { task: undefined, communicationResolved: false };

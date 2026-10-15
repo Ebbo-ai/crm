@@ -150,6 +150,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
         {[
           { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard, badge: null },
+          { title: "Today", path: "/today", icon: LayoutDashboard, badge: null },
           { title: "Clients", path: "/clients", icon: Users, badge: null },
           { title: "Renewal Alerts", path: "/renewal-alerts", icon: Bell, badge: renewalAlertCount > 0 ? renewalAlertCount : null, badgeAlert: renewalAlertCount > 0 },
           { title: "Issues", path: "/issues", icon: AlertCircle, badge: activeIssueCount > 0 ? activeIssueCount : null, badgeAlert: overdueFollowUpCount > 0 },

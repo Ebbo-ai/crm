@@ -1,5 +1,6 @@
 - [Rating Engine service](rating-engine-service.md) — Node spawns and supervises Flask on 127.0.0.1:5001, no separate workflow; unreachable is 503, engine-reported failure is 502.
 - [Renewal source of truth](renewal-single-truth.md) — client/year progress only; per-plan handouts required; historical unknown dates and actors must not be invented.
+- [Daily work list](daily-work-list.md) — accepted work is separate from AI suggestions; old suggestions stay in triage; preserve tasks and source-message history.
 - [PPR Phase 2 Architecture](ppr-phase2-architecture.md) — monthly import pipeline + report gen; Python stubs define interface; Node layer owns all DB writes; admin_fee is single all-in figure, never broken out.
 - [Renewal tracking architecture](renewal-tracking.md) — renewals are per-client-per-plan-year records, not client/plan fields; NULL-safe open predicate; warnings measured against the renewal's own plan year.
 - [Startup migration chain](startup-migrations.md) — phases re-run every boot in source order; column drops must go last and relocated ADDs deleted, or they fight forever.

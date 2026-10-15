@@ -895,6 +895,8 @@ export const communicationTasks = pgTable("communication_tasks", {
    * without re-running AI extraction.
    */
   aiPriority: text("ai_priority"),
+  dateReview: text("date_review"),
+  sourceMessageIds: jsonb("source_message_ids").$type<number[]>().notNull().default([]),
 });
 
 /**
@@ -1135,7 +1137,9 @@ export type InsertGmailAttachment = z.infer<typeof insertGmailAttachmentSchema>;
 export const insertCommunicationSchema = createInsertSchema(communications).omit({ id: true, receivedAt: true });
 export const insertCommunicationClientSchema = createInsertSchema(communicationClients).omit({ id: true });
 export const insertCommunicationAttachmentSchema = createInsertSchema(communicationAttachments).omit({ id: true, uploadedAt: true });
-export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).omit({
+export const insertCommunicationTaskSchema = createInsertSchema(communicationTasks).extend({
+  sourceMessageIds: z.array(z.number().int().positive()).optional(),
+}).omit({
   id: true, createdAt: true, completedAt: true, resolvedAt: true, resolvedBy: true, todoAddedAt: true,
 });
 export const insertTaskClientSchema = createInsertSchema(taskClients).omit({ id: true });

@@ -98,7 +98,7 @@ export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecke
       }
       const usageCtx = { mailbox: `${msg.mailbox}:postCensusCatchUp` };
       const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
-      const processed = await processEmail(fullText, [], usageCtx);
+      const processed = await processEmail(fullText, [], usageCtx, msg.sentAt);
       if (processed.actionItems.length === 0) continue;
 
       const clientIds = await storage.getGmailThreadClientIds(msg.threadId);
@@ -106,16 +106,18 @@ export async function runPostCensusCatchUpExtraction(): Promise<{ messagesChecke
       const clientAssignments = clientIds.map((clientId) => ({ clientId, confidence: "medium" }));
       for (const item of processed.actionItems) {
         const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-        await storage.createTaskWithClients({
+        const created = await storage.createTaskWithClients({
           communicationId: null,
           gmailMessageId: msg.id,
           clientId: clientIds[0] ?? null,
           description: item.description,
+          taskKind: item.kind,
+          extractedDueDate: item.dueDate,
           dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
           owner,
           aiPriority: item.priority,
         } as any, clientAssignments);
-        result.tasksCreated++;
+        if(created && !(created as any).attached) result.tasksCreated++;
       }
     } catch (err: any) {
       console.error(`[gmailFullSync] Post-census catch-up: message ${msg.gmailMessageId} action-item extraction failed: ${errorLabel(err)}`);
@@ -375,7 +377,7 @@ async function sortThread(threadId: number, ctx: SortContext): Promise<boolean> 
             if (legacyDupe) { await storage.markMessagesTriageExtracted([msg.id]); continue; }
           }
           const fullText = `From: ${msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail}\nSubject: ${msg.subject || ""}\n\n${msg.bodyTextNew || msg.bodyText || ""}`;
-          const processed = await processEmail(fullText, [], usageCtx);
+          const processed = await processEmail(fullText, [], usageCtx, msg.sentAt);
           if (processed.actionItems.length === 0) {
             await storage.markMessagesTriageExtracted([msg.id]);
             continue;
@@ -389,16 +391,18 @@ async function sortThread(threadId: number, ctx: SortContext): Promise<boolean> 
             // triage dashboard's tunable threshold (app_settings) filters
             // at read time, so raising/lowering the bar later doesn't
             // require re-running extraction against old mail.
-            await storage.createTaskWithClients({
+            const created = await storage.createTaskWithClients({
               communicationId: null,
               gmailMessageId: msg.id,
               clientId: existingClientIds[0] ?? null,
               description: item.description,
+              taskKind: item.kind,
+              extractedDueDate: item.dueDate,
               dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
               owner,
               aiPriority: item.priority,
             } as any, clientAssignments);
-            summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
+            if(created && !(created as any).attached) summary.tasksCreated = (summary.tasksCreated ?? 0) + 1;
           }
           // Stamped per message, immediately, rather than once for the whole
           // thread at the end: a crash between a task being created and the

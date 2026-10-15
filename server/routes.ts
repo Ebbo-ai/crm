@@ -43,7 +43,9 @@ import path from "path";
 import fs from "fs";
 import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
 import { renewalSteps, renewalIsComplete, renewalSummary } from "../shared/renewal-progress";
-import { documents } from "@shared/schema";
+import { documents, communicationTasks } from "@shared/schema";
+import { getDailyWork } from "./daily-work";
+import { isRenewalAsk } from "../shared/daily-work";
 import { callRatingEngine, sendRatingEngineError } from "./rating-engine";
 import { savePprFile, readPprFile, removePprFile } from "./pprStorage";
 
@@ -4367,12 +4369,17 @@ export async function registerRoutes(
         // As with inbound mail: one action item is one task, attached to every
         // client it concerns, resolved once.
         for (const item of processed.actionItems) {
-          const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+          const matchedClients=await Promise.all(parsedClientIds.map(id=>storage.getClient(id)));
+          const eligibleIds=isRenewalAsk({description:item.description,taskKind:item.kind})
+            ? parsedClientIds.filter(id=>!matchedClients.find(c=>c?.id===id)?.terminationDate)
+            : parsedClientIds;
+          if(parsedClientIds.length && !eligibleIds.length) continue;
           const created = await storage.createTaskWithClients({
-            communicationId: comm.id, clientId: parsedClientIds[0], description: item.description,
-            dueDate: dueDate && !isNaN(dueDate.getTime()) ? dueDate : null,
-          }, parsedClientIds.map(clientId => ({ clientId, confidence: "manual" })));
-          await dedupAgainstOpenTasks(created.id, parsedClientIds[0], item.description);
+            communicationId: comm.id, clientId: eligibleIds[0], description: item.description,
+            dueDate: null,
+            dateReview: item.dueDate ? `Source sent date unavailable; review extracted date ${item.dueDate}` : null,
+          }, eligibleIds.map(clientId => ({ clientId, confidence: "manual" })));
+          await dedupAgainstOpenTasks(created.id, eligibleIds[0], item.description);
         }
       }
 
@@ -4648,6 +4655,26 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
+  });
+
+  app.get("/api/today", requireAuth, async (req,res)=>{
+    try {res.json(await getDailyWork(req.user,true));}
+    catch(e:any){res.status(500).json({message:e.message});}
+  });
+  app.post("/api/today/:id/:action",requireAuth,async(req,res)=>{
+    try {
+      const id=Number(req.params.id);
+      const [task]=await db.select().from(communicationTasks).where(eq(communicationTasks.id,id));
+      const user=req.user as any;
+      if(!task || task.owner!==user.fullName) return res.status(403).json({message:"This task is not assigned to you"});
+      if(task.status!=="OPEN") return res.status(409).json({message:"This suggestion has already been handled"});
+      let changed;
+      if(req.params.action==="accept") changed=await storage.moveTaskToTodo(id,"NORMAL",user.fullName);
+      else if(req.params.action==="dismiss") changed=(await storage.resolveCommunicationTask(id,"Dismissed from daily work list — no action needed.",user.fullName,user.fullName)).task;
+      else return res.status(400).json({message:"Unknown action"});
+      if(!changed) return res.status(409).json({message:"This suggestion has already been handled or reassigned"});
+      res.json({ok:true});
+    }catch(e:any){res.status(500).json({message:e.message});}
   });
 
   /** The logged-in user's own to-do list — filters the shared list to their owner name. */

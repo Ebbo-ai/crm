@@ -1,105 +1,48 @@
-/**
- * Daily 7:30 AM America/New_York digest: each owner (Kim, Steve) gets one
- * email listing their own open and overdue tasks. This is the only place
- * that currently pushes task state to a person instead of waiting for them
- * to open the shared list.
- *
- * node-cron's `timezone` option re-resolves the wall-clock time against the
- * IANA zone on every run, so this keeps firing at 7:30 AM local time straight
- * through the March/November DST changeovers without any date-math here.
- */
 import cron from "node-cron";
 import { storage } from "./storage";
 import { errorLabel } from "./logRedaction";
 import { sendEmail } from "./mailer";
-
-const DIGEST_FROM = "Simple Benefits CRM <notifications@mg.simple.us>";
-
-function formatTaskLine(t: { description: string; dueDate: string | Date | null; clientName: string | null }): string {
-  const client = t.clientName ?? "General";
-  if (!t.dueDate) return `  - [${client}] ${t.description} (no due date)`;
-  const due = new Date(t.dueDate);
-  const overdue = due.getTime() < Date.now();
-  const dueStr = due.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  return `  - [${client}] ${t.description} — due ${dueStr}${overdue ? " (OVERDUE)" : ""}`;
-}
-
-export async function sendDigestFor(ownerFullName: string, ownerEmail: string): Promise<void> {
-  const tasks = await storage.getOpenTasksForOwner(ownerFullName);
-  if (tasks.length === 0) return; // nothing owed to them today; do not send an empty email
-
-  const overdue = tasks.filter(t => t.dueDate && new Date(t.dueDate).getTime() < Date.now());
-  const upcoming = tasks.filter(t => !overdue.includes(t));
-
-  const lines: string[] = [];
-  lines.push(`Good morning, ${ownerFullName.split(" ")[0]}.`);
-  lines.push("");
-  lines.push(`You have ${tasks.length} open task${tasks.length === 1 ? "" : "s"} (${overdue.length} overdue).`);
-  if (overdue.length) {
-    lines.push("");
-    lines.push("OVERDUE:");
-    overdue.forEach(t => lines.push(formatTaskLine(t)));
+import { pool } from "./db";
+import { getDailyWork } from "./daily-work";
+import { easternDay, renderDailyWork } from "../shared/daily-work";
+const DIGEST_FROM="Simple Benefits CRM <notifications@mg.simple.us>";
+// Verified through the deployment metadata service, not a dev-preview domain.
+const TODAY_URL="https://simplebenefits.replit.app/today";
+const escape=(s:string)=>s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+export async function sendDigestFor(ownerFullName:string,ownerEmail:string,userId?:number|string) {
+  if(!userId) {
+    const user=(await storage.getAllUsers()).find(u=>u.fullName===ownerFullName);
+    if(!user) throw new Error("Digest owner not found");
+    userId=user.id;
   }
-  if (upcoming.length) {
-    lines.push("");
-    lines.push("OPEN:");
-    upcoming.forEach(t => lines.push(formatTaskLine(t)));
-  }
-  lines.push("");
-  lines.push("Open the CRM to work these or hand any of them to the other person.");
-
-  const result = await sendEmail({
-    from: DIGEST_FROM,
-    to: ownerEmail,
-    subject: `Your to-do list: ${tasks.length} open (${overdue.length} overdue)`,
-    text: lines.join("\n"),
-  });
-  if (!result.ok) {
-    // Recipient addresses stay out of the log — the owner's name is enough to
-    // tell whose digest failed without writing an address into the log store.
-    console.error(`Digest email to ${ownerFullName} failed: ${errorLabel(result.error)}`);
-  }
+  const now=new Date();
+  const work=await getDailyWork({id:userId,fullName:ownerFullName},false,now);
+  const text=renderDailyWork(work);
+  const sections=([["My to-dos",work.todos],["Renewal steps",work.renewals],["New from email",work.suggestions]] as const).map(([title,rows])=>`<h2>${title}</h2><ul>${rows.map((t:any)=>`<li><b>${escape(t.client)}</b>: ${escape(t.description)} — ${t.due?`due ${escape(t.due)}`:"no due date"}${t.dateReview?" [DATE REVIEW]":""}${title==="New from email"?`<br><a href="${TODAY_URL}#suggestion-${t.id}">Accept</a> · <a href="${TODAY_URL}#suggestion-${t.id}">Dismiss</a> (in Today)`:""}</li>`).join("")||"<li>None.</li>"}</ul>`).join("");
+  const result=await sendEmail({from:DIGEST_FROM,to:ownerEmail,subject:`Your daily work list — ${work.today}`,
+    text:`${text}\n\nAccept or dismiss suggestions: ${TODAY_URL}`,
+    html:`<h1>Your daily work list — ${work.today}</h1><p>Total open: ${work.totalOpen}</p>${sections}<p>${work.moreInTriage} more in triage</p><p><a href="${TODAY_URL}">Open Today</a></p>`});
+  if(!result.ok) throw new Error(`Digest delivery failed: ${errorLabel(result.error)}`);
+  // Advance only after a successful send. Failed sends retain their whole window.
+  await storage.setAppSetting(`digest:windowStart:${userId}`,work.since,"system");
+  await storage.setAppSetting(`digest:lastSuccessAt:${userId}`,now.toISOString(),"system");
+  await storage.setAppSetting(`digest:lastSentDate:${userId}`,easternDay(now),"system");
 }
-
-/** Today's date in Eastern time, which is the day the digest is "for" — not the server's UTC day, which rolls over mid-evening here. */
-function easternDateKey(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-}
-
-/**
- * Runs the digest for every active owner.
- *
- * Send-once-per-day is enforced in the database, not by trusting that only one
- * scheduler exists: the scheduled deployment and the web process's own cron
- * both aim at 7:30 AM, and a web instance that happens to be awake then would
- * otherwise send Kim and Steve a second copy of the same list.
- */
-export async function runDailyDigest(): Promise<{ sent: number; skipped: number; failed: number }> {
-  const today = easternDateKey();
-  const users = await storage.getAllUsers();
-  let sent = 0, skipped = 0, failed = 0;
-  for (const user of users.filter(u => u.isActive && u.fullName !== "System Administrator")) {
-    const key = `digest:lastSentDate:${user.id}`;
+export async function runDailyDigest() {
+  const users=await storage.getAllUsers();
+  let sent=0,skipped=0,failed=0;
+  for(const user of users.filter(u=>u.isActive && u.fullName!=="System Administrator")) {
+    const conn=await pool.connect();let locked=false;
     try {
-      const last = await storage.getAppSetting(key);
-      if (last?.value === today) { skipped++; continue; }
-      // Claimed before sending: two schedulers racing here both read "not
-      // today", and the loser's write is a no-op, but the claim makes the
-      // window a fraction of a second instead of the length of a send.
-      await storage.setAppSetting(key, today, "system");
-      await sendDigestFor(user.fullName, user.email);
-      sent++;
-    } catch (err: any) {
-      failed++;
-      console.error(`Digest run failed for user #${user.id}: ${errorLabel(err)}`);
-    }
+      locked=(await conn.query("SELECT pg_try_advisory_lock(hashtext($1)) AS locked",[`daily-digest:${user.id}`])).rows[0].locked;
+      if(!locked){skipped++;continue;}
+      if((await storage.getAppSetting(`digest:lastSentDate:${user.id}`))?.value===easternDay(new Date())){skipped++;continue;}
+      await sendDigestFor(user.fullName,user.email,user.id);sent++;
+    }catch(e){failed++;console.error(`Digest failed for user #${user.id}: ${errorLabel(e)}`);}
+    finally {if(locked)await conn.query("SELECT pg_advisory_unlock(hashtext($1))",[`daily-digest:${user.id}`]);conn.release();}
   }
-  return { sent, skipped, failed };
+  return {sent,skipped,failed};
 }
-
-/** Registers the 7:30 AM America/New_York cron job. Call once at server startup. */
-export function scheduleDailyDigest(): void {
-  cron.schedule("30 7 * * *", () => {
-    runDailyDigest().catch(err => console.error(`Daily digest run threw: ${errorLabel(err)}`));
-  }, { timezone: "America/New_York" });
+export function scheduleDailyDigest() {
+  cron.schedule("30 7 * * *",()=>{runDailyDigest().catch(e=>console.error(errorLabel(e)));},{timezone:"America/New_York"});
 }
