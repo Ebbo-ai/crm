@@ -198,7 +198,7 @@ export default function ClientDetailPage() {
         </div>
       </div>
 
-      {renewalHistory.filter(r => !r.suppressed).map(r => <RenewalChecklist key={r.id} renewal={r} clientId={client.id} />)}
+      {renewalHistory.filter(r => !r.suppressed).map(r => <RenewalChecklist key={r.id} renewal={r} clientId={client.id} anniversaryDate={client.anniversaryDate} />)}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="bg-card border mb-6 h-auto flex-wrap">
           <TabsTrigger value="profile" data-testid="tab-profile" className="data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">Profile</TabsTrigger>

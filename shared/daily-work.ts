@@ -1,4 +1,4 @@
-import { renewalSteps, renewalIsComplete } from "./renewal-progress";
+import { renewalSteps, renewalIsComplete, nextRenewalStep, handoutsNotTracked } from "./renewal-progress";
 import { computeRenewalBuckets } from "../server/renewal-buckets";
 export const normalizeAsk = (text: string) => text.normalize("NFKC").toLowerCase().replace(new RegExp("[^\\p{L}\\p{N}]+","gu")," ").trim();
 export const isRenewalAsk=(task:any)=>(task.taskKind==="RENEWAL" || /\b(renewal|renewals|renewing|transmittal|signed acceptance|employee handout)\b/i.test(task.description)) && !/\b(claim|claims|run.?out|refund|reconciliation)\b/i.test(task.description);
@@ -33,7 +33,7 @@ export function dailyWork(data:any, owner:string, since:string, now=new Date()) 
     if(seen.has(key)) return false; seen.add(key); return true;
   }).filter((t:any)=>t.status==="OPEN" && new Date(t.createdAt)>new Date(since)).map(line);
   const renewals:any[]=[];
-  // Renewal records have no assignee: this is a shared service queue.
+  // Ownership is by step, as approved: production/revision to Steve, all else to Kim.
   const sources=data.renewals.filter((r:any)=>!r.terminationDate && !r.suppressed).map((r:any)=>({
     client:{id:r.clientId,clientName:r.clientName,clientCode:r.clientCode||"",anniversaryDate:r.anniversaryDate},renewal:{...r,updatedAt:r.updatedAt||now},
   }));
@@ -45,14 +45,15 @@ export function dailyWork(data:any, owner:string, since:string, now=new Date()) 
     const due=new Date(anniversary); due.setUTCFullYear(r.planYear);
     const date=due.toISOString().slice(0,10);
     const send=new Date(due); send.setUTCDate(send.getUTCDate()-14);
-    const step=renewalSteps.find(k=>!r.steps?.[k]);
-    if(step) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,description:step.replaceAll("_"," ").replace("90D","90 Degree"),due:renewalSteps.indexOf(step)<=2 ? send.toISOString().slice(0,10):date});
-    for(const h of r.handouts||[]) if(!h.documentId || !h.date) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,description:`Employee handout: ${h.planName}`,due:date});
+    const step=nextRenewalStep(r.steps);
+    if(step) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,owner:step==="PROCESSED" || step==="REVISED" ? "Steve Schultz":"Kim Anderson",description:step.replaceAll("_"," ").replace("90D","90 Degree"),due:renewalSteps.indexOf(step)<=2 ? send.toISOString().slice(0,10):date});
+    if(!handoutsNotTracked(r,today)) for(const h of r.handouts||[]) if(!h.documentId || !h.date) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,owner:"Kim Anderson",description:`Employee handout: ${h.planName}`,due:date});
   }
   renewals.sort((a,b)=>a.due.localeCompare(b.due)||a.client.localeCompare(b.client));
-  return {owner,today,since,totalOpen:tasks.length,todos,renewals,suggestions:suggestions.slice(0,15),moreInTriage:Math.max(0,suggestions.length-15)};
+  const waitingOnKim=owner==="Steve Schultz" ? new Set(renewals.filter(r=>r.owner==="Kim Anderson").map(r=>r.id)).size : null;
+  return {owner,today,since,totalOpen:tasks.length,todos,renewals:renewals.filter(r=>r.owner===owner),waitingOnKim,suggestions:suggestions.slice(0,15),moreInTriage:Math.max(0,suggestions.length-15)};
 }
 export function renderDailyWork(work:ReturnType<typeof dailyWork>) {
   const format=(t:any)=>`- ${t.client}: ${t.description} — ${t.due ? `due ${t.due}`:"no due date"}${t.dateReview ? " [DATE REVIEW]":""}`;
-  return [`Your daily work list — ${work.today}`,`Total open: ${work.totalOpen}`,"","My to-dos",...(work.todos.length?work.todos.map(format):["None due."]),"","Renewal steps",...(work.renewals.length?work.renewals.map(format):["None."]),"","New from email",...(work.suggestions.length?work.suggestions.map(format):["None."]),`${work.moreInTriage} more in triage`].join("\n");
+  return [`Your daily work list — ${work.today}`,`Total open: ${work.totalOpen}`,"","My to-dos",...(work.todos.length?work.todos.map(format):["None due."]),"","Renewal steps",...(work.waitingOnKim!==null?[`${work.waitingOnKim} renewals waiting on Kim`]:[]),...(work.renewals.length?work.renewals.map(format):["None."]),"","New from email",...(work.suggestions.length?work.suggestions.map(format):["None."]),`${work.moreInTriage} more in triage`].join("\n");
 }

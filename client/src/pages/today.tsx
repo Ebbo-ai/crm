@@ -16,6 +16,7 @@ export default function TodayPage() {
     {action.error && <p role="alert" className="text-destructive">{action.error.message}</p>}
     {([["My to-dos","todos"],["Renewal steps","renewals"],["New from email","suggestions"]] as const).map(([title,key])=><section key={key} className="border rounded-lg p-4 space-y-3">
       <h2 className="text-lg font-semibold">{title}</h2>
+      {key==="renewals" && data.waitingOnKim!=null && <p>{data.waitingOnKim} renewals waiting on Kim</p>}
       {key==="suggestions" && <p className="text-sm text-muted-foreground">Since the previous digest. Older suggestions remain in triage.</p>}
       {!data[key].length && <p className="text-muted-foreground">Nothing here today.</p>}
       {data[key].map((t:any,i:number)=><div id={`suggestion-${t.id}`} key={`${t.id}-${i}`} className="border-b pb-3">

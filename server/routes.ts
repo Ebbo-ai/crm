@@ -1205,7 +1205,7 @@ export async function registerRoutes(
             new Date(date).toISOString().slice(0,10) !== date)) throw new Error("A valid completion date is required");
         if (step) {
           if (!renewalSteps.includes(step)) throw new Error("Unknown renewal step");
-          if (!["OPEN", "DONE", "NA"].includes(status)) throw new Error("Invalid status");
+          if (!["OPEN", "DONE", "NA"].includes(status) && !(step === "REVISED" && status === "REQUESTED")) throw new Error("Invalid status");
           if (status === "NA" && (!String(reason ?? "").trim() || String(reason).length > 300)) throw new Error("Not applicable requires a short reason (1–300 characters)");
           if (status === "OPEN") delete steps[step as keyof typeof steps];
           else steps[step as keyof typeof steps] = { status, date, by: actor, ...(status === "NA" ? {reason: String(reason).trim()} : {}) };

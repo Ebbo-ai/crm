@@ -21,7 +21,7 @@ export async function sendDigestFor(ownerFullName:string,ownerEmail:string,userI
   const sections=([["My to-dos",work.todos],["Renewal steps",work.renewals],["New from email",work.suggestions]] as const).map(([title,rows])=>`<h2>${title}</h2><ul>${rows.map((t:any)=>`<li><b>${escape(t.client)}</b>: ${escape(t.description)} — ${t.due?`due ${escape(t.due)}`:"no due date"}${t.dateReview?" [DATE REVIEW]":""}${title==="New from email"?`<br><a href="${TODAY_URL}#suggestion-${t.id}">Accept</a> · <a href="${TODAY_URL}#suggestion-${t.id}">Dismiss</a> (in Today)`:""}</li>`).join("")||"<li>None.</li>"}</ul>`).join("");
   const result=await sendEmail({from:DIGEST_FROM,to:ownerEmail,subject:`Your daily work list — ${work.today}`,
     text:`${text}\n\nAccept or dismiss suggestions: ${TODAY_URL}`,
-    html:`<h1>Your daily work list — ${work.today}</h1><p>Total open: ${work.totalOpen}</p>${sections}<p>${work.moreInTriage} more in triage</p><p><a href="${TODAY_URL}">Open Today</a></p>`});
+    html:`<h1>Your daily work list — ${work.today}</h1><p>Total open: ${work.totalOpen}</p>${work.waitingOnKim!==null?`<p>${work.waitingOnKim} renewals waiting on Kim</p>`:""}${sections}<p>${work.moreInTriage} more in triage</p><p><a href="${TODAY_URL}">Open Today</a></p>`});
   if(!result.ok) throw new Error(`Digest delivery failed: ${errorLabel(result.error)}`);
   // Advance only after a successful send. Failed sends retain their whole window.
   await storage.setAppSetting(`digest:windowStart:${userId}`,work.since,"system");
