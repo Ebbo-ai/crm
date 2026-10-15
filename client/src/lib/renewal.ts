@@ -115,7 +115,7 @@ export function getRenewalTimingWarning(
   // No open renewal for this cycle — nothing to warn about
   if (!renewal) return null;
   // Completed — no warning needed
-  if (renewal.pipelineStep === "EMAILED_TO_90D") return null;
+  if (renewal.completedAt || renewal.suppressed) return null;
 
   // Measured against the renewal's own plan year. Using the upcoming
   // anniversary would make OVERDUE unreachable, since that date is always

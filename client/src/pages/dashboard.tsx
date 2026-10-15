@@ -444,7 +444,7 @@ function RenewalBucketCard({
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {items.map(item => (
-              <Link key={item.clientId} href={`/clients/${item.clientId}`}>
+              <Link key={item.renewalId} href={`/clients/${item.clientId}`}>
                 <div
                   className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-surface-subtle ${
                     item.late ? "border-danger bg-danger-tint" : "border-border bg-background"

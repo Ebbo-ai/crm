@@ -14,6 +14,8 @@ import { PLAN_TYPE_LABELS, BANKING_TYPE_LABELS, FUNDING_TYPE_LABELS } from "@/li
 import { ClientStateBadge, clientStateSummary } from "@/components/client-state-badge";
 import { BrokerFirmSelect } from "@/components/broker-firm-select";
 import { getClientCompleteness } from "@/lib/client-completeness";
+import { RenewalChecklist } from "@/components/renewal-checklist";
+import { renewalIsComplete } from "@shared/renewal-progress";
 import {
   getRenewalTimingWarning, getProposalDueDate,
   RENEWAL_TIMING_WARNING_LABELS, RENEWAL_TIMING_WARNING_COLORS,
@@ -78,7 +80,7 @@ export default function ClientDetailPage() {
     queryKey: ["/api/clients", params.id, "plans"],
   });
 
-  const openRenewal = renewalHistory.find(r => r.pipelineStep !== "EMAILED_TO_90D") ?? null;
+  const openRenewal = renewalHistory.find(r => !r.suppressed && !renewalIsComplete(r)) ?? null;
   const priorRenewals = renewalHistory.filter(r => r.id !== openRenewal?.id);
 
   const { toast } = useToast();
@@ -196,6 +198,7 @@ export default function ClientDetailPage() {
         </div>
       </div>
 
+      {renewalHistory.filter(r => !r.suppressed).map(r => <RenewalChecklist key={r.id} renewal={r} clientId={client.id} />)}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="bg-card border mb-6 h-auto flex-wrap">
           <TabsTrigger value="profile" data-testid="tab-profile" className="data-[state=active]:bg-brand data-[state=active]:text-brand-foreground">Profile</TabsTrigger>
@@ -389,37 +392,13 @@ export default function ClientDetailPage() {
                             key={s}
                             title={RENEWAL_PIPELINE_STEP_LABELS[s]}
                             className={`h-2 rounded-full flex-1 transition-colors ${
-                              i < currentStepIdx ? "bg-brand" : i === currentStepIdx ? "bg-brand-accent" : "bg-muted"
+                              openRenewal.steps?.[s] ? "bg-brand" : "bg-muted"
                             }`}
                           />
                         ))}
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        {nextStep && (
-                          <Button
-                            size="sm"
-                            className="h-8 text-xs bg-brand text-brand-foreground gap-1"
-                            onClick={() => advancePipelineMutation.mutate({ renewalId: openRenewal.id, step: nextStep })}
-                            disabled={advancePipelineMutation.isPending}
-                            data-testid="button-advance-pipeline"
-                          >
-                            → {RENEWAL_PIPELINE_STEP_LABELS[nextStep]}
-                          </Button>
-                        )}
-                        <Select
-                          value={step ?? "_none"}
-                          onValueChange={v => advancePipelineMutation.mutate({ renewalId: openRenewal.id, step: v === "_none" ? null : v as RenewalPipelineStep })}
-                        >
-                          <SelectTrigger className="h-8 text-xs w-auto min-w-[150px]" data-testid="select-pipeline-step">
-                            <SelectValue placeholder="Set step…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="_none">— Not started</SelectItem>
-                            {RENEWAL_PIPELINE_STEPS.map(s => (
-                              <SelectItem key={s} value={s}>{RENEWAL_PIPELINE_STEP_LABELS[s]}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <span className="text-xs">Update dates and status in the renewal checklist above.</span>
                         <Button
                           size="sm"
                           variant="outline"
@@ -506,7 +485,7 @@ export default function ClientDetailPage() {
                                   {o.acceptedOption === "RECOMMENDED" ? "Recommended" : o.acceptedOption === "VALUE" ? "Value" : "Protective"}
                                 </span>
                               ))}
-                              {r.pipelineStep === "EMAILED_TO_90D"
+                              {renewalIsComplete(r)
                                 ? <span className="text-xs text-success font-semibold">✓ Complete</span>
                                 : <span className="text-xs text-warning-strong font-semibold">Never completed</span>}
                             </div>

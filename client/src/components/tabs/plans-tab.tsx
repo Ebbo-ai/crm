@@ -444,13 +444,7 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {!archived && (
-            plan.isRenewalComplete
-              ? <span className="text-xs px-2 py-1 rounded-full font-medium bg-success/10 text-success flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Renewal Done</span>
-              : isDueSoon
-                ? <span className="text-xs px-2 py-1 rounded-full font-medium bg-gold/10 text-warning-strong flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Due Soon</span>
-                : null
-          )}
+          {!archived && <span className="text-xs text-muted-foreground">See client renewal checklist</span>}
           {plan.terminationDate ? (
             <span className="text-xs px-2 py-1 rounded-full font-medium bg-danger/10 text-danger">
               Terminated {format(parseLocalDate(plan.terminationDate), "MMM d, yyyy")}
@@ -670,20 +664,11 @@ function PlanCard({ plan, expanded, onToggle, onEdit, onEditRates, onRenew, clie
                 </h4>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span>Next renewal: <span className="font-medium text-foreground">{format(nextRenewal, "MMM d, yyyy")}</span></span>
-                  <span>Proposal due: <span className={`font-medium ${isDueSoon && !plan.isRenewalComplete ? "text-warning-strong" : "text-foreground"}`}>{format(renewalDueDate, "MMM d, yyyy")}</span></span>
+                  <span>Proposal due: <span className="font-medium">{format(renewalDueDate, "MMM d, yyyy")}</span></span>
                 </div>
               </div>
 
-              <RenewalPipeline
-                planId={plan.id}
-                onStep7Change={(done) =>
-                  renewalMutation.mutate({
-                    isRenewalComplete: done,
-                    renewalCompletedDate: done ? new Date().toISOString().split("T")[0] : null,
-                    renewalCompletedBy: done ? undefined : null,
-                  })
-                }
-              />
+              <p className="text-sm text-muted-foreground">Progress and this plan's employee handout are tracked in the client/year renewal checklist above.</p>
 
               {/* renewal proposal documents */}
               <div className="mt-3 pt-3 border-t">

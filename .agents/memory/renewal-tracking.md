@@ -5,6 +5,10 @@ description: Renewals are year-specific records, not fields on clients/plans —
 
 # Renewals are year-specific records
 
+The completion and bucket rules below predate the approved checklist consolidation.
+For those decisions use [Renewal source of truth](renewal-single-truth.md): a final
+milestone alone is not completion, and bucket uniqueness is per renewal, not client.
+
 Renewal lifecycle data lives on `renewals` (one row per client per plan year) and
 `renewal_plan_options` (one row per plan per renewal). It is NOT on the clients or
 plans tables.

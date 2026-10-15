@@ -6,6 +6,7 @@ id = "UKKg4eLOfA190la3y9fPG"
 uri = "file://production_export.xlsx"
 type = "table"
 title = "Production Database Export — Clients, Plans, Rate Cards"
+logical_id = "3dae4a1b-2b50-43c0-a662-581d0ca32251"
 
 [[outputs]]
 id = "diFYShHQt_SkGbXAdmZZt"
@@ -13,6 +14,7 @@ uri = "file://reports/active-client-data-gaps-2026-08-24.xlsx"
 type = "table"
 title = "Active Client Data Gap Report — 55 clients"
 description = "Contact, broker and data-completeness gaps across all 55 active clients. Three tabs: per-client contact & broker gaps with email-match priority, other data gaps, and a summary count sheet."
+logical_id = "e9362857-4519-4235-b869-bc6f9caa0404"
 
 [[outputs]]
 id = "gRSl_x8QcKy7okqTw2Owj"
@@ -20,3 +22,18 @@ uri = "file://reports/broker-contact-corrections-2026-08-25.xlsx"
 type = "table"
 title = "Broker contact corrections — 25 Aug 2026"
 description = "Importable workbook covering S-29, S-31, S-375, S-200 and S-216. Load it through CRM Import in preview mode first — the Review Notes sheet lists what was deliberately left alone."
+logical_id = "e174e88c-8bb7-48b9-9b8d-67ad82a5b034"
+
+[[outputs]]
+id = "owIToZFZ5bGUoKwoeCNwZ"
+uri = "file://reports/batch2-review.md"
+type = "text"
+title = "Batch 2 review and production task diagnosis"
+description = "Changed files, dev verification, all seven renewal projections, 30-day task creation table, cleanup candidates, and the one-time production data step."
+logical_id = "13708c07-660f-4c0a-aba6-cdbfe87662ee"
+content_hash = "sha256:75291449806fb093d2016839a57a835d2af1efe949c4feb80deac47f30034af1"
+size = 10183
+mtime_ms = 1792096156071
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/13708c07-660f-4c0a-aba6-cdbfe87662ee/29b0aa5f-0293-49e8-a0f9-dbe26a80460e"
+storage_version_token = "1792096223909696"
+content_type = "text/markdown"

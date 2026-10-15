@@ -42,6 +42,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { computeRenewalBuckets, getAnniversaryForPlanYear } from "./renewal-buckets";
+import { renewalSteps, renewalIsComplete, renewalSummary } from "../shared/renewal-progress";
+import { documents } from "@shared/schema";
 import { callRatingEngine, sendRatingEngineError } from "./rating-engine";
 import { savePprFile, readPprFile, removePprFile } from "./pprStorage";
 
@@ -102,7 +104,7 @@ const FINAL_STEP = "EMAILED_TO_90D";
  * common state there is.
  */
 const openRenewalPredicate = () =>
-  or(isNull(renewals.pipelineStep), ne(renewals.pipelineStep, FINAL_STEP));
+  and(isNull(renewals.completedAt), eq(renewals.suppressed, false));
 
 /**
  * The anniversary date stores an original effective date (e.g. 2019-04-01), so
@@ -831,7 +833,7 @@ async function ensureOpenRenewal(client: any, today = new Date()) {
     .where(and(eq(renewals.clientId, client.id), eq(renewals.planYear, planYear)))
     .limit(1);
   if (existing.length > 0) {
-    return existing[0].pipelineStep === FINAL_STEP ? null : existing[0];
+    return existing[0].suppressed || renewalIsComplete(existing[0]) ? null : existing[0];
   }
 
   // Not yet time to open this year's renewal. Any earlier year's renewal that is
@@ -855,6 +857,9 @@ async function ensureOpenRenewal(client: any, today = new Date()) {
     clientId: client.id,
     planYear,
     pipelineStep: null,
+    handouts: clientPlans.filter(p => !p.isArchived && !p.terminationDate).map(p => ({
+      planId: p.id, planName: p.planName, documentId: null, date: null,
+    })),
     incompletePriorFlag: priorOpen.length > 0,
   }).onConflictDoNothing();
 
@@ -1154,14 +1159,10 @@ export async function registerRoutes(
 
       const patch: any = { updatedAt: new Date() };
       if ("pipelineStep" in body) {
-        const step = body.pipelineStep || null;
-        if (step !== null && !PIPELINE_STEPS.includes(step)) {
-          return res.status(400).json({ message: `Unknown pipeline step "${step}"` });
-        }
-        patch.pipelineStep = step;
-        patch.completedAt = step === FINAL_STEP
-          ? existingRenewal.completedAt ?? new Date()
-          : null;
+        return res.status(400).json({ message: "Update the dated renewal checklist, not the old pipeline selector." });
+      }
+      if ("steps" in body || "handouts" in body) {
+        return res.status(400).json({ message: "Use the renewal checklist endpoint." });
       }
       if ("proposalVersion" in body) patch.proposalVersion = body.proposalVersion || null;
       if ("incompletePriorFlag" in body) patch.incompletePriorFlag = !!body.incompletePriorFlag;
@@ -1185,6 +1186,48 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
+  });
+
+  app.patch("/api/renewals/:id/checklist", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const actor = (req.user as any).fullName || (req.user as any).id;
+      const updated = await db.transaction(async tx => {
+        const [r] = await tx.select().from(renewals).where(eq(renewals.id, id)).for("update");
+        if (!r) throw new Error("Renewal not found");
+        if (r.suppressed) throw new Error("This renewal is suppressed");
+        const steps = { ...r.steps };
+        const handouts = r.handouts.map(h => ({ ...h }));
+        const { step, status, date, reason, planId, documentId } = req.body;
+        if (status !== "OPEN" && (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? "") || !Number.isFinite(Date.parse(date)) ||
+            new Date(date).toISOString().slice(0,10) !== date)) throw new Error("A valid completion date is required");
+        if (step) {
+          if (!renewalSteps.includes(step)) throw new Error("Unknown renewal step");
+          if (!["OPEN", "DONE", "NA"].includes(status)) throw new Error("Invalid status");
+          if (status === "NA" && (!String(reason ?? "").trim() || String(reason).length > 300)) throw new Error("Not applicable requires a short reason (1–300 characters)");
+          if (status === "OPEN") delete steps[step as keyof typeof steps];
+          else steps[step as keyof typeof steps] = { status, date, by: actor, ...(status === "NA" ? {reason: String(reason).trim()} : {}) };
+        } else {
+          const h = handouts.find(h => h.planId === Number(planId));
+          if (!h) throw new Error("Plan is not part of this renewal");
+          if (!["OPEN", "DONE"].includes(status)) throw new Error("Invalid handout status");
+          if (status === "DONE") {
+            const [doc] = await tx.select().from(documents).where(eq(documents.id, Number(documentId)));
+            if (!doc || doc.clientId !== r.clientId || doc.planId !== h.planId || doc.category !== "HANDOUT" || (doc.renewalId && doc.renewalId !== r.id))
+              throw new Error("Select a HANDOUT document belonging to this client and plan");
+            await tx.update(documents).set({ renewalId: r.id }).where(eq(documents.id, doc.id));
+            h.documentId = doc.id; h.date = date; h.by = actor;
+          } else { h.documentId = null; h.date = null; h.by = actor; }
+        }
+        const complete = renewalIsComplete({ steps, handouts });
+        const [saved] = await tx.update(renewals).set({
+          steps, handouts, pipelineStep: renewalSummary(steps), updatedAt: new Date(),
+          completedAt: complete ? r.completedAt ?? new Date() : null,
+        }).where(eq(renewals.id, id)).returning();
+        return saved;
+      });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ message: err.message }); }
   });
 
   // Accepted option is recorded per plan, since a multi-plan client can accept a
@@ -1647,8 +1690,11 @@ export async function registerRoutes(
       const planId = parseInt(req.params.planId);
       const body: any = { ...req.body };
       if (body.renewalCompletedDate && typeof body.renewalCompletedDate === "string") {
-        body.renewalCompletedDate = new Date(body.renewalCompletedDate);
+        return res.status(400).json({message:"Use the client/year renewal checklist"});
       }
+      delete body.isRenewalComplete;
+      delete body.renewalCompletedDate;
+      delete body.renewalCompletedBy;
       const updated = await storage.updatePlan(planId, body);
       if (!updated) return res.status(404).json({ message: "Plan not found" });
       res.json(updated);
@@ -1751,11 +1797,20 @@ export async function registerRoutes(
       // it more than once in the FormData is what makes this a bulk upload.
       const files = (req.files as Express.Multer.File[]) || [];
       if (!files.length) return res.status(400).json({ message: "At least one file is required" });
+      if (req.body.planId) {
+        const plan = await storage.getPlan(Number(req.body.planId));
+        if (!plan || plan.clientId !== Number(req.params.id)) return res.status(400).json({message:"Plan does not belong to client"});
+      }
+      if (req.body.renewalId) {
+        const [renewal] = await db.select().from(renewals).where(eq(renewals.id, Number(req.body.renewalId)));
+        if (!renewal || renewal.clientId !== Number(req.params.id)) return res.status(400).json({message:"Renewal does not belong to client"});
+      }
 
       const created = [];
       for (const file of files) {
         const doc = await storage.createDocument({
           clientId: parseInt(req.params.id),
+          planId: req.body.planId ? Number(req.body.planId) : null,
           // Optional — signed acceptance forms and 90 Degree notifications belong
           // to a particular renewal year
           renewalId: req.body.renewalId ? parseInt(req.body.renewalId) : null,
@@ -3291,8 +3346,7 @@ export async function registerRoutes(
       const today = new Date();
       const allClients = await storage.getClients();
       const eligibleClients = allClients.filter(client =>
-        client.anniversaryDate
-        && !suppressesRenewals(deriveClientState(client, today)));
+        !suppressesRenewals(deriveClientState(client, today)));
 
       // Trigger the same cycle-opening behavior used by renewal alerts before
       // reading the records that the shared selector will classify.
@@ -3301,14 +3355,8 @@ export async function registerRoutes(
       }
 
       const renewalRows = await db.select().from(renewals).orderBy(desc(renewals.planYear));
-      const latestByClient = new Map<number, typeof renewalRows[number]>();
-      for (const renewal of renewalRows) {
-        if (!latestByClient.has(renewal.clientId)) latestByClient.set(renewal.clientId, renewal);
-      }
-
       const sources = eligibleClients.flatMap(client => {
-        const renewal = latestByClient.get(client.id);
-        return renewal ? [{ client, renewal }] : [];
+        return renewalRows.filter(r => r.clientId === client.id && !r.suppressed).map(renewal => ({client, renewal}));
       });
       res.json(computeRenewalBuckets(sources, today));
     } catch (err: any) {
@@ -4784,6 +4832,9 @@ export async function registerRoutes(
   });
 
   // ─── Renewal pipeline ────────────────────────────────────────────────────────
+  app.all(["/api/plans/:planId/renewal-progress", "/api/plans/:planId/renewal-progress/step6-upload"], requireAuth, (_req, res) => {
+    res.status(410).json({ message: "Per-plan progress is retired. Use the client/year renewal checklist." });
+  });
 
   app.get("/api/plans/:planId/renewal-progress", requireAuth, async (req, res) => {
     try {

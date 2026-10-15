@@ -1438,6 +1438,9 @@ export const renewals = pgTable("renewals", {
   planYear: integer("plan_year").notNull(),
   // Seven-step pipeline — set manually by staff; never derived from dates
   pipelineStep: text("pipeline_step"),
+  steps: jsonb("steps").$type<import("./renewal-progress").RenewalSteps>().notNull().default({}),
+  handouts: jsonb("handouts").$type<import("./renewal-progress").Handout[]>().notNull().default([]),
+  suppressed: boolean("suppressed").notNull().default(false),
   proposalSentDate: timestamp("proposal_sent_date"),
   proposalVersion: text("proposal_version"),
   acceptanceReceivedDate: timestamp("acceptance_received_date"),

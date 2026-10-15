@@ -1684,61 +1684,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDashboardRenewals(): Promise<any[]> {
-    // Only genuinely active clients have a renewal to chase. A client with a
-    // known departure drops off this list immediately, even though it stays
-    // active everywhere else.
-    const activeClients = (await db.select().from(clients))
-      .filter((c) => deriveClientState(c) === "ACTIVE");
-    const today = new Date();
-    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const result: any[] = [];
-    for (const client of activeClients) {
-      const clientPlans = await db.select().from(plans).where(and(eq(plans.clientId, client.id), eq(plans.isArchived, false)));
-      for (const plan of clientPlans) {
-        const eff = new Date(plan.effectiveDate);
-        // Compute next anniversary on or after today
-        let nextYear = todayMidnight.getFullYear();
-        let candidate = new Date(nextYear, eff.getMonth(), eff.getDate());
-        if (candidate < todayMidnight) {
-          candidate = new Date(nextYear + 1, eff.getMonth(), eff.getDate());
-        }
-        const renewalDate = candidate;
-        const dueDate = new Date(renewalDate);
-        dueDate.setMonth(dueDate.getMonth() - (plan.renewalDueMonthsBefore || 3));
-        const daysUntilDue = Math.ceil((dueDate.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
-        const daysUntilRenewal = Math.ceil((renewalDate.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24));
-        let status: string;
-        if (plan.isRenewalComplete && plan.renewalCompletedDate) {
-          const daysSince = Math.ceil((todayMidnight.getTime() - new Date(plan.renewalCompletedDate).getTime()) / (1000 * 60 * 60 * 24));
-          if (daysSince > 30) continue;
-          status = "completed";
-        } else if (plan.isRenewalComplete) {
-          continue;
-        } else if (daysUntilDue < 0) {
-          status = "overdue";
-        } else if (daysUntilDue <= 30) {
-          status = "due-soon";
-        } else {
-          status = "ok";
-        }
-        result.push({
-          ...plan,
-          clientName: client.clientName,
-          clientCode: client.clientCode,
-          clientId: client.id,
-          renewalDate,
-          dueDate,
-          daysUntilDue,
-          daysUntilRenewal,
-          status,
-        });
-      }
-    }
-    const order: Record<string, number> = { overdue: 0, "due-soon": 1, completed: 2, ok: 3 };
-    return result.sort((a, b) => {
-      if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
-      return a.daysUntilDue - b.daysUntilDue;
-    });
+    const { renewals } = await import("@shared/schema");
+    const { computeRenewalBuckets } = await import("./renewal-buckets");
+    const sources = await db.select({client:clients,renewal:renewals}).from(renewals).innerJoin(clients,eq(clients.id,renewals.clientId));
+    const buckets = computeRenewalBuckets(sources.filter(s => deriveClientState(s.client) === "ACTIVE"));
+    return [...buckets.upcoming, ...buckets.current, ...buckets.complete];
   }
 
   async getDashboardIssues(): Promise<any[]> {
@@ -2945,24 +2895,11 @@ export class DatabaseStorage implements IStorage {
   // ── Renewal pipeline ────────────────────────────────────────────────────────
 
   async getRenewalProgress(planId: number): Promise<RenewalProgress | null> {
-    const [row] = await db.select().from(renewalProgress).where(eq(renewalProgress.planId, planId));
-    return row ?? null;
+    throw new Error("Per-plan progress retired. Use the client/year renewal.");
   }
 
   async upsertRenewalProgress(planId: number, clientId: number, data: Record<string, any>): Promise<RenewalProgress> {
-    const existing = await this.getRenewalProgress(planId);
-    if (existing) {
-      const [updated] = await db.update(renewalProgress)
-        .set({ ...data, updatedAt: new Date() })
-        .where(eq(renewalProgress.planId, planId))
-        .returning();
-      return updated;
-    } else {
-      const [created] = await db.insert(renewalProgress)
-        .values({ planId, clientId, ...data })
-        .returning();
-      return created;
-    }
+    throw new Error("Per-plan progress retired. Use the client/year renewal.");
   }
 
   // ── Prospect pipeline ───────────────────────────────────────────────────────
@@ -3013,70 +2950,21 @@ export class DatabaseStorage implements IStorage {
 
     const result: any[] = [];
 
-    // Renewal pipeline — ACTIVE clients, non-archived plans
-    const renewalRows = await db
-      .select({ plan: plans, client: clients, prog: renewalProgress })
-      .from(clients)
-      .innerJoin(plans, and(eq(plans.clientId, clients.id), eq(plans.isArchived, false)))
-      .leftJoin(renewalProgress, eq(renewalProgress.planId, plans.id))
-      .where(eq(clients.clientStatus, "ACTIVE" as any));
-
-    for (const { plan, client, prog } of renewalRows) {
-      if (prog?.step7Date) continue;
-      // Renewals are suppressed once a departure is known, so a terminating or
-      // run-out client must not be reported as a stalled pipeline.
-      if (deriveClientState(client) !== "ACTIVE") continue;
-
-      const eff = plan.effectiveDate instanceof Date
-        ? new Date(plan.effectiveDate.getTime())
-        : new Date(String(plan.effectiveDate) + "T00:00:00");
-      eff.setHours(0, 0, 0, 0);
-
-      const monthsBefore = plan.renewalDueMonthsBefore ?? 3;
-      const dueDate = subtractMonths(nextAnniversary(eff), monthsBefore);
-
-      const stepSeq = [
-        { key: "step1Date", label: "Renewal Requested",          date: prog?.step1Date ?? null },
-        { key: "step2Date", label: "Renewal Processed",          date: prog?.step2Date ?? null },
-        { key: "step3Date", label: "Renewal Sent",               date: prog?.step3Date ?? null },
-        { key: "step5Date", label: "Renewal Accepted",           date: prog?.step5Date ?? null },
-        { key: "step6Date", label: "Signed Form Attached",       date: prog?.step6Date ?? null },
-        { key: "step7Date", label: "Form Emailed to 90 Degree",  date: prog?.step7Date ?? null },
-      ];
-
-      const currentIdx = stepSeq.findIndex(s => !s.date);
-      if (currentIdx < 0) continue;
-
-      let clockStart: Date | null = null;
-      if (currentIdx === 0) {
-        clockStart = dueDate;
-      } else {
-        const prev = stepSeq[currentIdx - 1].date;
-        clockStart = prev ? new Date(prev) : null;
-        // For step5: check if a step4 revision is more recent than step3
-        if (stepSeq[currentIdx].key === "step5Date") {
-          const revs: string[] = Array.isArray(prog?.step4Revisions) ? (prog.step4Revisions as string[]) : [];
-          if (revs.length > 0) {
-            const latestRev = new Date([...revs].sort().at(-1)!);
-            if (!clockStart || latestRev > clockStart) clockStart = latestRev;
-          }
-        }
-      }
-
-      if (!clockStart) continue;
-      const stalledDays = daysSince(clockStart) - 14;
-      if (stalledDays >= 0) {
-        result.push({
-          type: "renewal",
-          clientId: client.id,
-          clientName: client.clientName,
-          clientCode: client.clientCode,
-          planName: plan.planName,
-          step: stepSeq[currentIdx].label,
-          clockStartDate: clockStart.toISOString().split("T")[0],
-          daysOverdue: stalledDays,
-        });
-      }
+    const { renewals } = await import("@shared/schema");
+    const { renewalSteps, renewalIsComplete } = await import("@shared/renewal-progress");
+    const renewalRows = await db.select({ renewal: renewals, client: clients }).from(renewals)
+      .innerJoin(clients, eq(clients.id, renewals.clientId));
+    for (const { renewal, client } of renewalRows) {
+      if (renewal.suppressed || deriveClientState(client) !== "ACTIVE" || renewalIsComplete(renewal)) continue;
+      const clockStart = new Date(renewal.updatedAt);
+      const daysOverdue = daysSince(clockStart) - 14;
+      if (daysOverdue >= 0) result.push({
+        type: "renewal", renewalId: renewal.id, clientId: client.id,
+        clientName: client.clientName, clientCode: client.clientCode,
+        planName: `${renewal.planYear} renewal`,
+        step: renewalSteps.find(k => !renewal.steps[k]) ?? "Employee handouts",
+        clockStartDate: clockStart.toISOString().slice(0,10), daysOverdue,
+      });
     }
 
     // Prospect pipeline — PROSPECT clients

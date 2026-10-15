@@ -1,3 +1,4 @@
+import { renewalIsComplete, type RenewalSteps, type Handout } from "../shared/renewal-progress";
 /**
  * The send deadline, and the boundary between Upcoming and Current. Exclusive on
  * both sides: an unstarted renewal at exactly this many days out is already in
@@ -34,6 +35,9 @@ export interface RenewalBucketSource {
     pipelineStep: string | null;
     completedAt: Date | string | null;
     updatedAt: Date | string;
+    steps?: RenewalSteps;
+    handouts?: Handout[];
+    suppressed?: boolean;
   };
 }
 
@@ -81,20 +85,20 @@ export function computeRenewalBuckets(
   const assignedClientIds = new Set<number>();
 
   const add = (bucket: RenewalBucketItem[], item: RenewalBucketItem) => {
-    if (assignedClientIds.has(item.clientId)) {
-      throw new Error(`Client ${item.clientId} was assigned to more than one renewal bucket`);
+    if (assignedClientIds.has(item.renewalId)) {
+      throw new Error(`Renewal ${item.renewalId} was assigned to more than one renewal bucket`);
     }
-    assignedClientIds.add(item.clientId);
+    assignedClientIds.add(item.renewalId);
     bucket.push(item);
   };
 
   for (const { client, renewal } of sources) {
-    if (!client.anniversaryDate) continue;
+    if (renewal.suppressed) continue;
 
-    const anniversary = getAnniversaryForPlanYear(client.anniversaryDate, renewal.planYear);
+    const anniversary = getAnniversaryForPlanYear(client.anniversaryDate ?? `${renewal.planYear}-01-01`, renewal.planYear);
     const daysOut = Math.round((calendarDay(anniversary) - calendarDay(today)) / DAY_MS);
     const step = renewal.pipelineStep || null;
-    const completeStep = step === FINAL_STEP;
+    const completeStep = renewalIsComplete(renewal);
     const stepIndex = step ? PIPELINE_STEPS.indexOf(step as typeof PIPELINE_STEPS[number]) : -1;
     const lateCandidate = !completeStep
       && stepIndex < SENT_STEP_INDEX
@@ -114,16 +118,14 @@ export function computeRenewalBuckets(
     };
 
     if (completeStep) {
-      if (daysOut >= -COMPLETE_RENEWAL_VISIBLE_DAYS_AFTER_ANNIVERSARY) {
-        add(complete, item);
-      }
+      add(complete, item);
     } else if (step !== null || daysOut <= RENEWAL_SEND_DEADLINE_DAYS_BEFORE_ANNIVERSARY) {
       // Current is everything actionable: work already started at any distance,
       // plus anything unstarted that has reached the send deadline, plus
       // anything overdue (which is unstarted-and-past-deadline by definition).
       item.late = lateCandidate;
       add(current, item);
-    } else if (daysOut <= UPCOMING_RENEWAL_HORIZON_DAYS) {
+    } else {
       // Pure heads-up queue: unstarted and still comfortably ahead of the
       // deadline, so nothing in here is ever badged.
       add(upcoming, item);
