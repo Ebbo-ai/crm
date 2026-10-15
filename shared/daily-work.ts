@@ -47,7 +47,8 @@ export function dailyWork(data:any, owner:string, since:string, now=new Date()) 
     const send=new Date(due); send.setUTCDate(send.getUTCDate()-14);
     const step=nextRenewalStep(r.steps);
     if(step) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,owner:step==="PROCESSED" || step==="REVISED" ? "Steve Schultz":"Kim Anderson",description:step.replaceAll("_"," ").replace("90D","90 Degree"),due:renewalSteps.indexOf(step)<=2 ? send.toISOString().slice(0,10):date});
-    if(!handoutsNotTracked(r,today)) for(const h of r.handouts||[]) if(!h.documentId || !h.date) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,owner:"Kim Anderson",description:`Employee handout: ${h.planName}`,due:date});
+    const accepted = r.steps?.ACCEPTED?.status === "DONE" || r.steps?.ACCEPTED?.status === "NA";
+    if(accepted && !handoutsNotTracked(r,today)) for(const h of r.handouts||[]) if(!h.documentId || !h.date) renewals.push({id:r.id,clientId:r.clientId,client:r.clientName,owner:"Kim Anderson",description:`Employee handout: ${h.planName}`,due:date});
   }
   renewals.sort((a,b)=>a.due.localeCompare(b.due)||a.client.localeCompare(b.client));
   const waitingOnKim=owner==="Steve Schultz" ? new Set(renewals.filter(r=>r.owner==="Kim Anderson").map(r=>r.id)).size : null;

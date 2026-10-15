@@ -23,6 +23,13 @@ is more than 30 days past and Emailed to 90 Degree is DONE, missing handouts are
 displayed as "Not tracked (before CRM)" and excluded from the daily work list.
 Uploads remain available.
 
+Handout lines require an explicitly DONE or NA Accepted step. Earlier steps being
+implicitly passed by later completion is not sufficient for this gate.
+**Why:** Steve said employee handouts are produced only after the client accepts;
+they must not appear alongside an open Processed or Accepted step.
+**How to apply:** Apply this gate to the shared digest/Today calculation before
+adding any handout lines; retain the existing historical-handout exclusion.
+
 **Why:** Steve corrected the shared queue and historical gaps that created false work.
 He said, "She asks me to run a renewal or produce an employee handout, for example.
 I give it to her with the email that claude has drafted and she presses send."
