@@ -654,7 +654,7 @@ export function parseWorkbook(buffer: Buffer): ParsedWorkbook {
           adminContactTitle: ["admin_contact_title", str(r.admin_contact_title)],
           adminContactPhone: ["admin_contact_phone", str(r.admin_contact_phone)],
           adminContactEmail: ["admin_contact_email", str(r.admin_contact_email)],
-          hasBroker: ["has_broker", bool(r.has_broker), true],
+          brokerStatus: ["broker_status", ["DIRECT", "BROKER", "NOT_SET"].includes(String(r.broker_status)) ? String(r.broker_status) : undefined],
           brokerFirmName: ["broker_firm_name", str(r.broker_firm_name)],
           brokerContactName: ["broker_contact_name", str(r.broker_contact_name)],
           brokerPhone: ["broker_phone", str(r.broker_phone)],
@@ -1347,6 +1347,9 @@ export async function runImport(buffer: Buffer, mode: ImportMode): Promise<Impor
           // is_active=false and no termination date already derives as CLOSED,
           // which is exactly the legacy shape; writing a duplicate lifecycle
           // status alongside the date is what let the two disagree before.
+          if (!["DIRECT", "BROKER"].includes(values.brokerStatus)) {
+            throw new Error(`New client ${c.clientCode}: choose DIRECT or BROKER in broker_status before importing.`);
+          }
           const [created] = await tx.insert(clients).values(values as any).returning({ id: clients.id });
           result.counts.clients.created++;
           clientIdByCode.set(normalizeCode(c.clientCode), created.id);

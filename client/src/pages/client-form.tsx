@@ -90,7 +90,7 @@ const emptyForm = {
   adminContactTitle: "Admin Contact",
   adminContactPhone: "",
   adminContactEmail: "",
-  hasBroker: false,
+  brokerStatus: "" as string,
   brokerFirmName: "",
   brokerContactName: "",
   brokerPhone: "",
@@ -162,7 +162,7 @@ export default function ClientFormPage() {
         adminContactTitle: existingClient.adminContactTitle || "Admin Contact",
         adminContactPhone: existingClient.adminContactPhone || "",
         adminContactEmail: existingClient.adminContactEmail || "",
-        hasBroker: existingClient.hasBroker ?? false,
+        brokerStatus: existingClient.brokerStatus ?? "NOT_SET",
         brokerFirmName: existingClient.brokerFirmName || "",
         brokerContactName: existingClient.brokerContactName || "",
         brokerPhone: existingClient.brokerPhone || "",
@@ -270,7 +270,8 @@ export default function ClientFormPage() {
       errs.decisionMakerEmail = "Invalid email format";
     if (form.adminContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminContactEmail))
       errs.adminContactEmail = "Invalid email format";
-    if (form.hasBroker) {
+    if (!["DIRECT", "BROKER"].includes(form.brokerStatus) && (!isEdit || form.brokerStatus !== "NOT_SET")) errs.brokerStatus = "Choose Direct or Broker";
+    if (form.brokerStatus === "BROKER") {
       brokerContacts.forEach((c, i) => {
         if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email))
           errs[`brokerContact-${i}-email`] = "Invalid email format";
@@ -350,13 +351,13 @@ export default function ClientFormPage() {
       }));
     data.brokerContacts = contacts;
 
-    if (!data.hasBroker) {
+    if (data.brokerStatus === "DIRECT" && !isEdit) {
       data.brokerFirmName = null;
       data.brokerContactName = null;
       data.brokerPhone = null;
       data.brokerEmail = null;
       data.brokerContacts = [];
-    } else {
+    } else if (data.brokerStatus === "BROKER") {
       // Mirror the lead onto the flat columns in the same write that creates the
       // client, so a reader that has not been moved to the contacts table never sees
       // a client with a broker and no contact details.
@@ -365,6 +366,8 @@ export default function ClientFormPage() {
       data.brokerPhone = primary?.phone ?? null;
       data.brokerEmail = primary?.email ?? null;
     }
+    // Changing classification must not delete contact history.
+    if (isEdit && data.brokerStatus !== "BROKER") delete data.brokerContacts;
     // Nullify empty strings for optional fields
     if (!data.bankingType) data.bankingType = null;
     if (!data.fundingType) data.fundingType = null;
@@ -694,20 +697,16 @@ export default function ClientFormPage() {
               {/* Switching this off on an existing client would blank the firm, which is
                   the same silent loss of history as editing it. Removing a broker is a
                   succession event, so it belongs in Change Broker. */}
-              <Switch
-                checked={form.hasBroker}
-                onCheckedChange={v => updateField("hasBroker", v)}
-                disabled={isEdit && !!existingClient?.brokerFirmName}
-                data-testid="switch-broker"
-              />
-              <Label className="text-sm text-foreground">Has Broker</Label>
-              {isEdit && !!existingClient?.brokerFirmName && (
-                <span className="text-xs text-muted-foreground">
-                  Locked while a broker is recorded. Use Change Broker.
-                </span>
-              )}
+              <Label htmlFor="brokerStatus">Broker status</Label>
+              <select id="brokerStatus" value={form.brokerStatus} onChange={e => updateField("brokerStatus", e.target.value)} className="border rounded p-2 bg-background" data-testid="select-broker-status">
+                <option value="" disabled>Choose Direct or Broker</option>
+                {isEdit && <option value="NOT_SET">Not set</option>}
+                <option value="DIRECT">Direct</option>
+                <option value="BROKER">Broker</option>
+              </select>
+              <FieldError field="brokerStatus" />
             </div>
-            {form.hasBroker && (
+            {form.brokerStatus === "BROKER" && (
               <div className="space-y-4">
                 {isEdit && (
                   <div

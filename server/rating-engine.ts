@@ -81,7 +81,7 @@ export const RATING_ENGINE_REQUEST_TIMEOUT_MS = 60_000;
  * or an account manager, and the only useful action is to try again.
  */
 export const RATING_ENGINE_UNAVAILABLE_MESSAGE =
-  "The report service is temporarily unavailable, so this report could not be generated. Please try again in a few moments. If it keeps happening, contact support.";
+  "PDF service is starting, try again in a minute";
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 
@@ -423,6 +423,14 @@ export async function callRatingEngine<T = any>(
     failureMessage = "Report generation failed",
   } = options;
 
+  // Poll readiness briefly; /health only succeeds after a real warm-up PDF.
+  const readyDeadline = Date.now() + 8_000;
+  let ready = await pingRatingEngine();
+  while (!ready && Date.now() < readyDeadline) {
+    await sleep(250);
+    ready = await pingRatingEngine();
+  }
+  if (!ready) throw new RatingEngineUnavailableError();
   let res: Response;
   try {
     res = await fetch(`${RATING_ENGINE_BASE_URL}${endpoint}`, {
@@ -435,6 +443,7 @@ export async function callRatingEngine<T = any>(
     // Connection refused, DNS, socket reset, or the abort timer firing.
     throw new RatingEngineUnavailableError(err);
   }
+  if (res.status === 503) throw new RatingEngineUnavailableError();
 
   let parsed: any;
   try {

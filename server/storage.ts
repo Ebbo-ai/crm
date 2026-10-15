@@ -423,6 +423,9 @@ export class DatabaseStorage implements IStorage {
    * one transaction so a client can never be saved with its contact set half-applied.
    */
   async createClient(client: InsertClient, contacts?: BrokerContactInput[]): Promise<Client> {
+    const { requireBrokerChoice } = await import("../shared/broker-status");
+    requireBrokerChoice(client.brokerStatus);
+    delete client.hasBroker;
     return db.transaction(async (tx) => {
       const [created] = await tx.insert(clients).values(client).returning();
       if (contacts !== undefined) {
@@ -436,6 +439,10 @@ export class DatabaseStorage implements IStorage {
 
   /** See `createClient` for what an undefined vs. empty `contacts` means. */
   async updateClient(id: number, data: Partial<InsertClient>, contacts?: BrokerContactInput[]): Promise<Client | undefined> {
+    delete data.hasBroker;
+    if (data.brokerStatus !== undefined && !["DIRECT", "BROKER", "NOT_SET"].includes(data.brokerStatus ?? "")) {
+      throw Object.assign(new Error("Invalid broker status"), { status: 400 });
+    }
     return db.transaction(async (tx) => {
       const [updated] = await tx.update(clients).set({ ...data, updatedAt: new Date() }).where(eq(clients.id, id)).returning();
       if (!updated) return undefined;
@@ -460,13 +467,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPlan(plan: InsertPlan): Promise<Plan> {
+    await this.validateBrokerPlan(plan.clientId, plan);
     const [created] = await db.insert(plans).values(plan).returning();
     return created;
   }
 
   async updatePlan(id: number, data: Partial<InsertPlan>): Promise<Plan | undefined> {
+    const current = await this.getPlan(id);
+    if (current) await this.validateBrokerPlan(current.clientId, { ...current, ...data });
     const [updated] = await db.update(plans).set({ ...data, updatedAt: new Date() }).where(eq(plans.id, id)).returning();
     return updated;
+  }
+
+  private async validateBrokerPlan(clientId: number, plan: Partial<InsertPlan>): Promise<void> {
+    const client = await this.getClient(clientId);
+    const needsBroker = plan.renewalRecipient === "BROKER" || plan.renewalRecipient === "BOTH" || (plan.brokerMode && plan.brokerMode !== "NONE");
+    if (needsBroker && client?.brokerStatus !== "BROKER") {
+      throw Object.assign(new Error(client?.brokerStatus === "DIRECT" ? "This client is Direct. Broker recipients or compensation require Broker status." : "Broker status is not set. Choose Direct or Broker before configuring renewal recipients or broker fees."), { status: 400 });
+    }
   }
 
   async getActivePlanCount(clientId: number): Promise<number> {
@@ -1185,6 +1203,8 @@ export class DatabaseStorage implements IStorage {
    * one-time report on the existing proposal backlog.
    */
   async backfillFieldProposalMappings(): Promise<{ mapped: number; unmapped: number; total: number }> {
+    const { backfillCursor, saveBackfillCursor } = await import("./backfillProgress");
+    const cursor = await backfillCursor("field-proposal-mapping-backfill");
     const rows = await db.select({
       proposal: documentFieldProposals,
       documentCategory: documents.category,
@@ -1192,7 +1212,8 @@ export class DatabaseStorage implements IStorage {
     })
       .from(documentFieldProposals)
       .innerJoin(documents, eq(documentFieldProposals.documentId, documents.id))
-      .where(and(eq(documentFieldProposals.status, "PENDING"), eq(documentFieldProposals.targetTable, "review_only")));
+      .where(and(sql`${documentFieldProposals.id} > ${cursor}`, eq(documentFieldProposals.status, "PENDING"), eq(documentFieldProposals.targetTable, "review_only")))
+      .orderBy(asc(documentFieldProposals.id));
 
     let mapped = 0;
     let unmapped = 0;
@@ -1216,6 +1237,7 @@ export class DatabaseStorage implements IStorage {
           isPlanDesignField: m.isPlanDesignField,
         })
         .where(eq(documentFieldProposals.id, row.proposal.id));
+      await saveBackfillCursor("field-proposal-mapping-backfill", row.proposal.id);
     }
     return { mapped, unmapped, total: rows.length };
   }
@@ -1228,8 +1250,10 @@ export class DatabaseStorage implements IStorage {
    * anywhere stays null and is left to fall back to uploadedAt at query time.
    */
   async backfillDocumentEffectiveDates(): Promise<{ dated: number; undated: number; total: number }> {
+    const { backfillCursor, saveBackfillCursor } = await import("./backfillProgress");
+    const cursor = await backfillCursor("document-effective-date-backfill");
     const { deriveDocumentEffectiveDate } = await import("./fieldGrouping");
-    const undatedDocs = await db.select().from(documents).where(isNull(documents.effectiveDate));
+    const undatedDocs = await db.select().from(documents).where(and(sql`${documents.id} > ${cursor}`, isNull(documents.effectiveDate))).orderBy(asc(documents.id));
     let dated = 0;
     let undated = 0;
     for (const doc of undatedDocs) {
@@ -1243,6 +1267,7 @@ export class DatabaseStorage implements IStorage {
       } else {
         undated++;
       }
+      await saveBackfillCursor("document-effective-date-backfill", doc.id);
     }
     return { dated, undated, total: undatedDocs.length };
   }
@@ -2765,7 +2790,7 @@ export class DatabaseStorage implements IStorage {
       if (!client) throw new Error(`Client ${clientId} not found`);
 
       if (!currentRecord) {
-        if (client.hasBroker && (client.brokerFirmName || client.brokerContactName)) {
+        if (client.brokerStatus === "BROKER" && (client.brokerFirmName || client.brokerContactName)) {
           // The outgoing broker predates the history table, so its start date is not
           // recorded anywhere. The month the CRM record was created is the usual proxy,
           // but for a book imported after the fact that month is often LATER than the
@@ -2807,7 +2832,7 @@ export class DatabaseStorage implements IStorage {
         brokerContactName: newBroker.brokerContactName,
         brokerPhone: newBroker.brokerPhone,
         brokerEmail: newBroker.brokerEmail,
-        hasBroker: true,
+        brokerStatus: "BROKER",
         updatedAt: new Date(),
       }).where(eq(clients.id, clientId));
 

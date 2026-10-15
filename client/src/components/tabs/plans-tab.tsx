@@ -94,6 +94,7 @@ export default function PlansTab({ clientId, client }: { clientId: number; clien
         </Button>
       </div>
 
+      {(!client.brokerStatus || client.brokerStatus === "NOT_SET") && <p className="border border-destructive rounded p-3 mb-4 text-destructive">Broker status is not set. Choose Direct or Broker before configuring fees or sending a renewal.</p>}
       {!currentPlans.length && !isLoading && (
         <Card className="border-0 shadow-sm mb-6">
           <CardContent className="py-12 text-center">
@@ -926,6 +927,7 @@ function MarkCompleteDialog({ plan, onClose, onConfirm, isPending }: any) {
 
 // ---------- plan form dialog ----------
 function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onClose: () => void; clientId: number; plan?: any }) {
+  const { data: brokerClient } = useQuery<any>({ queryKey: ["/api/clients", String(clientId)] });
   const { toast } = useToast();
   const isEdit = !!plan;
   const [form, setForm] = useState({
@@ -1259,14 +1261,15 @@ function PlanFormDialog({ open, onClose, clientId, plan }: { open: boolean; onCl
               </div>
               <div>
                 <Label className="text-xs">Renewal Recipient</Label>
+                {(!brokerClient?.brokerStatus || brokerClient.brokerStatus === "NOT_SET") && <p className="text-destructive text-xs">Broker status is not set. Choose Direct or Broker on the client record before sending a renewal.</p>}
                 <Select value={form.renewalRecipient} onValueChange={v => setForm(f => ({ ...f, renewalRecipient: v }))}>
                   <SelectTrigger data-testid="select-renewal-recipient">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="CLIENT">Client</SelectItem>
-                    <SelectItem value="BROKER">Broker</SelectItem>
-                    <SelectItem value="BOTH">Broker & Client</SelectItem>
+                    <SelectItem value="BROKER" disabled={brokerClient?.brokerStatus !== "BROKER"}>Broker</SelectItem>
+                    <SelectItem value="BOTH" disabled={brokerClient?.brokerStatus !== "BROKER"}>Broker & Client</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

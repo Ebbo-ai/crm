@@ -19,6 +19,7 @@ import {
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [brokerFilter, setBrokerFilter] = useState("all");
 
   const { data: clients, isLoading } = useQuery<any[]>({
     queryKey: ["/api/clients", search, statusFilter],
@@ -83,6 +84,11 @@ export default function ClientsPage() {
         </div>
       </div>
 
+      <label className="flex items-center gap-2 mb-4">Broker status
+        <select className="border rounded p-2 bg-background" value={brokerFilter} onChange={e => setBrokerFilter(e.target.value)}>
+          <option value="all">All</option><option value="NOT_SET">Not set</option><option value="DIRECT">Direct</option><option value="BROKER">Broker</option>
+        </select>
+      </label>
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {[1,2,3,4,5,6].map(i => (
@@ -101,10 +107,11 @@ export default function ClientsPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {clients.map((client: any) => (
+          {clients.filter((c: any) => brokerFilter === "all" || (c.brokerStatus ?? "NOT_SET") === brokerFilter).map((client: any) => (
             <Link key={client.id} href={`/clients/${client.id}`}>
               <Card className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer h-full" data-testid={`client-card-${client.id}`}>
                 <CardContent className="p-5">
+                  <p className={client.brokerStatus === "BROKER" || client.brokerStatus === "DIRECT" ? "text-xs mb-2" : "text-destructive font-semibold mb-2"}>Broker status: {client.brokerStatus === "BROKER" ? "Broker" : client.brokerStatus === "DIRECT" ? "Direct" : "Not set"}</p>
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="flex items-center gap-2 min-w-0">
                       {client.activeIssueCount > 0 && (

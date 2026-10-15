@@ -89,6 +89,12 @@ export async function runDeferredStartupTasks(tasks: DeferredStartupTask[]): Pro
     return;
   }
 
+  // One maintenance runner across autoscale instances. The dedicated connection
+  // owns the lock until all cursor updates finish.
+  const lock = await pool.connect();
+  try {
+  const acquired = await lock.query("SELECT pg_try_advisory_lock(72641842) AS acquired");
+  if (!acquired.rows[0].acquired) return;
   for (const task of tasks) {
     try {
       const row = await readRow(task.name);
@@ -100,6 +106,10 @@ export async function runDeferredStartupTasks(tasks: DeferredStartupTask[]): Pro
         }
       }
 
+      if (task.name === "field-proposal-mapping-backfill" || task.name === "document-effective-date-backfill") {
+        const { backfillCursor } = await import("./backfillProgress");
+        await backfillCursor(task.name);
+      }
       await pool.query(
         `INSERT INTO startup_tasks (name, label, status, last_started_at, run_count)
          VALUES ($1, $2, 'RUNNING', now(), 1)
@@ -144,6 +154,10 @@ export async function runDeferredStartupTasks(tasks: DeferredStartupTask[]): Pro
           /* the failure is already on the console; losing the record must not throw here */
         });
     }
+  }
+  } finally {
+    await lock.query("SELECT pg_advisory_unlock(72641842)").catch(() => {});
+    lock.release();
   }
 }
 

@@ -490,6 +490,8 @@ async function buildRenewalReportPayload(renewalId: number) {
 
   const client = await storage.getClient(renewal.clientId);
   if (!client) throw Object.assign(new Error("Client not found"), { status: 404 });
+  const { requireBrokerChoice } = await import("../shared/broker-status");
+  requireBrokerChoice(client.brokerStatus);
 
   const options = await db.select().from(renewalPlanOptions)
     .where(eq(renewalPlanOptions.renewalId, renewalId));
@@ -505,6 +507,9 @@ async function buildRenewalReportPayload(renewalId: number) {
   // archived once it is superseded, and excluding it would erase the "current"
   // side of the comparison. Only the new year's plan is required to be active.
   const allPlans = await storage.getPlans(client.id);
+  if (client.brokerStatus === "DIRECT" && allPlans.some(p => !p.isArchived && p.brokerMode !== "NONE")) {
+    throw Object.assign(new Error("This client is Direct but has broker compensation on a plan. Review the fee split before generating the transmittal."), { status: 400 });
+  }
   const notices: string[] = [];
   const planPayloads: any[] = [];
 
@@ -994,6 +999,8 @@ export async function registerRoutes(
   app.post("/api/clients", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
+      if (!["DIRECT", "BROKER"].includes(body.brokerStatus)) return res.status(400).json({ message: "Broker status is not set. Choose Direct or Broker." });
+      delete body.hasBroker;
       const termError = terminationDateError(req.body.terminationDate);
       if (termError) return res.status(400).json({ message: termError });
       const dateError = coerceClientDates(body);
@@ -1545,6 +1552,10 @@ export async function registerRoutes(
 
       // New format: { tiers, rates, brokerMode, brokerValue, feeBasis, flatMonthlyFee?, flat90DBFee?, flatSimpleFee?, flatNetworkFee? }
       if (body && Array.isArray(body.tiers)) {
+        const plan = await storage.getPlan(planId);
+        const client = plan ? await storage.getClient(plan.clientId) : undefined;
+        if (!client?.brokerStatus || client.brokerStatus === "NOT_SET") return res.status(400).json({ message: "Broker status is not set. Choose Direct or Broker before changing the fee split." });
+        if (client.brokerStatus === "DIRECT" && body.brokerMode && body.brokerMode !== "NONE") return res.status(400).json({ message: "This client is Direct. Broker fees require Broker status." });
         const result = await storage.upsertTiersAndRates(
           planId,
           body.tiers,
@@ -1785,6 +1796,7 @@ export async function registerRoutes(
       const clientId = parseInt(req.params.id);
       const client = await storage.getClient(clientId);
       if (!client) return res.status(404).json({ message: "Client not found" });
+      if (!client.brokerStatus || client.brokerStatus === "NOT_SET") return res.status(400).json({ message: "Broker status is not set. Choose Direct or Broker before generating a renewal." });
 
       // Call internal Python service with the client's identity so the PDF
       // cover page shows the real group name, not "Westside School District".
@@ -3387,17 +3399,18 @@ export async function registerRoutes(
           numberOfEmployees: c.numberOfEmployees ?? null,
           planType: derivePlanType((plansByClient.get(c.id) ?? []).map(p => p.coverageType)),
           anniversaryDate: c.anniversaryDate ? c.anniversaryDate.toISOString() : null,
-          brokerFirmName: c.brokerFirmName || null,
-          brokerName: brokerName || null,
-          brokerEmail: brokerEmail || null,
-          brokerPhone: brokerPhone || null,
+          brokerFirmName: c.brokerStatus === "BROKER" ? c.brokerFirmName || null : null,
+          brokerName: c.brokerStatus === "BROKER" ? brokerName || null : c.brokerStatus === "DIRECT" ? "Direct" : "Not set",
+          brokerEmail: c.brokerStatus === "BROKER" ? brokerEmail || null : null,
+          brokerPhone: c.brokerStatus === "BROKER" ? brokerPhone || null : null,
+          brokerStatus: c.brokerStatus ?? "NOT_SET",
           clientState: state,
         });
       }
 
       rows.sort((a, b) => a.clientName.localeCompare(b.clientName));
 
-      const hasBroker = (r: RosterRow) => !!(r.brokerFirmName || r.brokerName);
+      const hasBroker = (r: RosterRow) => r.brokerStatus === "BROKER";
       const planTypeCounts: Record<string, number> = {};
       for (const t of ROSTER_PLAN_TYPES) planTypeCounts[t] = 0;
       for (const r of rows) if (r.planType) planTypeCounts[r.planType]++;
@@ -3410,7 +3423,7 @@ export async function registerRoutes(
           totalRows: rows.length,
           blankCity: rows.filter(r => !r.city).length,
           blankState: rows.filter(r => !r.state).length,
-          noBrokerOnFile: rows.filter(r => !hasBroker(r)).length,
+          noBrokerOnFile: rows.filter(r => r.brokerStatus === "DIRECT").length,
           brokerMissingEmail: rows.filter(r => hasBroker(r) && !r.brokerEmail).length,
           brokerMissingPhone: rows.filter(r => hasBroker(r) && !r.brokerPhone).length,
           missingEmployeeCount: rows.filter(r => r.numberOfEmployees == null).length,
@@ -3754,6 +3767,12 @@ export async function registerRoutes(
       const cc = sendFieldToArray(payload.cc);
       const bcc = sendFieldToArray(payload.bcc);
       const clientIds = sendFieldToArray(payload.clientIds);
+      for (const id of clientIds) {
+        const client = await storage.getClient(Number(id));
+        if (client && (!client.brokerStatus || client.brokerStatus === "NOT_SET")) {
+          return res.status(400).json({ message: `Broker status is not set for ${client.clientName}. Choose Direct or Broker before sending client correspondence.` });
+        }
+      }
       const documentIds = sendFieldToArray(payload.documentIds);
       const globalDocumentIds = sendFieldToArray(payload.globalDocumentIds);
       const replyToMessageId = payload.replyToMessageId ? parseInt(String(payload.replyToMessageId)) : null;
@@ -4080,6 +4099,9 @@ export async function registerRoutes(
           storage.getBrokerContacts(clientId),
         ]);
         if (client) {
+          if (!client.brokerStatus || client.brokerStatus === "NOT_SET") {
+            groups.push({ key: "broker-status-warning", label: "Broker status is not set", note: "Choose Direct or Broker on the client record before preparing a renewal.", people: [] });
+          }
           const clientPeople: DirectoryPerson[] = [];
           if (client.decisionMakerEmail) {
             clientPeople.push(person(
@@ -4106,7 +4128,7 @@ export async function registerRoutes(
 
           // A broker contact with a termination date has left the account.
           // Offering them is how last year's advisor gets this year's mail.
-          const serving = brokerContacts.filter((b) => !b.terminationDate && b.email);
+          const serving = brokerContacts.filter((b) => client.brokerStatus === "BROKER" && !b.terminationDate && b.email);
           const brokerPeople = serving.map((b) => person(
             b.contactName,
             b.email as string,
@@ -4118,7 +4140,7 @@ export async function registerRoutes(
           // Deliberately not "no serving contact with an address": a client
           // whose only broker rows are terminated has no broker right now,
           // and the mirror may still hold the one who left.
-          if (brokerContacts.length === 0 && client.brokerEmail) {
+          if (client.brokerStatus === "BROKER" && brokerContacts.length === 0 && client.brokerEmail) {
             brokerPeople.push(person(
               client.brokerContactName || client.brokerEmail,
               client.brokerEmail,

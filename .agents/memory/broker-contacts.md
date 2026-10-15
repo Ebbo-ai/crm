@@ -5,6 +5,19 @@ description: Why broker contacts are keyed to the client rather than the firm, w
 
 # Broker contacts
 
+## Broker classification migration
+
+Explicit N/A broker names mean Direct and take precedence over the legacy true
+flag. Otherwise true or any broker-contact row means Broker; remaining clients
+are Not set, never implicitly Direct. Keep the legacy column unused for rollback.
+
+**Why:** Steve confirmed that the N/A entries were deliberate human answers and
+the conflicting true flags were import artifacts.
+
+**How to apply:** run the classification once outside app startup, never as a
+boot backfill. Do not force dev data to match production counts when their client
+sets differ.
+
 ## Keyed to the client, not the firm
 
 **Why:** one brokerage serves many clients through different people — HUB International

@@ -1274,7 +1274,7 @@ app.use("/api", (_req, res, next) => {
              true,
              c.created_at
       FROM clients c
-      WHERE c.has_broker
+      WHERE c.broker_status = 'BROKER'
         AND COALESCE(NULLIF(TRIM(c.broker_contact_name), ''), NULLIF(TRIM(c.broker_email), '')) IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM broker_contacts bc WHERE bc.client_id = c.id)
       ON CONFLICT DO NOTHING;
@@ -2001,7 +2001,7 @@ app.use("/api", (_req, res, next) => {
     {
       name: "field-proposal-mapping-backfill",
       label: "Field proposal mapping backfill",
-      minIntervalHours: 24,
+      minIntervalHours: 0,
       run: async () => {
         const result = await storage.backfillFieldProposalMappings();
         if (result.total === 0) return null;
@@ -2011,7 +2011,7 @@ app.use("/api", (_req, res, next) => {
     {
       name: "document-effective-date-backfill",
       label: "Document effective-date backfill",
-      minIntervalHours: 24,
+      minIntervalHours: 0,
       run: async () => {
         const result = await storage.backfillDocumentEffectiveDates();
         if (result.total === 0) return null;
@@ -2255,7 +2255,16 @@ app.use("/api", (_req, res, next) => {
 
     // Fire and forget: these report their own outcome into startup_tasks,
     // which Settings reads. Nothing above waits on them.
-    void runDeferredStartupTasks(deferredStartupTasks);
+    // Don't compete with Python/font initialization for cold-start CPU.
+    // Retry without blocking traffic if warm-up takes longer than one window.
+    const runWhenRendererReady = async () => {
+      if (await waitForRatingEngine(15_000)) {
+        void runDeferredStartupTasks(deferredStartupTasks).catch(err => console.error(`Deferred maintenance failed: ${errorLabel(err)}`));
+      } else {
+        setTimeout(() => void runWhenRendererReady(), 30_000);
+      }
+    };
+    void runWhenRendererReady();
   }
 
   // Graceful shutdown: finish in-flight requests before exiting

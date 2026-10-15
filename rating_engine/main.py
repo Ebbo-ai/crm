@@ -10,25 +10,52 @@ import io
 import logging
 import os
 import sys
+import threading
+import time
 
 from flask import Flask, request, send_file, jsonify
 
 # Make sure the rating_engine directory is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
-from generate_renewal import (
-    validate, advisories, build_html, compute, load_config,
-)
-from weasyprint import HTML
-from ppr_import import process_file as ppr_process_file
-from ppr_report import generate as ppr_generate, GENERATOR_VERSION as PPR_GENERATOR_VERSION
-from renewal_report import (
-    generate as renewal_report_generate,
-    GENERATOR_VERSION as RENEWAL_REPORT_VERSION,
-)
-
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rating] %(message)s")
+_started = time.monotonic()
+_renderer_ready = threading.Event()
+_renderer_error = None
+
+
+def warm_renderer():
+    """Keep heavy imports off the listener path. Ready means a PDF rendered."""
+    global HTML, validate, advisories, build_html, compute, load_config
+    global ppr_process_file, ppr_generate, PPR_GENERATOR_VERSION
+    global renewal_report_generate, RENEWAL_REPORT_VERSION, _renderer_error
+    try:
+        phase = time.monotonic()
+        from weasyprint import HTML
+        app.logger.info("startup: WeasyPrint import %.3fs", time.monotonic() - phase)
+        phase = time.monotonic()
+        from generate_renewal import validate, advisories, build_html, compute, load_config
+        from ppr_import import process_file as ppr_process_file
+        from ppr_report import generate as ppr_generate, GENERATOR_VERSION as PPR_GENERATOR_VERSION
+        from renewal_report import generate as renewal_report_generate, GENERATOR_VERSION as RENEWAL_REPORT_VERSION
+        app.logger.info("startup: report imports %.3fs", time.monotonic() - phase)
+        phase = time.monotonic()
+        pdf = HTML(string="<html><body>PDF readiness check</body></html>").write_pdf()
+        if not pdf.startswith(b"%PDF-"):
+            raise RuntimeError("Renderer did not produce a PDF")
+        app.logger.info("startup: first PDF %.3fs", time.monotonic() - phase)
+        _renderer_ready.set()
+        app.logger.info("startup: PDF ready after %.3fs", time.monotonic() - _started)
+    except Exception as exc:
+        _renderer_error = type(exc).__name__
+        app.logger.exception("PDF warm-up failed")
+
+
+@app.before_request
+def wait_for_renderer():
+    if request.path != "/health" and not _renderer_ready.wait(timeout=5):
+        return jsonify({"error": "PDF service is starting, try again in a minute"}), 503
 
 _SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "config_sample.py")
 
@@ -88,7 +115,7 @@ def _render_cfg(cfg):
 
 @app.get("/health")
 def health():
-    return jsonify({"status": "ok", "service": "rating-engine"})
+    return jsonify({"status": "ready" if _renderer_ready.is_set() else "failed" if _renderer_error else "starting", "service": "rating-engine"}), 200 if _renderer_ready.is_set() else 503
 
 
 # ---------------------------------------------------------------------------
@@ -305,4 +332,10 @@ def generate_renewal_report():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5001, debug=False)
+    from werkzeug.serving import make_server
+    # Bind first, before the import thread can consume CPU. The listener can
+    # report 503/startup while the renderer and fonts are warming.
+    server = make_server("127.0.0.1", 5001, app, threaded=True)
+    app.logger.info("startup: Flask listening on 127.0.0.1:5001 after %.3fs", time.monotonic() - _started)
+    threading.Thread(target=warm_renderer, daemon=True).start()
+    server.serve_forever()

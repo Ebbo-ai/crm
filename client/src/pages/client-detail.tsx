@@ -335,7 +335,8 @@ export default function ClientDetailPage() {
               </CardContent>
             </Card>
 
-            {client.hasBroker && (
+            <div className="p-3 border rounded">Broker status: {client.brokerStatus === "BROKER" ? "Broker" : client.brokerStatus === "DIRECT" ? "Direct" : "Not set — choose Direct or Broker before preparing a renewal."}</div>
+            {client.brokerStatus === "BROKER" && (
               <BrokerCard client={client} clientId={clientId} />
             )}
 

@@ -107,6 +107,7 @@ export const clients = pgTable("clients", {
   adminContactPhone: text("admin_contact_phone"),
   adminContactEmail: text("admin_contact_email"),
   hasBroker: boolean("has_broker").notNull().default(false),
+  brokerStatus: text("broker_status").$type<"DIRECT" | "BROKER" | "NOT_SET">(),
   brokerFirmName: text("broker_firm_name"),
   brokerContactName: text("broker_contact_name"),
   brokerPhone: text("broker_phone"),
@@ -1142,7 +1143,9 @@ export const insertSendingIdentitySchema = createInsertSchema(sendingIdentities)
 export const insertUserSendingIdentitySchema = createInsertSchema(userSendingIdentities).omit({ id: true });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertClientSchema = createInsertSchema(clients).omit({ id: true, createdAt: true, updatedAt: true }).extend({
+  brokerStatus: z.enum(["DIRECT", "BROKER", "NOT_SET"]).nullable().optional(),
+});
 export const insertPlanTierSchema = createInsertSchema(planTiers).omit({ id: true, createdAt: true });
 export const insertPlanSchema = createInsertSchema(plans).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRateCardSchema = createInsertSchema(rateCards).omit({ id: true, createdAt: true, updatedAt: true });

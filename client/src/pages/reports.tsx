@@ -95,7 +95,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
       </div>
     </div>`;
 
-  const brokerHtml = client.hasBroker ? `
+  const brokerHtml = client.brokerStatus === "BROKER" ? `
     <div style="margin-top:22px;">
       <div style="background:#2E86C1;color:white;padding:9px 20px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;border-radius:6px 6px 0 0;">Broker</div>
       <div style="border:1px solid #E2E8F0;border-top:0;padding:18px 22px;display:flex;gap:48px;flex-wrap:wrap;">
@@ -104,7 +104,7 @@ function buildClientSummaryHtml(client: any, plans: any[], metrics: any[]): stri
         <div><div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Phone</div><div style="font-size:13px;color:#2E86C1;">${client.brokerPhone || "—"}</div></div>
         <div><div style="font-size:9px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Email</div><div style="font-size:13px;color:#2E86C1;">${client.brokerEmail || "—"}</div></div>
       </div>
-    </div>` : "";
+    </div>` : `<p>Broker status: ${client.brokerStatus === "DIRECT" ? "Direct" : "Not set — review required"}</p>`;
 
   const plansHtml = activePlans.map((plan: any) => {
     const rates: any[] = [...(plan.rateCards ?? [])].sort((a: any, b: any) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
@@ -434,7 +434,8 @@ function ClientSummaryPreview({ client, plans, metrics }: { client: any; plans: 
           </div>
         </div>
 
-        {client.hasBroker && (
+        {client.brokerStatus !== "BROKER" && <p>Broker status: {client.brokerStatus === "DIRECT" ? "Direct" : "Not set"}</p>}
+        {client.brokerStatus === "BROKER" && (
           <div>
             <SectionHeader color="bg-brand-accent">Broker</SectionHeader>
             <div className="border border-border border-t-0 rounded-b-md p-4 flex flex-wrap gap-8">

@@ -61,6 +61,7 @@ export interface RosterRow {
   /** Full date; the roster displays month and day, as the year is incidental. */
   anniversaryDate: string | null;
   brokerFirmName: string | null;
+  brokerStatus?: "DIRECT" | "BROKER" | "NOT_SET";
   brokerName: string | null;
   brokerEmail: string | null;
   brokerPhone: string | null;
