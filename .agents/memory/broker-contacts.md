@@ -7,6 +7,13 @@ description: Why broker contacts are keyed to the client rather than the firm, w
 
 ## Broker classification migration
 
+Colquitt (S-271) is an explicit Broker override: Totem Solutions is its broker.
+Unknown status must warn but permit general mail; only renewal proposal/package
+sends are blocked. Internal-only attachment restrictions remain independent.
+
+**Why:** Steve confirmed Colquitt's broker and that onboarding/general
+correspondence must continue even before classification is complete.
+
 Explicit N/A broker names mean Direct and take precedence over the legacy true
 flag. Otherwise true or any broker-contact row means Broker; remaining clients
 are Not set, never implicitly Direct. Keep the legacy column unused for rollback.

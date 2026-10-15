@@ -173,6 +173,12 @@ export default function ComposeMessageDialog({
     queryKey: clientId ? [`/api/recipient-directory?clientId=${clientId}`] : ["/api/recipient-directory"],
   });
   const [showDirectory, setShowDirectory] = useState(false);
+  const { data: linkedClients = [] } = useQuery<any[]>({
+    queryKey: ["/api/clients"],
+  });
+  const unsetClients = linkedClients.filter(c =>
+    (clientIds ?? (clientId ? [clientId] : [])).includes(c.id) &&
+    c.brokerStatus !== "DIRECT" && c.brokerStatus !== "BROKER");
 
   /** Adds an address to a field, never twice, and leaves anything typed alone. */
   function addRecipient(field: "to" | "cc" | "bcc", email: string) {
@@ -255,6 +261,9 @@ export default function ComposeMessageDialog({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 mt-2">
+          {unsetClients.length > 0 && <p role="alert" className="border border-amber-500 rounded p-3 text-sm" data-testid="broker-status-send-warning">
+            Broker status is not set for {unsetClients.map(c => c.clientName).join(", ")}. You can send general correspondence. Choose Direct or Broker before sending a renewal proposal or package.
+          </p>}
           {source && mode !== "new" && (
             <p className="text-xs text-muted-foreground" data-testid="text-compose-anchor">
               {mode === "forward" ? "Forwarding" : "Replying to"} {source.fromName || source.fromEmail} ·{" "}

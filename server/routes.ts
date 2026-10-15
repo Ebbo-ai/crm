@@ -3767,12 +3767,6 @@ export async function registerRoutes(
       const cc = sendFieldToArray(payload.cc);
       const bcc = sendFieldToArray(payload.bcc);
       const clientIds = sendFieldToArray(payload.clientIds);
-      for (const id of clientIds) {
-        const client = await storage.getClient(Number(id));
-        if (client && (!client.brokerStatus || client.brokerStatus === "NOT_SET")) {
-          return res.status(400).json({ message: `Broker status is not set for ${client.clientName}. Choose Direct or Broker before sending client correspondence.` });
-        }
-      }
       const documentIds = sendFieldToArray(payload.documentIds);
       const globalDocumentIds = sendFieldToArray(payload.globalDocumentIds);
       const replyToMessageId = payload.replyToMessageId ? parseInt(String(payload.replyToMessageId)) : null;
@@ -3861,6 +3855,18 @@ export async function registerRoutes(
       }
 
       // ── Threading ──
+      const { brokerSendBlocked } = await import("../shared/broker-send-policy");
+      const linkedIds = new Set(clientIds.map(Number));
+      for (const id of requestedDocumentIds) {
+        const doc = await storage.getDocument(id);
+        if (doc?.clientId) linkedIds.add(doc.clientId);
+      }
+      for (const id of Array.from(linkedIds)) {
+        const client = await storage.getClient(id);
+        if (client && brokerSendBlocked(client.brokerStatus, resolvedAttachments.map(a => a.guarded.category))) {
+          return res.status(400).json({ message: `Broker status is not set for ${client.clientName}. Choose Direct or Broker before sending a renewal proposal or package.` });
+        }
+      }
       // A reply is anchored to the exact message the sender had open, never
       // to a guess about which message in the conversation is newest. The
       // viewed message's own Message-ID is what every mail client threads
