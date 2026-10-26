@@ -65,3 +65,73 @@ mtime_ms = 1793033164910
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/90fc0df7-ede8-44ff-93a0-c74a78a66a0e/d8bcca43-6ee2-4566-9e64-a522e3796a31"
 storage_version_token = "1793033166003322"
 content_type = "text/html"
+
+[[outputs]]
+id = "PA3EB7jR6UBbK2m74Cv8x"
+uri = "file://reports/inv_clients.csv"
+type = "table"
+title = "inv_clients.csv"
+description = "67 rows; 7294 bytes. Read-only production snapshot, October 26, 2026 at 16:47 UTC."
+logical_id = "64b26ef1-5768-4067-ae11-5cf7ad07ea5f"
+content_hash = "sha256:977acb3d5702a19f7c6e698fe303c8fc4734f54abd2082fb275391a57f4d6875"
+size = 7294
+mtime_ms = 1793033261754
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/64b26ef1-5768-4067-ae11-5cf7ad07ea5f/a7b48b33-c65c-4cef-a6af-a118d5276ab6"
+storage_version_token = "1793033271887470"
+content_type = "text/csv"
+
+[[outputs]]
+id = "npGj7THIgZMNNuN7owKVe"
+uri = "file://reports/inv_plans.csv"
+type = "table"
+title = "inv_plans.csv"
+description = "77 rows; 7675 bytes. Read-only production snapshot, October 26, 2026 at 16:47 UTC."
+logical_id = "6c12bcb3-0c16-44b0-92ba-894e864482b3"
+content_hash = "sha256:e06ce3b8b4efa1c18daa9e23a0eed8cfe52ff2863981e4d9b03e86e4a7b3f1d1"
+size = 7675
+mtime_ms = 1793033261846
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/6c12bcb3-0c16-44b0-92ba-894e864482b3/d1f14a3a-20ad-40ff-a217-5082f7195e0e"
+storage_version_token = "1793033272498916"
+content_type = "text/csv"
+
+[[outputs]]
+id = "_oGkKhtHD3EH7MCvt5zpl"
+uri = "file://reports/inv_rates.csv"
+type = "table"
+title = "inv_rates.csv"
+description = "252 rows; 18164 bytes. Read-only production snapshot, October 26, 2026 at 16:47 UTC."
+logical_id = "bfc007e2-8a0c-478e-8224-684b33be39d9"
+content_hash = "sha256:3d61e503f9e1c0b5b6b6f0d8b6206079f4c8223c421c890a31a0ed32d441a0ba"
+size = 18164
+mtime_ms = 1793033261926
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/bfc007e2-8a0c-478e-8224-684b33be39d9/44f73faa-b4d4-46e5-b26e-edc68530649f"
+storage_version_token = "1793033273078940"
+content_type = "text/csv"
+
+[[outputs]]
+id = "ybdPCKuOxDMmD-joOabjQ"
+uri = "file://reports/inv_docs.csv"
+type = "table"
+title = "inv_docs.csv"
+description = "273 rows; 36366 bytes. Read-only production snapshot, October 26, 2026 at 16:47 UTC."
+logical_id = "85f07e3a-5909-48a2-a473-0f446a038df5"
+content_hash = "sha256:9d63db3becf1a9faa9bb93b34375d24a19dd2c8f3bb4122b8b811ba8c5b2c370"
+size = 36366
+mtime_ms = 1793033262010
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/85f07e3a-5909-48a2-a473-0f446a038df5/af0faf8f-93a6-4c0a-ba70-b679232de48c"
+storage_version_token = "1793033273693327"
+content_type = "text/csv"
+
+[[outputs]]
+id = "eEWK-YZa0JuGz73UAlFUw"
+uri = "file://reports/inv_renewals.csv"
+type = "table"
+title = "inv_renewals.csv"
+description = "48 rows; 877 bytes. Read-only production snapshot, October 26, 2026 at 16:47 UTC."
+logical_id = "d3a08da9-963b-4768-bcde-a0e6526bfc7b"
+content_hash = "sha256:e0aeb4aa4d7307a99e0dae019f4d46dd780036f5d83a53a835b921aa98a53a89"
+size = 877
+mtime_ms = 1793033262098
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/d3a08da9-963b-4768-bcde-a0e6526bfc7b/cecf9d24-df9a-42d9-9558-60dab4221844"
+storage_version_token = "1793033274251331"
+content_type = "text/csv"
