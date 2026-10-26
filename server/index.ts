@@ -1768,7 +1768,7 @@ app.use("/api", (_req, res, next) => {
       // was never going to become a task. Stamping them all is what stops the
       // recovery pass below from dumping twelve months of action items into
       // today's triage.
-      const stamped = await pool.query(`UPDATE gmail_messages SET triage_extracted_at = now() WHERE triage_extracted_at IS NULL`);
+      const stamped = await pool.query(`UPDATE gmail_messages SET triage_extracted_at = now() WHERE triage_extracted_at IS NULL AND thread_id IN (SELECT id FROM gmail_threads WHERE mailbox = 'kim.anderson@simple.us')`);
 
       // Which existing threads were never sorted cannot be known exactly —
       // nothing recorded it until now. This is the closest safe approximation:
@@ -1780,12 +1780,13 @@ app.use("/api", (_req, res, next) => {
       const flagged = await pool.query(`
         UPDATE gmail_threads t SET needs_sorting = true
         WHERE t.summary IS NULL
+          AND t.mailbox = 'kim.anderson@simple.us'
           AND t.business_status = 'UNASSIGNED'
           AND t.files_to_vendor = false
           AND NOT EXISTS (SELECT 1 FROM gmail_thread_clients c WHERE c.thread_id = t.id)
           AND EXISTS (SELECT 1 FROM gmail_messages m WHERE m.thread_id = t.id)
       `);
-      await pool.query(`UPDATE gmail_threads SET sorted_at = now() WHERE needs_sorting = false AND sorted_at IS NULL`);
+      await pool.query(`UPDATE gmail_threads SET sorted_at = now() WHERE needs_sorting = false AND sorted_at IS NULL AND mailbox = 'kim.anderson@simple.us'`);
       log(`Startup migration: stored-vs-sorted tracking added — ${stamped.rowCount} existing message(s) stamped as extraction-decided, ${flagged.rowCount} thread(s) flagged as stored but never sorted`);
     }
     log("Startup migration: stored-vs-sorted thread tracking ready");
@@ -2059,11 +2060,15 @@ app.use("/api", (_req, res, next) => {
           SET is_historical_import = true
           FROM gmail_threads gt
           JOIN gmail_backfill_threads gbt ON gbt.gmail_thread_id = gt.gmail_thread_id AND gbt.mailbox = gt.mailbox
-          WHERE gm.thread_id = gt.id AND gm.sent_at <= gbt.created_at AND gm.is_historical_import = false
+          WHERE gm.thread_id = gt.id AND gt.mailbox = 'kim.anderson@simple.us'
+            AND gm.sent_at <= gbt.created_at AND gm.is_historical_import = false
         `);
         const removed = await pool.query(`
           DELETE FROM communication_tasks
-          WHERE gmail_message_id IN (SELECT id FROM gmail_messages WHERE is_historical_import = true)
+          WHERE gmail_message_id IN (
+            SELECT gm.id FROM gmail_messages gm JOIN gmail_threads gt ON gt.id = gm.thread_id
+            WHERE gm.is_historical_import = true AND gt.mailbox = 'kim.anderson@simple.us'
+          )
         `);
         if (!flagged.rowCount && !removed.rowCount) return null;
         return `${flagged.rowCount ?? 0} message(s) flagged, ${removed.rowCount ?? 0} historical triage task(s) removed`;
@@ -2102,6 +2107,7 @@ app.use("/api", (_req, res, next) => {
         const { listGmailFilters, listGmailLabels } = await import("./gmail");
         const findings: string[] = [];
         for (const { mailbox } of CONFIGURED_MAILBOXES) {
+          if (mailbox !== "kim.anderson@simple.us") continue;
           try {
             const labels = await listGmailLabels(mailbox);
             const targetLabel = labels.find((l) => l.name === "90 Degree Benefits");

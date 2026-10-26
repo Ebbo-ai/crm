@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { isMailboxSyncEnabled } from "./mailboxSyncPolicy";
 import { storage } from "./storage";
 import { buildClientRefs } from "./client-context";
 import { matchEmailToClients, classifyMailRelevance, generateThreadSummary, processEmail, extractDocumentFields } from "./claude";
@@ -304,6 +305,7 @@ async function sortThread(threadId: number, ctx: SortContext): Promise<boolean> 
   const { mailbox, summary, usageCtx } = ctx;
   try {
     const thread = await storage.getGmailThread(threadId);
+    if (thread && !isMailboxSyncEnabled(thread.mailbox)) return false;
     if (!thread) return false;
     const messages = await storage.getGmailMessagesForThread(threadId);
     if (messages.length === 0) return false;
@@ -572,6 +574,11 @@ export async function runGmailFullSync(
   mailbox: string,
   options: { trigger?: GmailSyncTrigger; deadlineAt?: Date } = {},
 ): Promise<GmailFullSyncSummary> {
+  if (!isMailboxSyncEnabled(mailbox)) {
+    const skipped = emptySummary(mailbox);
+    skipped.skipped = true;
+    return skipped;
+  }
   const stateKey = `${mailbox}#full`;
   const trigger = options.trigger ?? "POLLER";
   // Per run, not per process: two runs in one process (a manual sync racing
@@ -1222,6 +1229,7 @@ export async function runGmailFullSyncAllMailboxes(
   const accounts = await storage.getGmailAccounts();
   const results: GmailFullSyncSummary[] = [];
   for (const account of accounts) {
+    if (!isMailboxSyncEnabled(account.mailbox)) continue;
     if (account.status !== "CONNECTED") continue;
     try {
       results.push(await runGmailFullSync(account.mailbox, options));

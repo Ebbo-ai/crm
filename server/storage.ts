@@ -1,3 +1,5 @@
+import { SYNC_MAILBOX } from "./mailboxSyncPolicy";
+import { maintainableDocument } from "./mailboxMaintenancePolicy";
 import { db } from "./db";
 import { eq, and, ilike, sql, desc, asc, count, inArray, isNull, or, gte, lte, ne } from "drizzle-orm";
 import {
@@ -1212,7 +1214,7 @@ export class DatabaseStorage implements IStorage {
     })
       .from(documentFieldProposals)
       .innerJoin(documents, eq(documentFieldProposals.documentId, documents.id))
-      .where(and(sql`${documentFieldProposals.id} > ${cursor}`, eq(documentFieldProposals.status, "PENDING"), eq(documentFieldProposals.targetTable, "review_only")))
+      .where(and(maintainableDocument, sql`${documentFieldProposals.id} > ${cursor}`, eq(documentFieldProposals.status, "PENDING"), eq(documentFieldProposals.targetTable, "review_only")))
       .orderBy(asc(documentFieldProposals.id));
 
     let mapped = 0;
@@ -1253,7 +1255,7 @@ export class DatabaseStorage implements IStorage {
     const { backfillCursor, saveBackfillCursor } = await import("./backfillProgress");
     const cursor = await backfillCursor("document-effective-date-backfill");
     const { deriveDocumentEffectiveDate } = await import("./fieldGrouping");
-    const undatedDocs = await db.select().from(documents).where(and(sql`${documents.id} > ${cursor}`, isNull(documents.effectiveDate))).orderBy(asc(documents.id));
+    const undatedDocs = await db.select().from(documents).where(and(maintainableDocument, sql`${documents.id} > ${cursor}`, isNull(documents.effectiveDate))).orderBy(asc(documents.id));
     let dated = 0;
     let undated = 0;
     for (const doc of undatedDocs) {
@@ -1993,6 +1995,7 @@ export class DatabaseStorage implements IStorage {
       ))
       .leftJoin(communicationTasks, eq(communicationTasks.gmailMessageId, gmailMessages.id))
       .where(and(
+        eq(gmailThreads.mailbox, SYNC_MAILBOX),
         eq(gmailMessages.isHistoricalImport, false),
         eq(gmailMessages.direction, "RECEIVED"),
         sql`${gmailMessages.sentAt} > ${gmailBackfillThreads.createdAt}`,
@@ -3264,14 +3267,14 @@ export class DatabaseStorage implements IStorage {
     const where = mailbox
       ? and(eq(gmailThreads.needsSorting, true), eq(gmailThreads.mailbox, mailbox))
       : eq(gmailThreads.needsSorting, true);
-    return db.select().from(gmailThreads).where(where).orderBy(desc(gmailThreads.latestMessageAt)).limit(limit);
+    return db.select().from(gmailThreads).where(and(where, eq(gmailThreads.mailbox, SYNC_MAILBOX))).orderBy(desc(gmailThreads.latestMessageAt)).limit(limit);
   }
 
   async countThreadsNeedingSorting(mailbox?: string): Promise<number> {
     const where = mailbox
       ? and(eq(gmailThreads.needsSorting, true), eq(gmailThreads.mailbox, mailbox))
       : eq(gmailThreads.needsSorting, true);
-    const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(gmailThreads).where(where);
+    const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(gmailThreads).where(and(where, eq(gmailThreads.mailbox, SYNC_MAILBOX)));
     return row?.n ?? 0;
   }
 
@@ -3455,7 +3458,7 @@ export class DatabaseStorage implements IStorage {
     const { splitQuotedText } = await import("./gmailQuoteStrip");
     const rows = await db.select({ id: gmailMessages.id, bodyText: gmailMessages.bodyText, subject: gmailMessages.subject })
       .from(gmailMessages)
-      .where(sql`${gmailMessages.bodyTextNew} IS NULL`);
+      .where(sql`${gmailMessages.bodyTextNew} IS NULL AND ${gmailMessages.threadId} IN (SELECT id FROM gmail_threads WHERE mailbox = ${SYNC_MAILBOX})`);
     for (const row of rows) {
       const split = splitQuotedText(row.bodyText, row.subject);
       await db.update(gmailMessages).set({
@@ -3477,7 +3480,7 @@ export class DatabaseStorage implements IStorage {
       OR document_name ~* '^cc-district_'
     )`;
     const rows = await db.execute<{ id: number }>(sql`
-      SELECT id FROM documents WHERE source_gmail_message_id IS NOT NULL AND ${pattern}
+      SELECT id FROM documents WHERE source_gmail_message_id IS NOT NULL AND ${pattern} AND ${maintainableDocument}
     `);
     const ids: number[] = (rows.rows as any[]).map((r) => r.id);
     if (ids.length === 0) return { deleted: 0, documentIds: [] };

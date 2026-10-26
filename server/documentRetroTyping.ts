@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { maintainableDocument } from "./mailboxMaintenancePolicy";
 import { documents } from "@shared/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { classifyDocumentType, normalizeDocumentFilename, looksSigned } from "./documentVersioning";
@@ -30,7 +31,7 @@ const VERSIONED_CATEGORIES = new Set(["RENEWAL_PROPOSAL", "EMPLOYER_ACCEPTANCE",
 export async function runDocumentRetroTyping(): Promise<RetroTypingResult> {
   const result: RetroTypingResult = { scanned: 0, reclassified: [], leftAsOther: 0 };
 
-  const otherDocs = await db.select().from(documents).where(eq(documents.category, "OTHER" as any));
+  const otherDocs = await db.select().from(documents).where(and(maintainableDocument, eq(documents.category, "OTHER" as any)));
   result.scanned = otherDocs.length;
   if (otherDocs.length === 0) return result;
 
@@ -66,6 +67,7 @@ export async function runDocumentRetroTyping(): Promise<RetroTypingResult> {
     const [clientIdStr, category, normalizedFileName] = key.split("::");
     const clientId = parseInt(clientIdStr);
     const siblings = await db.select().from(documents).where(and(
+      maintainableDocument,
       eq(documents.clientId, clientId),
       eq(documents.category, category as any),
       eq(documents.normalizedFileName, normalizedFileName),

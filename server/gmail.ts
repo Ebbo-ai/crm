@@ -12,6 +12,7 @@ import { getValidAccessToken } from "./googleOAuth";
  * module can write to a mailbox and which only reads.
  */
 const GMAIL_API_BASE = "https://gmail.googleapis.com";
+import { requireMailboxSyncEnabled } from "./mailboxSyncPolicy";
 
 /**
  * Every Gmail call in this app routes through gmailGet, so retry/backoff and
@@ -151,6 +152,7 @@ export async function searchThreadsWithAttachments(
   pageToken?: string,
   pageSize = 50,
 ): Promise<GmailThreadSearchResult> {
+  requireMailboxSyncEnabled(mailbox);
   const params = new URLSearchParams({ q: query, pageSize: String(pageSize) });
   if (pageToken) params.set("pageToken", pageToken);
   return gmailGet<GmailThreadSearchResult>(mailbox, `/gmail/v1/users/me/threads:search?${params.toString()}`);
@@ -289,6 +291,7 @@ export async function searchMessageIds(
   pageToken?: string,
   pageSize = 100,
 ): Promise<GmailMessageListResult> {
+  requireMailboxSyncEnabled(mailbox);
   const params = new URLSearchParams({ q: query, maxResults: String(pageSize) });
   if (pageToken) params.set("pageToken", pageToken);
   return gmailGet<GmailMessageListResult>(mailbox, `/gmail/v1/users/me/messages?${params.toString()}`);

@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { requireMailboxSyncEnabled } from "./mailboxSyncPolicy";
 import { classifyDomain, classifyThread } from "./claude";
 import { buildExactAllowlist, isOwnDomain } from "./mailAllowlist";
 import {
@@ -66,6 +67,7 @@ export interface CensusBatchResult {
  * advances each call) until `done` is true.
  */
 export async function runDomainCensusBatch(mailbox: string, label: string): Promise<CensusBatchResult> {
+  requireMailboxSyncEnabled(mailbox);
   const stateKey = stateKeyForCensus(label);
   const state = await storage.getGmailImportState(stateKey);
   let pageToken: string | undefined = state?.lastProcessedInternalDate || undefined;
@@ -165,6 +167,7 @@ export interface ClassifyBatchResult {
  * be re-run independently (e.g. after a prompt tweak) without re-censusing.
  */
 export async function classifyDomainsBatch(mailbox: string, label: string): Promise<ClassifyBatchResult> {
+  requireMailboxSyncEnabled(mailbox);
   const pending = (await storage.getPendingBackfillDomains(mailbox, label)).slice(0, MAX_DOMAINS_PER_CLASSIFY_BATCH);
   const result: ClassifyBatchResult = { domainsClassified: 0, businessDomains: [], consumerDomains: [], done: pending.length === 0 };
 
@@ -232,6 +235,7 @@ export interface FreeProviderClassifyResult {
  * other CONSUMER-verdict thread.
  */
 export async function classifyFreeProviderThreadsBatch(mailbox: string, label: string): Promise<FreeProviderClassifyResult> {
+  requireMailboxSyncEnabled(mailbox);
   const pending = await storage.getFreeProviderUnresolvedThreads(mailbox, label, MAX_DOMAINS_PER_CLASSIFY_BATCH);
   const result: FreeProviderClassifyResult = { threadsClassified: 0, business: 0, consumer: 0, done: pending.length === 0 };
 
@@ -305,6 +309,7 @@ export async function getBackfillReport(mailbox: string, label: string): Promise
 
 /** Feeds every BUSINESS-verdict domain back into the mail allow-list as a pending candidate (never auto-approved) so it's reviewed once, in the same place every other domain rule is reviewed. */
 export async function feedBusinessDomainsToAllowlist(mailbox: string, label: string): Promise<number> {
+  requireMailboxSyncEnabled(mailbox);
   const domains = await storage.getBackfillDomains(mailbox, label);
   const business = domains.filter(d => d.verdict === "BUSINESS");
   return storage.addCandidateMailAllowlistDomains(

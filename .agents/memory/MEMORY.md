@@ -1,3 +1,4 @@
+- [Mailbox ingestion scope](mailbox-ingestion-scope.md) — Kim-only ingestion; preserve other mailboxes' stored data and Google connections for sending.
 - [Rating Engine service](rating-engine-service.md) — Node spawns and supervises Flask on 127.0.0.1:5001, no separate workflow; unreachable is 503, engine-reported failure is 502.
 - [Renewal source of truth](renewal-single-truth.md) — client/year progress only; per-plan handouts required; historical unknown dates and actors must not be invented.
 - [Daily work list](daily-work-list.md) — accepted work is separate from AI suggestions; old suggestions stay in triage; preserve tasks and source-message history.

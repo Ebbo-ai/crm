@@ -12,6 +12,7 @@ import { useLocation } from "wouter";
 import StartupTasksCard from "@/components/startup-tasks-card";
 
 interface MailAccountRow {
+  syncEnabled: boolean;
   mailbox: string;
   displayName: string;
   status: "CONNECTED" | "NEEDS_REAUTH" | "NOT_CONNECTED";
@@ -158,6 +159,7 @@ export default function MailAccountsPage() {
             (accounts.data || []).map((acct) => (
               <div key={acct.mailbox} className="flex items-center justify-between border border-border rounded-lg px-4 py-3" data-testid={`row-mailbox-${acct.mailbox}`}>
                 <div>
+                  <p className="text-xs font-medium">{acct.syncEnabled ? "Sync enabled" : "Sync disabled — Google connection retained for sending; stored mail is unchanged."}</p>
                   <p className="text-sm font-medium text-brand">{acct.displayName} <span className="text-muted-foreground font-normal">— {acct.mailbox}</span></p>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {acct.lastSyncAt ? `Last synced ${new Date(acct.lastSyncAt).toLocaleString()}` : "Never synced"}

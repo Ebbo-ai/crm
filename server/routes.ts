@@ -2143,6 +2143,7 @@ export async function registerRoutes(
         const acct = byMailbox.get(cfg.mailbox);
         return {
           mailbox: cfg.mailbox,
+          syncEnabled: cfg.mailbox === "kim.anderson@simple.us",
           displayName: cfg.displayName,
           status: acct ? acct.status : "NOT_CONNECTED",
           scopes: acct?.scopes || [],

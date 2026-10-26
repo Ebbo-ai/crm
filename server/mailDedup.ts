@@ -34,6 +34,7 @@ export async function reconcileLegacyCommunicationsWithGmail(): Promise<{ matche
        AND c.subject IS NOT DISTINCT FROM g.subject
        AND abs(extract(epoch FROM (c.received_at - g.sent_at))) < 300
       WHERE c.superseded_by_gmail_message_id IS NULL
+        AND g.thread_id IN (SELECT id FROM gmail_threads WHERE mailbox = 'kim.anderson@simple.us')
       ORDER BY c.id, abs(extract(epoch FROM (c.received_at - g.sent_at))) ASC
     )
     UPDATE communications
