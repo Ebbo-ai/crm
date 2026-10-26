@@ -51,3 +51,17 @@ mtime_ms = 1792097421931
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/a730bd1d-581d-48c6-91bf-dd4e596d8bcf/e64e1840-b77d-4414-9939-c318c3479704"
 storage_version_token = "1792097428919194"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "nbBGr8Kg8ajI7NoE_PNDb"
+uri = "file://reports/production-client-inventory-2026-10-26.html"
+type = "html"
+title = "Complete production client inventory — October 26"
+description = "All 67 clients, every plan and exact tier, blank fees, 2027 status, and documents by category. Read-only production snapshot."
+logical_id = "90fc0df7-ede8-44ff-93a0-c74a78a66a0e"
+content_hash = "sha256:13e243faaa3d32f5cd7e1e6a2ea0be9a92c9bc90cadcc3a844447860075a2a3c"
+size = 258347
+mtime_ms = 1793033164910
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:bfd70422-b469-4516-b1ab-a0f40e838f3c/90fc0df7-ede8-44ff-93a0-c74a78a66a0e/d8bcca43-6ee2-4566-9e64-a522e3796a31"
+storage_version_token = "1793033166003322"
+content_type = "text/html"
